@@ -73,7 +73,8 @@ planillaRouter.post("/:id/calcular", async (req: Request, res: Response) => {
         asistencia,
         parametros,
         periodo.dias_periodo,
-        periodo.mes
+        periodo.mes,
+        periodo.anio
       );
 
       const r = await cliente.query(

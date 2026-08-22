@@ -122,19 +122,53 @@ export function calcularBonificacionBUC(
 }
 
 /**
+ * Cuenta cuantos meses calendario estuvo activo el contrato dentro de un
+ * semestre [anio-inicioMes-01 .. anio-finMes-fin de mes], contando desde el
+ * mayor entre fecha_ingreso y el inicio del semestre. Si el trabajador
+ * ingreso despues de terminado el semestre, retorna 0 (no le corresponde
+ * nada de ese periodo). Resultado acotado entre 0 y 6.
+ */
+export function calcularMesesEnSemestre(
+  fechaIngreso: string,
+  anio: number,
+  inicioMes: number,
+  finMes: number
+): number {
+  const ingreso = new Date(fechaIngreso);
+  const inicioSemestre = new Date(anio, inicioMes - 1, 1);
+  const finSemestre = new Date(anio, finMes - 1, 1);
+
+  if (ingreso > finSemestre) return 0;
+
+  const inicioComputo = ingreso > inicioSemestre ? ingreso : inicioSemestre;
+  const meses =
+    (finSemestre.getFullYear() - inicioComputo.getFullYear()) * 12 +
+    (finSemestre.getMonth() - inicioComputo.getMonth()) +
+    1;
+  return Math.max(0, Math.min(6, meses));
+}
+
+/**
  * Gratificacion (Fiestas Patrias / Navidad).
  * Formula legal: (remuneracion computable / 6) x meses completos laborados
  * en el semestre (jul-dic o ene-jun). Se calcula solo cuando el periodo
  * corresponde a julio o diciembre; el resto de meses retorna 0.
- * VALIDAR: aqui se asume el semestre completo (6/6) como caso simple;
- * ajustar mesesComputables segun fecha de ingreso real del trabajador.
+ * mesesComputables se calcula segun la fecha de ingreso real del contrato
+ * (un trabajador que ingreso el mismo mes de pago no tiene meses del
+ * semestre anterior, por lo que le corresponde 0).
  */
 export function calcularGratificacion(
   remuneracionComputable: number,
   mes: number,
-  mesesComputables: number = 6
+  anio: number,
+  fechaIngreso: string
 ): number {
   if (mes !== 7 && mes !== 12) return 0;
+  const mesesComputables =
+    mes === 7
+      ? calcularMesesEnSemestre(fechaIngreso, anio, 1, 6)
+      : calcularMesesEnSemestre(fechaIngreso, anio, 7, 12);
+  if (mesesComputables === 0) return 0;
   return redondear((remuneracionComputable / 6) * mesesComputables);
 }
 
@@ -148,10 +182,18 @@ export function calcularCTS(
   remuneracionComputable: number,
   gratificacionSemestre: number,
   mes: number,
-  mesesComputables: number = 6
+  anio: number,
+  fechaIngreso: string
 ): number {
   if (mes !== 5 && mes !== 11) return 0;
-  const base = (remuneracionComputable / 12) * mesesComputables;
+  // Semestre CTS mayo: nov(anio-1) a abr(anio). Semestre CTS noviembre: may-oct(anio).
+  const mesesComputables =
+    mes === 5
+      ? calcularMesesEnSemestre(fechaIngreso, anio - 1, 11, 12) +
+        calcularMesesEnSemestre(fechaIngreso, anio, 1, 4)
+      : calcularMesesEnSemestre(fechaIngreso, anio, 5, 10);
+  if (mesesComputables === 0) return 0;
+  const base = (remuneracionComputable / 12) * Math.min(6, mesesComputables);
   const sextaGrati = gratificacionSemestre / 6;
   return redondear(base + sextaGrati);
 }
@@ -270,7 +312,8 @@ export function calcularLineaPlanilla(
   asistencia: AsistenciaEntrada,
   parametros: ParametrosNormativos,
   diasPeriodo: number,
-  mes: number
+  mes: number,
+  anio: number
 ): ResultadoCalculoLinea {
   const jornalDiario = calcularJornalDiario(contrato, parametros);
   const sueldoBasico = calcularSueldoBasico(jornalDiario, asistencia, contrato.categoria_ocupacional);
@@ -288,8 +331,8 @@ export function calcularLineaPlanilla(
 
   // Remuneracion computable para gratificacion/CTS (sin horas extra ni bonos esporadicos)
   const remuneracionComputable = sueldoBasico + remDominical + asignacionFamiliar + bonificacionBUC;
-  const gratificacion = calcularGratificacion(remuneracionComputable, mes);
-  const cts = calcularCTS(remuneracionComputable, gratificacion, mes);
+  const gratificacion = calcularGratificacion(remuneracionComputable, mes, anio, contrato.fecha_ingreso);
+  const cts = calcularCTS(remuneracionComputable, gratificacion, mes, anio, contrato.fecha_ingreso);
   const vacaciones = 0; // TODO: calcular record de vacaciones truncas/gozadas (Fase 2)
 
   const totalIngresos = redondear(
