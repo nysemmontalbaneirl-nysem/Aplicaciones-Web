@@ -141,9 +141,14 @@ CREATE TABLE periodos_planilla (
     fecha_fin      DATE NOT NULL,
     dias_periodo   INT NOT NULL DEFAULT 30,
     estado         VARCHAR(20) NOT NULL DEFAULT 'ABIERTO', -- ABIERTO | CALCULADO | CERRADO | DECLARADO
-    creado_en      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (anio, mes, quincena, tipo)
+    creado_en      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Indice unico en vez de un UNIQUE de columnas: en Postgres dos NULL nunca
+-- se consideran iguales, asi que un UNIQUE(anio,mes,quincena,tipo) normal
+-- no evita crear dos periodos MENSUAL (quincena NULL) del mismo mes.
+CREATE UNIQUE INDEX periodos_planilla_periodo_unico
+    ON periodos_planilla (anio, mes, tipo, COALESCE(quincena, 0));
 
 -- -------------------------------------------------------------------------
 -- detalle_planilla: línea calculada por trabajador y periodo (el "resultado")

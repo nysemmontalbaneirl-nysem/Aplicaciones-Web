@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiGet, apiPost, BASE_URL } from "../api";
+import { apiDelete, apiGet, apiPost, BASE_URL } from "../api";
 import { PeriodoPlanilla } from "../types";
 
 const MESES = [
@@ -35,6 +35,19 @@ export default function Periodos({ onSeleccionar }: { onSeleccionar?: (p: Period
   useEffect(() => {
     cargar();
   }, []);
+
+  async function eliminarPeriodo(p: PeriodoPlanilla) {
+    if (!window.confirm(`¿Eliminar el periodo ${MESES[p.mes - 1]} ${p.anio}? Esta accion no se puede deshacer.`)) {
+      return;
+    }
+    setError(null);
+    try {
+      await apiDelete(`/periodos/${p.id}`);
+      await cargar();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
 
   async function crearPeriodo(e: React.FormEvent) {
     e.preventDefault();
@@ -125,6 +138,11 @@ export default function Periodos({ onSeleccionar }: { onSeleccionar?: (p: Period
                         <button type="button">Descargar AFPnet (CSV)</button>
                       </a>
                     </>
+                  )}
+                  {p.estado === "ABIERTO" && (
+                    <button type="button" onClick={() => eliminarPeriodo(p)}>
+                      Eliminar
+                    </button>
                   )}
                 </td>
               </tr>

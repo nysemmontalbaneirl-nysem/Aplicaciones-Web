@@ -42,3 +42,18 @@ periodosRouter.post("/", async (req: Request, res: Response) => {
     throw err;
   }
 });
+
+// Solo se puede eliminar un periodo que todavia no tiene planilla calculada,
+// para no perder resultados ya generados.
+periodosRouter.delete("/:id", async (req: Request, res: Response) => {
+  const resultado = await pool.query(
+    "DELETE FROM periodos_planilla WHERE id = $1 AND estado = 'ABIERTO' RETURNING id",
+    [req.params.id]
+  );
+  if (resultado.rowCount === 0) {
+    return res.status(400).json({
+      error: "Solo se puede eliminar un periodo en estado ABIERTO (sin planilla calculada), o no existe",
+    });
+  }
+  res.status(204).send();
+});

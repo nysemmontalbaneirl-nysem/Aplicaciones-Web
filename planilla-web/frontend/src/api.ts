@@ -36,3 +36,17 @@ export async function apiPut<T>(ruta: string, cuerpo: unknown): Promise<T> {
   });
   return manejarRespuesta<T>(res);
 }
+
+export async function apiDelete(ruta: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}${ruta}`, { method: "DELETE" });
+  if (!res.ok) {
+    let mensaje = `Error ${res.status}`;
+    try {
+      const cuerpo = await res.json();
+      if (cuerpo?.error) mensaje = cuerpo.error;
+    } catch {
+      // sin cuerpo JSON, se deja el mensaje generico
+    }
+    throw new Error(mensaje);
+  }
+}
