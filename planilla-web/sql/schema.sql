@@ -207,8 +207,15 @@ INSERT INTO parametros_normativos (
         "HABITAT":   {"comision_flujo": 0.0147, "prima_seguro": 0.0137, "aporte_obligatorio": 0.10}
     }'::jsonb,
     '{
-        "OPERARIO": {"buc": 0.32, "jornal_basico": 89.30},
-        "OFICIAL":  {"buc": 0.30, "jornal_basico": 69.75},
-        "PEON":     {"buc": 0.30, "jornal_basico": 62.80}
+        "OPERARIO":    {"buc": 0.32, "jornal_basico": 89.30},
+        "OFICIAL":     {"buc": 0.30, "jornal_basico": 69.75},
+        "PEON":        {"buc": 0.30, "jornal_basico": 62.80},
+        "OPERARIO_EP": {"buc": 0.32, "jornal_basico": 89.30},
+        "OPERARIO_EM": {"buc": 0.32, "jornal_basico": 89.30},
+        "OPERARIO_TP": {"buc": 0.32, "jornal_basico": 89.30}
     }'::jsonb
 );
+-- NOTA: OPERARIO_EP/EM/TP comparten el jornal base de OPERARIO (asi esta en
+-- AFPS-SALARIOS: L12/L13/L14 = "=+L7"). Cada una tiene ademas un porcentaje
+-- "BAE" propio (EP=10%, EM=8%, TP=9%) que el motor de calculo TODAVIA NO
+-- aplica - falta agregarlo como un concepto adicional en motorCalculo.ts.

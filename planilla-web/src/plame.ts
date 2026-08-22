@@ -1,34 +1,40 @@
 // =========================================================================
 // Exportacion de archivos planos PLAME (T-Registro / PDT Planilla Electronica)
-//
-// Formato y codigos de concepto confirmados contra TRES fuentes independientes
-// que coinciden entre si:
-//  1) La hoja "Tablas" del archivo Excel original (Tabla 22 oficial SUNAT:
-//     "Ingresos, tributos y descuentos") - catalogo completo de codigos.
-//  2) La macro Generatxt.bas (Sub informacion_REM) que genera el .rem real.
-//  3) La fila 5 (codigos reales en uso) de la hoja "PLANILLA-TRABAJADORES"
-//     de tu archivo Excel actual (2026) - la hoja que tu propio sistema usa
-//     hoy para generar el REM. Los 12 codigos de abajo calzan exacto con
-//     esa fila 5, columna por columna.
+// Regimen: CONSTRUCCION CIVIL (JHCR).
 //
 // Formato del archivo .rem: una linea por cada concepto con valor distinto
 // de cero, pipe-delimitado:
 //   tipo_planilla(2) | DNI(8) | codigo_concepto(4) | devengado(0.00) | percibido(0.00)
 //
-// PENDIENTE DE CONFIRMAR CON EL USUARIO (Miguel): revisando la fila 5 de
-// PLANILLA-TRABAJADORES de punta a punta (columnas C hasta CX, la ultima),
-// NO existe ninguna columna para ONP (0607) ni para ESSALUD regular 9%
-// (0804) - todas las demas columnas de aportes/descuentos si estan. Puede
-// ser que actualmente no tengan trabajadores por ONP, o que ESSALUD se
-// declare por otro medio, o que sea un hueco real de la plantilla. Los
-// codigos ONP/ESSALUD de abajo son los oficiales del catalogo SUNAT (no
-// inventados), pero como no aparecen en tu hoja real, hay que confirmar
-// contigo si deben ir en el REM antes de confiar en su salida.
+// CODIGOS VALIDADOS el 22/08/2026 contra 2 archivos .rem REALES, ya
+// generados y aceptados por SUNAT, de esta misma empresa (regimen
+// construccion civil, confirmado por el usuario):
+//   0121 remuneracion basica | 0201 asignacion familiar | 0406 gratificacion
+//   (Ley 29351, NO 0401 generico) | 0904 CTS | 0608 SPP aporte obligatorio |
+//   0601 SPP comision | 0606 SPP prima de seguro | 0602 CONAFOVICER |
+//   0605 renta 5ta.
 //
-// IMPORTANTE: valida el primer archivo generado contra un PLAME ya
-// declarado y aceptado por SUNAT antes de usarlo en produccion. El
-// desglose de SCTR (0805 pensiones / 0806 essalud) esta simplificado:
-// aqui se envia todo bajo 0806, VALIDAR si tu caso requiere separarlo.
+// PENDIENTE DE VALIDAR (no aparecen en los archivos reales de esta empresa,
+// pero SI son codigos oficiales del catalogo SUNAT - se omiten aqui hasta
+// que el usuario confirme si deben declararse):
+//   - ONP (0607): ningun trabajador de la muestra esta afiliado a ONP,
+//     asi que no se pudo confirmar el codigo en la practica.
+//   - ESSALUD regular 9% (0804), poliza de seguro D.Leg 688 (0803) y
+//     SENATI (0807): ausentes en ambos archivos reales revisados. Puede
+//     ser que se declaren en otro sitio o que sea un vacio de la plantilla
+//     original - por eso este generador tampoco los emite por ahora.
+//   - "0314" (usado por la empresa real para lo que aqui es BUC/bonificacion
+//     unificada de construccion): este codigo NO aparece en el catalogo
+//     oficial de la Tabla 22 que se encontro en el Excel (que solo llega
+//     hasta 0313 antes de saltar a la serie 0400) - aun asi, como aparece
+//     en 2 archivos reales aceptados por SUNAT con montos consistentes con
+//     el BUC (32%/30% del jornal), se usa aqui con alta confianza pero
+//     sigue sin poder confirmarse contra el catalogo oficial.
+//
+// IMPORTANTE: valida cada archivo nuevo contra el detalle de una planilla
+// real ya declarada antes de confiar en el, sobre todo si cambian las
+// categorias o conceptos usados (por ejemplo con EMPLEADO/EVENTUAL, que no
+// estaban presentes en la muestra revisada).
 // =========================================================================
 
 import { pool } from "./db";
@@ -39,11 +45,10 @@ export const CONCEPTO = {
   HORAS_EXTRA_25: "0105",
   HORAS_EXTRA_35: "0106",
   ASIGNACION_FAMILIAR: "0201",
-  BUC_CONSTRUCCION: "0311",
-  GRATIFICACION: "0401",
+  BUC_CONSTRUCCION: "0314", // ver nota arriba: no esta en el catalogo oficial, pero confirmado en archivos reales
+  GRATIFICACION: "0406", // Ley 29351 - confirmado real, reemplaza el generico 0401
   CTS: "0904",
 
-  ONP: "0607",
   AFP_APORTE_OBLIGATORIO: "0608",
   AFP_COMISION: "0601",
   AFP_PRIMA_SEGURO: "0606",
@@ -51,6 +56,8 @@ export const CONCEPTO = {
   RENTA_5TA: "0605",
   CUOTA_SINDICAL: "0702",
 
+  // Codigos oficiales del catalogo, pendientes de confirmar en la practica (ver nota arriba)
+  ONP: "0607",
   POLIZA_SEGURO_688: "0803",
   ESSALUD: "0804",
   SCTR_ESSALUD: "0806",
@@ -129,13 +136,12 @@ export async function generarLineasREM(periodoId: number): Promise<string[]> {
       [CONCEPTO.CUOTA_SINDICAL, num(fila.descuento_sindicato)],
       [CONCEPTO.CONAFOVICER, num(fila.conafovicer)],
       [CONCEPTO.RENTA_5TA, num(fila.renta_5ta)],
-
-      [CONCEPTO.POLIZA_SEGURO_688, num(fila.seguro_vida)],
-      [CONCEPTO.ESSALUD, num(fila.essalud)],
-      [CONCEPTO.SCTR_ESSALUD, num(fila.sctr)],
-      [CONCEPTO.SENATI, num(fila.senati)],
     ];
 
+    // AFP: confirmado en archivos reales. ONP: sin confirmar (ver cabecera del archivo) -
+    // se emite igual porque omitirlo dejaria a los trabajadores por ONP sin ningun
+    // concepto de pension declarado, lo cual es claramente peor que usar el codigo
+    // oficial del catalogo aunque no se haya visto en la practica todavia.
     if (fila.sistema_pension === "ONP") {
       candidatas.push([CONCEPTO.ONP, num(fila.aporte_pension)]);
     } else if (aporteDetalle) {
@@ -143,6 +149,13 @@ export async function generarLineasREM(periodoId: number): Promise<string[]> {
       candidatas.push([CONCEPTO.AFP_COMISION, aporteDetalle.comisionFlujo]);
       candidatas.push([CONCEPTO.AFP_PRIMA_SEGURO, aporteDetalle.primaSeguro]);
     }
+
+    // NO se incluyen POLIZA_SEGURO_688 (0803), ESSALUD (0804) ni SENATI (0807):
+    // ausentes en los 2 archivos reales revisados de esta empresa. Si el
+    // usuario confirma que si deben declararse, agregar aqui:
+    //   [CONCEPTO.POLIZA_SEGURO_688, num(fila.seguro_vida)],
+    //   [CONCEPTO.ESSALUD, num(fila.essalud)],
+    //   [CONCEPTO.SENATI, num(fila.senati)],
 
     for (const [codigo, monto] of candidatas) {
       const linea = lineaRem(dni, codigo, monto, monto);

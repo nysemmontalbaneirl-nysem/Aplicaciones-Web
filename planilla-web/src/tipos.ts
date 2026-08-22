@@ -6,7 +6,9 @@ export type CategoriaOcupacional =
   | "PEON"
   | "EMPLEADO"
   | "EVENTUAL"
-  | "OPERARIO EP";
+  | "OPERARIO_EP"
+  | "OPERARIO_EM"
+  | "OPERARIO_TP";
 
 export type SistemaPension = "AFP" | "ONP";
 export type NombreAFP = "INTEGRA" | "PRIMA" | "PROFUTURO" | "HABITAT";

@@ -3,7 +3,7 @@ import { apiGet, apiPost, apiPut } from "../api";
 import { ParametrosNormativos } from "../types";
 
 const AFPS = ["INTEGRA", "PRIMA", "PROFUTURO", "HABITAT"];
-const CATEGORIAS_CONSTRUCCION = ["OPERARIO", "OFICIAL", "PEON", "OPERARIO EP"];
+const CATEGORIAS_CONSTRUCCION = ["OPERARIO", "OFICIAL", "PEON", "OPERARIO_EP", "OPERARIO_EM", "OPERARIO_TP"];
 
 // Los porcentajes se muestran/editan como "9" (%) pero se guardan como 0.09 (fraccion)
 function aPorcentaje(fraccion: number): string {

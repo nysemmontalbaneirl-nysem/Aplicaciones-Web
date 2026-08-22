@@ -4,7 +4,9 @@ export type CategoriaOcupacional =
   | "PEON"
   | "EMPLEADO"
   | "EVENTUAL"
-  | "OPERARIO EP";
+  | "OPERARIO_EP"
+  | "OPERARIO_EM"
+  | "OPERARIO_TP";
 
 export interface TasasAFPFondo {
   aporte_obligatorio: number;

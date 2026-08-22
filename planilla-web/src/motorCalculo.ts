@@ -23,7 +23,9 @@ const CATEGORIAS_CONSTRUCCION_CIVIL: CategoriaOcupacional[] = [
   "OPERARIO",
   "OFICIAL",
   "PEON",
-  "OPERARIO EP",
+  "OPERARIO_EP",
+  "OPERARIO_EM",
+  "OPERARIO_TP",
 ];
 
 function esConstruccionCivil(categoria: CategoriaOcupacional): boolean {

@@ -8,7 +8,9 @@ const CATEGORIAS: CategoriaOcupacional[] = [
   "PEON",
   "EMPLEADO",
   "EVENTUAL",
-  "OPERARIO EP",
+  "OPERARIO_EP",
+  "OPERARIO_EM",
+  "OPERARIO_TP",
 ];
 
 const estadoVacio = {

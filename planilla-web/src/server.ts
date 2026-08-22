@@ -9,6 +9,7 @@ import { periodosRouter } from "./routes/periodos";
 import { planillaRouter } from "./routes/planilla";
 import { parametrosRouter } from "./routes/parametros";
 import { exportacionesRouter } from "./routes/exportaciones";
+import { importacionRouter } from "./routes/importacion";
 
 dotenv.config();
 
@@ -27,6 +28,7 @@ app.use("/api/periodos", periodosRouter);
 app.use("/api/periodos", planillaRouter);
 app.use("/api/parametros", parametrosRouter);
 app.use("/api/periodos", exportacionesRouter);
+app.use("/api/empleados", importacionRouter);
 
 // Manejador de errores centralizado
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
