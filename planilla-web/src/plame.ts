@@ -1,15 +1,29 @@
 // =========================================================================
 // Exportacion de archivos planos PLAME (T-Registro / PDT Planilla Electronica)
 //
-// Formato y codigos de concepto confirmados contra:
+// Formato y codigos de concepto confirmados contra TRES fuentes independientes
+// que coinciden entre si:
 //  1) La hoja "Tablas" del archivo Excel original (Tabla 22 oficial SUNAT:
 //     "Ingresos, tributos y descuentos") - catalogo completo de codigos.
 //  2) La macro Generatxt.bas (Sub informacion_REM) que genera el .rem real.
-//  3) Datos de muestra reales encontrados en el propio archivo Excel.
+//  3) La fila 5 (codigos reales en uso) de la hoja "PLANILLA-TRABAJADORES"
+//     de tu archivo Excel actual (2026) - la hoja que tu propio sistema usa
+//     hoy para generar el REM. Los 12 codigos de abajo calzan exacto con
+//     esa fila 5, columna por columna.
 //
 // Formato del archivo .rem: una linea por cada concepto con valor distinto
 // de cero, pipe-delimitado:
 //   tipo_planilla(2) | DNI(8) | codigo_concepto(4) | devengado(0.00) | percibido(0.00)
+//
+// PENDIENTE DE CONFIRMAR CON EL USUARIO (Miguel): revisando la fila 5 de
+// PLANILLA-TRABAJADORES de punta a punta (columnas C hasta CX, la ultima),
+// NO existe ninguna columna para ONP (0607) ni para ESSALUD regular 9%
+// (0804) - todas las demas columnas de aportes/descuentos si estan. Puede
+// ser que actualmente no tengan trabajadores por ONP, o que ESSALUD se
+// declare por otro medio, o que sea un hueco real de la plantilla. Los
+// codigos ONP/ESSALUD de abajo son los oficiales del catalogo SUNAT (no
+// inventados), pero como no aparecen en tu hoja real, hay que confirmar
+// contigo si deben ir en el REM antes de confiar en su salida.
 //
 // IMPORTANTE: valida el primer archivo generado contra un PLAME ya
 // declarado y aceptado por SUNAT antes de usarlo en produccion. El

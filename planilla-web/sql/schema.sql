@@ -188,7 +188,11 @@ CREATE TABLE bitacora_planilla (
 );
 
 -- -------------------------------------------------------------------------
--- Parámetros 2026 de ejemplo (ajusta los valores reales antes de calcular)
+-- Parámetros 2026 - valores reales tomados de la hoja "AFPS-SALARIOS" del
+-- Excel original ("TABLAS SALARIALES CONSTRUCCION CIVIL 02-2026"). Estos
+-- son los vigentes a febrero 2026; como cambian mes a mes, actualízalos
+-- desde la pestaña "Parametros" de la app cuando SBS/el sector publique
+-- valores nuevos.
 -- -------------------------------------------------------------------------
 INSERT INTO parametros_normativos (
     anio, uit, tasa_essalud, tasa_onp, tasa_senati, tasa_conafovicer, tasa_sctr_salud,
@@ -197,14 +201,14 @@ INSERT INTO parametros_normativos (
     2026, 5500, 0.09, 0.13, 0.0075, 0.02, 0.0155,
     113.00, 5.00,
     '{
-        "INTEGRA":   {"comision_flujo": 0.0130, "prima_seguro": 0.0173, "aporte_obligatorio": 0.10},
-        "PRIMA":     {"comision_flujo": 0.0160, "prima_seguro": 0.0174, "aporte_obligatorio": 0.10},
-        "PROFUTURO": {"comision_flujo": 0.0169, "prima_seguro": 0.0174, "aporte_obligatorio": 0.10},
-        "HABITAT":   {"comision_flujo": 0.0147, "prima_seguro": 0.0174, "aporte_obligatorio": 0.10}
+        "INTEGRA":   {"comision_flujo": 0.0155, "prima_seguro": 0.0137, "aporte_obligatorio": 0.10},
+        "PRIMA":     {"comision_flujo": 0.0160, "prima_seguro": 0.0137, "aporte_obligatorio": 0.10},
+        "PROFUTURO": {"comision_flujo": 0.0169, "prima_seguro": 0.0137, "aporte_obligatorio": 0.10},
+        "HABITAT":   {"comision_flujo": 0.0147, "prima_seguro": 0.0137, "aporte_obligatorio": 0.10}
     }'::jsonb,
     '{
-        "OPERARIO": {"buc": 0.32, "jornal_basico": 85.60},
-        "OFICIAL":  {"buc": 0.30, "jornal_basico": 70.50},
-        "PEON":     {"buc": 0.30, "jornal_basico": 63.30}
+        "OPERARIO": {"buc": 0.32, "jornal_basico": 89.30},
+        "OFICIAL":  {"buc": 0.30, "jornal_basico": 69.75},
+        "PEON":     {"buc": 0.30, "jornal_basico": 62.80}
     }'::jsonb
 );
