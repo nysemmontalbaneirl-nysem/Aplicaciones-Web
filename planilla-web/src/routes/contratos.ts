@@ -16,11 +16,11 @@ contratosRouter.get("/", async (req: Request, res: Response) => {
 
   if (empleado_id) {
     valores.push(empleado_id);
-    condiciones.push(`empleado_id = $${valores.length}`);
+    condiciones.push(`c.empleado_id = $${valores.length}`);
   }
   if (estado) {
     valores.push(estado);
-    condiciones.push(`estado = $${valores.length}`);
+    condiciones.push(`c.estado = $${valores.length}`);
   }
   const where = condiciones.length ? `WHERE ${condiciones.join(" AND ")}` : "";
 
