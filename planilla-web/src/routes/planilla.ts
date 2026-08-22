@@ -25,7 +25,7 @@ async function obtenerParametros(anio: number): Promise<ParametrosNormativos> {
 
 async function obtenerTablaCategorias(anio: number, mes: number): Promise<TablaSalarialMensual> {
   const r = await pool.query(
-    "SELECT categoria, jornal_basico, buc FROM tabla_salarial_mensual WHERE anio = $1 AND mes = $2",
+    "SELECT categoria, jornal_basico, buc, bae, movilidad_acumulada, gratificacion_diaria FROM tabla_salarial_mensual WHERE anio = $1 AND mes = $2",
     [anio, mes]
   );
   if (r.rowCount === 0) {
@@ -35,7 +35,13 @@ async function obtenerTablaCategorias(anio: number, mes: number): Promise<TablaS
   }
   const tabla: TablaSalarialMensual = {};
   for (const fila of r.rows) {
-    tabla[fila.categoria] = { jornal_basico: Number(fila.jornal_basico), buc: Number(fila.buc) };
+    tabla[fila.categoria] = {
+      jornal_basico: Number(fila.jornal_basico),
+      buc: Number(fila.buc),
+      bae: Number(fila.bae),
+      movilidad_acumulada: Number(fila.movilidad_acumulada),
+      gratificacion_diaria: Number(fila.gratificacion_diaria),
+    };
   }
   return tabla;
 }

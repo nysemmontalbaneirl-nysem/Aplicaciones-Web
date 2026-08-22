@@ -4,6 +4,31 @@ import { ParametrosMensuales, ParametrosNormativos, PeriodoMensual } from "../ty
 
 const AFPS = ["INTEGRA", "PRIMA", "PROFUTURO", "HABITAT"];
 const CATEGORIAS_CONSTRUCCION = ["OPERARIO", "OFICIAL", "PEON", "OPERARIO_EP", "OPERARIO_EM", "OPERARIO_TP"];
+const CATEGORIAS_TABLA = [...CATEGORIAS_CONSTRUCCION, "PEON_A", "R_GENERAL"];
+
+function esConstruccionCivil(categoria: string): boolean {
+  return CATEGORIAS_CONSTRUCCION.includes(categoria);
+}
+
+// Columnas de solo lectura: se derivan del jornal basico con formula fija,
+// verificadas contra la hoja AFPS-SALARIOS real (no se guardan en BD).
+function calcDominical(jornal: number): number {
+  return jornal / 6;
+}
+function calcVacaciones(jornal: number): number {
+  return jornal * 0.1;
+}
+function calcCTS(jornal: number): number {
+  return jornal * 0.15;
+}
+function calcHoraExtra(jornal: number, categoria: string): { tramo1: number; tramo2: number; etiqueta: string } {
+  const cc = esConstruccionCivil(categoria);
+  const jornalHora = jornal / 8;
+  return cc
+    ? { tramo1: jornalHora * 1.6, tramo2: jornalHora * 2.0, etiqueta: "60% / 100%" }
+    : { tramo1: jornalHora * 1.25, tramo2: jornalHora * 1.35, etiqueta: "25% / 35%" };
+}
+
 const MESES = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Setiembre", "Octubre", "Noviembre", "Diciembre",
@@ -221,11 +246,21 @@ function SeccionMensual() {
     });
   }
 
-  function actualizarCategoria(categoria: string, campo: "buc" | "jornal_basico", valor: string) {
+  function actualizarCategoria(
+    categoria: string,
+    campo: "buc" | "bae" | "jornal_basico" | "movilidad_acumulada" | "gratificacion_diaria",
+    valor: string
+  ) {
     setDatos((d) => {
       if (!d) return d;
-      const actual = d.tabla_categorias[categoria] ?? { buc: 0, jornal_basico: 0 };
-      const nuevoValor = campo === "buc" ? aFraccion(valor) : Number(valor) || 0;
+      const actual = d.tabla_categorias[categoria] ?? {
+        buc: 0,
+        jornal_basico: 0,
+        bae: 0,
+        movilidad_acumulada: 0,
+        gratificacion_diaria: 0,
+      };
+      const nuevoValor = campo === "buc" || campo === "bae" ? aFraccion(valor) : Number(valor) || 0;
       return { ...d, tabla_categorias: { ...d.tabla_categorias, [categoria]: { ...actual, [campo]: nuevoValor } } };
     });
   }
@@ -337,34 +372,77 @@ function SeccionMensual() {
             </tbody>
           </table>
 
-          <h3>Tabla salarial construcción civil</h3>
-          <table style={{ marginBottom: 20 }}>
-            <thead>
-              <tr>
-                <th>Categoría</th>
-                <th>Jornal básico diario (S/.)</th>
-                <th>BUC (%)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {CATEGORIAS_CONSTRUCCION.map((cat) => {
-                const c = datos.tabla_categorias[cat] ?? { buc: 0, jornal_basico: 0 };
-                return (
-                  <tr key={cat}>
-                    <td>{cat}</td>
-                    <td>
-                      <input type="number" step="0.01" value={c.jornal_basico}
-                        onChange={(e) => actualizarCategoria(cat, "jornal_basico", e.target.value)} />
-                    </td>
-                    <td>
-                      <input type="number" step="0.01" value={aPorcentaje(c.buc)}
-                        onChange={(e) => actualizarCategoria(cat, "buc", e.target.value)} />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <h3>Tabla salarial</h3>
+          <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
+            Las columnas en blanco (Jornal, BUC, BAE, Movilidad, Gratificación) se editan
+            directamente. Las columnas en gris se calculan solas a partir del jornal básico
+            (Dominical = jornal/6, Vacaciones = 10%, CTS = 15%) y no se guardan por separado.
+            El recargo de hora extra depende del régimen: construcción civil usa 60%/100% y
+            el resto (PEON_A, R_GENERAL) usa 25%/35%.
+          </p>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ marginBottom: 20 }}>
+              <thead>
+                <tr>
+                  <th>Categoría</th>
+                  <th>Jornal básico (S/.)</th>
+                  <th>BUC (%)</th>
+                  <th>BAE (%)</th>
+                  <th>Movilidad acum. (S/.)</th>
+                  <th style={{ background: "#f0f1f4" }}>Dominical (S/.)</th>
+                  <th style={{ background: "#f0f1f4" }}>Vacaciones 10% (S/.)</th>
+                  <th style={{ background: "#f0f1f4" }}>CTS 15% (S/.)</th>
+                  <th>Gratificación (S/.)</th>
+                  <th style={{ background: "#f0f1f4" }}>H.E. tramo 1 (S/.)</th>
+                  <th style={{ background: "#f0f1f4" }}>H.E. tramo 2 (S/.)</th>
+                  <th style={{ background: "#f0f1f4" }}>Recargo H.E.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {CATEGORIAS_TABLA.map((cat) => {
+                  const c = datos.tabla_categorias[cat] ?? {
+                    buc: 0,
+                    jornal_basico: 0,
+                    bae: 0,
+                    movilidad_acumulada: 0,
+                    gratificacion_diaria: 0,
+                  };
+                  const horaExtra = calcHoraExtra(c.jornal_basico, cat);
+                  return (
+                    <tr key={cat}>
+                      <td>{cat}</td>
+                      <td>
+                        <input type="number" step="0.01" value={c.jornal_basico}
+                          onChange={(e) => actualizarCategoria(cat, "jornal_basico", e.target.value)} />
+                      </td>
+                      <td>
+                        <input type="number" step="0.01" value={aPorcentaje(c.buc)}
+                          onChange={(e) => actualizarCategoria(cat, "buc", e.target.value)} />
+                      </td>
+                      <td>
+                        <input type="number" step="0.01" value={aPorcentaje(c.bae)}
+                          onChange={(e) => actualizarCategoria(cat, "bae", e.target.value)} />
+                      </td>
+                      <td>
+                        <input type="number" step="0.01" value={c.movilidad_acumulada}
+                          onChange={(e) => actualizarCategoria(cat, "movilidad_acumulada", e.target.value)} />
+                      </td>
+                      <td style={{ background: "#f7f8fa", color: "#5a6172" }}>{calcDominical(c.jornal_basico).toFixed(2)}</td>
+                      <td style={{ background: "#f7f8fa", color: "#5a6172" }}>{calcVacaciones(c.jornal_basico).toFixed(2)}</td>
+                      <td style={{ background: "#f7f8fa", color: "#5a6172" }}>{calcCTS(c.jornal_basico).toFixed(2)}</td>
+                      <td>
+                        <input type="number" step="0.01" value={c.gratificacion_diaria}
+                          onChange={(e) => actualizarCategoria(cat, "gratificacion_diaria", e.target.value)} />
+                      </td>
+                      <td style={{ background: "#f7f8fa", color: "#5a6172" }}>{horaExtra.tramo1.toFixed(2)}</td>
+                      <td style={{ background: "#f7f8fa", color: "#5a6172" }}>{horaExtra.tramo2.toFixed(2)}</td>
+                      <td style={{ background: "#f7f8fa", color: "#5a6172" }}>{horaExtra.etiqueta}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
 
           <button className="primario" onClick={guardar} disabled={guardando}>
             {guardando ? "Guardando..." : `Guardar tasas de ${MESES[mes - 1]} ${anio}`}

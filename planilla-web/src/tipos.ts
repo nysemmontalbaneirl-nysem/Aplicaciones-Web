@@ -8,7 +8,9 @@ export type CategoriaOcupacional =
   | "EVENTUAL"
   | "OPERARIO_EP"
   | "OPERARIO_EM"
-  | "OPERARIO_TP";
+  | "OPERARIO_TP"
+  | "PEON_A"
+  | "R_GENERAL";
 
 export type SistemaPension = "AFP" | "ONP";
 export type NombreAFP = "INTEGRA" | "PRIMA" | "PROFUTURO" | "HABITAT";
@@ -75,6 +77,9 @@ export interface TasasAFPFondo {
 export interface CategoriaConfig {
   buc: number;
   jornal_basico: number;
+  bae: number;
+  movilidad_acumulada: number;
+  gratificacion_diaria: number;
 }
 
 // Valores de frecuencia ANUAL (UIT, RMV, ESSALUD, ONP, etc.)

@@ -17,6 +17,8 @@ const CATEGORIAS_VALIDAS: CategoriaOcupacional[] = [
   "OPERARIO_EP",
   "OPERARIO_EM",
   "OPERARIO_TP",
+  "PEON_A",
+  "R_GENERAL",
 ];
 const SISTEMAS_PENSION_VALIDOS: SistemaPension[] = ["AFP", "ONP"];
 

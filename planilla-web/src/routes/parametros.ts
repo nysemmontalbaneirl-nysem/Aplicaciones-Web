@@ -45,8 +45,8 @@ parametrosRouter.post("/mensual", async (req: Request, res: Response) => {
       [anio, mes, copiar_de_anio, copiar_de_mes]
     );
     await cliente.query(
-      `INSERT INTO tabla_salarial_mensual (anio, mes, categoria, jornal_basico, buc)
-       SELECT $1, $2, categoria, jornal_basico, buc
+      `INSERT INTO tabla_salarial_mensual (anio, mes, categoria, jornal_basico, buc, bae, movilidad_acumulada, gratificacion_diaria)
+       SELECT $1, $2, categoria, jornal_basico, buc, bae, movilidad_acumulada, gratificacion_diaria
        FROM tabla_salarial_mensual WHERE anio = $3 AND mes = $4
        ON CONFLICT (anio, mes, categoria) DO NOTHING`,
       [anio, mes, copiar_de_anio, copiar_de_mes]
@@ -70,7 +70,7 @@ parametrosRouter.get("/mensual/:anio/:mes", async (req: Request, res: Response) 
     [anio, mes]
   );
   const salarialResult = await pool.query(
-    "SELECT categoria, jornal_basico, buc FROM tabla_salarial_mensual WHERE anio = $1 AND mes = $2",
+    "SELECT categoria, jornal_basico, buc, bae, movilidad_acumulada, gratificacion_diaria FROM tabla_salarial_mensual WHERE anio = $1 AND mes = $2",
     [anio, mes]
   );
 
@@ -87,6 +87,9 @@ parametrosRouter.get("/mensual/:anio/:mes", async (req: Request, res: Response) 
     tabla_categorias[fila.categoria] = {
       jornal_basico: Number(fila.jornal_basico),
       buc: Number(fila.buc),
+      bae: Number(fila.bae),
+      movilidad_acumulada: Number(fila.movilidad_acumulada),
+      gratificacion_diaria: Number(fila.gratificacion_diaria),
     };
   }
 
@@ -100,7 +103,10 @@ parametrosRouter.put("/mensual/:anio/:mes", async (req: Request, res: Response) 
   const mes = Number(req.params.mes);
   const { afp_tasas, tabla_categorias } = req.body as {
     afp_tasas?: Record<string, { comision_flujo: number; prima_seguro: number; aporte_obligatorio: number }>;
-    tabla_categorias?: Record<string, { jornal_basico: number; buc: number }>;
+    tabla_categorias?: Record<
+      string,
+      { jornal_basico: number; buc: number; bae: number; movilidad_acumulada: number; gratificacion_diaria: number }
+    >;
   };
 
   const cliente = await pool.connect();
@@ -121,12 +127,24 @@ parametrosRouter.put("/mensual/:anio/:mes", async (req: Request, res: Response) 
 
     for (const [categoria, c] of Object.entries(tabla_categorias ?? {})) {
       await cliente.query(
-        `INSERT INTO tabla_salarial_mensual (anio, mes, categoria, jornal_basico, buc)
-         VALUES ($1,$2,$3,$4,$5)
+        `INSERT INTO tabla_salarial_mensual (anio, mes, categoria, jornal_basico, buc, bae, movilidad_acumulada, gratificacion_diaria)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
          ON CONFLICT (anio, mes, categoria) DO UPDATE SET
            jornal_basico = EXCLUDED.jornal_basico,
-           buc = EXCLUDED.buc`,
-        [anio, mes, categoria, c.jornal_basico, c.buc]
+           buc = EXCLUDED.buc,
+           bae = EXCLUDED.bae,
+           movilidad_acumulada = EXCLUDED.movilidad_acumulada,
+           gratificacion_diaria = EXCLUDED.gratificacion_diaria`,
+        [
+          anio,
+          mes,
+          categoria,
+          c.jornal_basico,
+          c.buc,
+          c.bae ?? 0,
+          c.movilidad_acumulada ?? 0,
+          c.gratificacion_diaria ?? 0,
+        ]
       );
     }
 

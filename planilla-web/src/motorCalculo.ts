@@ -87,16 +87,29 @@ export function calcularRemuneracionFeriado(
   return redondear(jornalDiario * asistencia.dias_feriado);
 }
 
-/** Importe de horas extra: 25% las 2 primeras horas, 35% el resto, 100% feriado/nocturno excedente. */
+/**
+ * Importe de horas extra. El recargo depende del regimen laboral (verificado
+ * contra la tabla salarial real de la empresa, hoja AFPS-SALARIOS):
+ * - Construccion civil (OPERARIO/OFICIAL/PEON/EP/EM/TP): 60% las 2 primeras
+ *   horas, 100% el excedente (convenio colectivo de construccion civil).
+ * - Regimen general (R_GENERAL/PEON_A y demas fuera de construccion civil):
+ *   25% las 2 primeras horas, 35% el excedente (recargo legal estandar).
+ * Los campos horas_extra_25/horas_extra_35/horas_extra_100 son los mismos
+ * 3 "tramos" de horas para ambos regimenes; solo cambia el % aplicado.
+ */
 export function calcularHorasExtra(
   jornalDiario: number,
-  asistencia: AsistenciaEntrada
+  asistencia: AsistenciaEntrada,
+  categoria: CategoriaOcupacional
 ): number {
   const jornalHora = jornalDiario / 8;
-  const importe25 = jornalHora * 1.25 * asistencia.horas_extra_25;
-  const importe35 = jornalHora * 1.35 * asistencia.horas_extra_35;
-  const importe100 = jornalHora * 2.0 * asistencia.horas_extra_100;
-  return redondear(importe25 + importe35 + importe100);
+  const [recargoTramo1, recargoTramo2, recargoTramo3] = esConstruccionCivil(categoria)
+    ? [1.6, 2.0, 2.0]
+    : [1.25, 1.35, 2.0];
+  const importeTramo1 = jornalHora * recargoTramo1 * asistencia.horas_extra_25;
+  const importeTramo2 = jornalHora * recargoTramo2 * asistencia.horas_extra_35;
+  const importeTramo3 = jornalHora * recargoTramo3 * asistencia.horas_extra_100;
+  return redondear(importeTramo1 + importeTramo2 + importeTramo3);
 }
 
 /** Asignacion familiar: monto fijo mensual si tiene >=1 hijo, prorrateado por dias trabajados. */
@@ -335,7 +348,7 @@ export function calcularLineaPlanilla(
   const sueldoBasico = calcularSueldoBasico(jornalDiario, asistencia, contrato.categoria_ocupacional);
   const remDominical = calcularRemuneracionDominical(jornalDiario, asistencia);
   const remFeriado = calcularRemuneracionFeriado(jornalDiario, asistencia);
-  const importeHorasExtra = calcularHorasExtra(jornalDiario, asistencia);
+  const importeHorasExtra = calcularHorasExtra(jornalDiario, asistencia, contrato.categoria_ocupacional);
   const asignacionFamiliar = calcularAsignacionFamiliar(
     contrato,
     numeroHijos,

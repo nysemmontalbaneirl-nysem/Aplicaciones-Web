@@ -62,12 +62,17 @@ CREATE TABLE tasas_afp_mensuales (
 
 -- Tabla salarial de construcción civil de frecuencia MENSUAL (jornal básico y BUC por categoría).
 CREATE TABLE tabla_salarial_mensual (
-    id              SERIAL PRIMARY KEY,
-    anio            INT NOT NULL,
-    mes             INT NOT NULL CHECK (mes BETWEEN 1 AND 12),
-    categoria       VARCHAR(30) NOT NULL, -- OPERARIO | OFICIAL | PEON | OPERARIO_EP | OPERARIO_EM | OPERARIO_TP
-    jornal_basico   NUMERIC(10,2) NOT NULL,
-    buc             NUMERIC(6,4) NOT NULL DEFAULT 0,
+    id                    SERIAL PRIMARY KEY,
+    anio                  INT NOT NULL,
+    mes                   INT NOT NULL CHECK (mes BETWEEN 1 AND 12),
+    categoria             VARCHAR(30) NOT NULL, -- OPERARIO | OFICIAL | PEON | OPERARIO_EP | OPERARIO_EM | OPERARIO_TP | PEON_A | R_GENERAL
+    jornal_basico         NUMERIC(10,2) NOT NULL,
+    buc                   NUMERIC(6,4) NOT NULL DEFAULT 0,
+    bae                   NUMERIC(6,4) NOT NULL DEFAULT 0, -- solo OPERARIO_EP/EM/TP (10%/8%/9%)
+    movilidad_acumulada   NUMERIC(10,2) NOT NULL DEFAULT 0,
+    -- Valor de referencia editable (no alimenta el calculo de gratificacion real,
+    -- que se calcula por Ley 29351 segun tiempo de servicio en motorCalculo.ts).
+    gratificacion_diaria  NUMERIC(10,2) NOT NULL DEFAULT 0,
     UNIQUE (anio, mes, categoria)
 );
 
@@ -236,10 +241,12 @@ INSERT INTO tasas_afp_mensuales (anio, mes, afp_nombre, comision_flujo, prima_se
 -- porcentaje "BAE" propio (EP=10%, EM=8%, TP=9%) que el motor de cálculo
 -- TODAVÍA NO aplica - falta agregarlo como un concepto adicional en
 -- motorCalculo.ts.
-INSERT INTO tabla_salarial_mensual (anio, mes, categoria, jornal_basico, buc) VALUES
-    (2026, 2, 'OPERARIO',    89.30, 0.32),
-    (2026, 2, 'OFICIAL',     69.75, 0.30),
-    (2026, 2, 'PEON',        62.80, 0.30),
-    (2026, 2, 'OPERARIO_EP', 89.30, 0.32),
-    (2026, 2, 'OPERARIO_EM', 89.30, 0.32),
-    (2026, 2, 'OPERARIO_TP', 89.30, 0.32);
+INSERT INTO tabla_salarial_mensual (anio, mes, categoria, jornal_basico, buc, bae, movilidad_acumulada, gratificacion_diaria) VALUES
+    (2026, 2, 'OPERARIO',    89.30, 0.32, 0,    8.60, 17.01),
+    (2026, 2, 'OFICIAL',     69.75, 0.30, 0,    8.60, 13.29),
+    (2026, 2, 'PEON',        62.80, 0.30, 0,    8.60, 11.96),
+    (2026, 2, 'OPERARIO_EP', 89.30, 0.32, 0.10, 8.60, 17.01),
+    (2026, 2, 'OPERARIO_EM', 89.30, 0.32, 0.08, 8.60, 17.01),
+    (2026, 2, 'OPERARIO_TP', 89.30, 0.32, 0.09, 8.60, 17.01),
+    (2026, 2, 'PEON_A',      47.61, 0,    0,    0,    0),
+    (2026, 2, 'R_GENERAL',   37.67, 0,    0,    0,    0);
