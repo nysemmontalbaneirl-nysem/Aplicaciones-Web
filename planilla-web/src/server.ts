@@ -15,7 +15,10 @@ dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// El limite por defecto de 100kb se queda corto al calcular planilla con
+// miles de trabajadores (el array de asistencias del periodo puede pesar
+// varios cientos de KB).
+app.use(express.json({ limit: "10mb" }));
 
 app.get("/api/salud", (_req: Request, res: Response) => {
   res.json({ estado: "ok" });
