@@ -2,9 +2,10 @@ import { useState } from "react";
 import Trabajadores from "./components/Trabajadores";
 import Periodos from "./components/Periodos";
 import Planilla from "./components/Planilla";
+import Parametros from "./components/Parametros";
 import { PeriodoPlanilla } from "./types";
 
-type Pestana = "trabajadores" | "periodos" | "planilla";
+type Pestana = "trabajadores" | "periodos" | "planilla" | "parametros";
 
 export default function App() {
   const [pestana, setPestana] = useState<Pestana>("trabajadores");
@@ -41,11 +42,18 @@ export default function App() {
         >
           Planilla
         </button>
+        <button
+          className={`tab-button ${pestana === "parametros" ? "activo" : ""}`}
+          onClick={() => setPestana("parametros")}
+        >
+          Parametros
+        </button>
       </div>
 
       {pestana === "trabajadores" && <Trabajadores />}
       {pestana === "periodos" && <Periodos onSeleccionar={irACalcularPlanilla} />}
       {pestana === "planilla" && periodoSeleccionado && <Planilla periodo={periodoSeleccionado} />}
+      {pestana === "parametros" && <Parametros />}
     </div>
   );
 }

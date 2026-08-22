@@ -6,6 +6,32 @@ export type CategoriaOcupacional =
   | "EVENTUAL"
   | "OPERARIO EP";
 
+export interface TasasAFPFondo {
+  aporte_obligatorio: number;
+  comision_flujo: number;
+  prima_seguro: number;
+}
+
+export interface CategoriaConfig {
+  buc: number;
+  jornal_basico: number;
+}
+
+export interface ParametrosNormativos {
+  id: number;
+  anio: number;
+  uit: number;
+  tasa_essalud: number;
+  tasa_onp: number;
+  tasa_senati: number;
+  tasa_conafovicer: number;
+  tasa_sctr_salud: number;
+  asignacion_familiar: number;
+  seguro_vida_ley: number;
+  afp_tasas: Record<string, TasasAFPFondo>;
+  tabla_categorias: Record<string, CategoriaConfig>;
+}
+
 export interface Empleado {
   id: number;
   tipo_documento: string;
