@@ -90,9 +90,9 @@ CREATE TABLE empleados (
     celular             VARCHAR(20),
     correo              VARCHAR(120),
     direccion           TEXT,
-    ubigeo              VARCHAR(10),
+    ubigeo              VARCHAR(200), -- el dato real de la empresa es texto de ubicacion (distrito-provincia-departamento), no un codigo numerico
     entidad_bancaria    VARCHAR(100),
-    cuenta_bancaria     VARCHAR(50),
+    cuenta_bancaria     VARCHAR(100),
     estado              VARCHAR(20) NOT NULL DEFAULT 'ACTIVO', -- ACTIVO | INACTIVO
     creado_en           TIMESTAMPTZ NOT NULL DEFAULT now(),
     actualizado_en      TIMESTAMPTZ NOT NULL DEFAULT now()
