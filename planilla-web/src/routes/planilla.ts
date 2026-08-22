@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { pool } from "../db";
 import { calcularLineaPlanilla } from "../motorCalculo";
-import { Contrato, ParametrosNormativos } from "../tipos";
+import { Contrato, ParametrosNormativos, TablaSalarialMensual, TasasAFPMensuales } from "../tipos";
 import { ErrorValidacion, validarListaAsistencia } from "../validaciones";
 
 export const planillaRouter = Router();
@@ -17,6 +17,44 @@ async function obtenerParametros(anio: number): Promise<ParametrosNormativos> {
     throw new ErrorValidacion(`No hay parametros_normativos configurados para el anio ${anio}`);
   }
   return r.rows[0] as ParametrosNormativos;
+}
+
+async function obtenerTablaCategorias(anio: number, mes: number): Promise<TablaSalarialMensual> {
+  const r = await pool.query(
+    "SELECT categoria, jornal_basico, buc FROM tabla_salarial_mensual WHERE anio = $1 AND mes = $2",
+    [anio, mes]
+  );
+  if (r.rowCount === 0) {
+    throw new ErrorValidacion(
+      `No hay tabla_salarial_mensual configurada para ${mes}/${anio}. Configurala en la pestana Parametros.`
+    );
+  }
+  const tabla: TablaSalarialMensual = {};
+  for (const fila of r.rows) {
+    tabla[fila.categoria] = { jornal_basico: Number(fila.jornal_basico), buc: Number(fila.buc) };
+  }
+  return tabla;
+}
+
+async function obtenerAfpTasas(anio: number, mes: number): Promise<TasasAFPMensuales> {
+  const r = await pool.query(
+    "SELECT afp_nombre, comision_flujo, prima_seguro, aporte_obligatorio FROM tasas_afp_mensuales WHERE anio = $1 AND mes = $2",
+    [anio, mes]
+  );
+  if (r.rowCount === 0) {
+    throw new ErrorValidacion(
+      `No hay tasas_afp_mensuales configuradas para ${mes}/${anio}. Configuralas en la pestana Parametros.`
+    );
+  }
+  const tasas = {} as TasasAFPMensuales;
+  for (const fila of r.rows) {
+    (tasas as Record<string, unknown>)[fila.afp_nombre] = {
+      comision_flujo: Number(fila.comision_flujo),
+      prima_seguro: Number(fila.prima_seguro),
+      aporte_obligatorio: Number(fila.aporte_obligatorio),
+    };
+  }
+  return tasas;
 }
 
 // GET /api/periodos/:id/planilla -> planilla ya calculada de ese periodo
@@ -47,6 +85,8 @@ planillaRouter.post("/:id/calcular", async (req: Request, res: Response) => {
 
     const asistencias = validarListaAsistencia(req.body.asistencias);
     const parametros = await obtenerParametros(periodo.anio);
+    const tablaCategorias = await obtenerTablaCategorias(periodo.anio, periodo.mes);
+    const afpTasas = await obtenerAfpTasas(periodo.anio, periodo.mes);
 
     const contratoIds = asistencias.map((a) => a.contrato_id);
     const contratosResult = await pool.query(
@@ -74,6 +114,8 @@ planillaRouter.post("/:id/calcular", async (req: Request, res: Response) => {
         contrato.numero_hijos,
         asistencia,
         parametros,
+        tablaCategorias,
+        afpTasas,
         periodo.dias_periodo,
         periodo.mes,
         periodo.anio

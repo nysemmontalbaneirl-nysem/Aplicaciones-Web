@@ -19,10 +19,12 @@ export interface CategoriaConfig {
   jornal_basico: number;
 }
 
+// Valores de frecuencia ANUAL
 export interface ParametrosNormativos {
   id: number;
   anio: number;
   uit: number;
+  remuneracion_minima_vital: number;
   tasa_essalud: number;
   tasa_onp: number;
   tasa_senati: number;
@@ -30,8 +32,19 @@ export interface ParametrosNormativos {
   tasa_sctr_salud: number;
   asignacion_familiar: number;
   seguro_vida_ley: number;
+}
+
+// Tasas AFP y tabla salarial: frecuencia MENSUAL
+export interface ParametrosMensuales {
+  anio: number;
+  mes: number;
   afp_tasas: Record<string, TasasAFPFondo>;
   tabla_categorias: Record<string, CategoriaConfig>;
+}
+
+export interface PeriodoMensual {
+  anio: number;
+  mes: number;
 }
 
 export interface Empleado {

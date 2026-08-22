@@ -77,10 +77,12 @@ export interface CategoriaConfig {
   jornal_basico: number;
 }
 
+// Valores de frecuencia ANUAL (UIT, RMV, ESSALUD, ONP, etc.)
 export interface ParametrosNormativos {
   id: number;
   anio: number;
   uit: number;
+  remuneracion_minima_vital: number;
   tasa_essalud: number;
   tasa_onp: number;
   tasa_senati: number;
@@ -88,9 +90,11 @@ export interface ParametrosNormativos {
   tasa_sctr_salud: number;
   asignacion_familiar: number;
   seguro_vida_ley: number;
-  afp_tasas: Record<NombreAFP, TasasAFPFondo>;
-  tabla_categorias: Record<string, CategoriaConfig>;
 }
+
+// Tasas AFP y tabla salarial son de frecuencia MENSUAL (cambian mes a mes)
+export type TasasAFPMensuales = Record<NombreAFP, TasasAFPFondo>;
+export type TablaSalarialMensual = Record<string, CategoriaConfig>;
 
 // Entrada de asistencia que llega desde el frontend (tareo del mes) para un contrato
 export interface AsistenciaEntrada {

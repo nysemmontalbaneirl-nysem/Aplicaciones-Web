@@ -17,6 +17,8 @@ import {
   Contrato,
   DetallePlanilla,
   ParametrosNormativos,
+  TablaSalarialMensual,
+  TasasAFPMensuales,
 } from "./tipos";
 
 const CATEGORIAS_CONSTRUCCION_CIVIL: CategoriaOcupacional[] = [
@@ -39,16 +41,16 @@ function redondear(valor: number): number {
 /** Jornal/sueldo diario del trabajador (equivalente a la columna CG de PLANTILLA). */
 export function calcularJornalDiario(
   contrato: Contrato,
-  parametros: ParametrosNormativos
+  tablaCategorias: TablaSalarialMensual
 ): number {
   if (contrato.categoria_ocupacional === "EMPLEADO") {
     // Sueldo mensual fijo prorrateado sobre 30 dias
     return (contrato.sueldo_base ?? 0) / 30;
   }
-  const config = parametros.tabla_categorias[contrato.categoria_ocupacional];
+  const config = tablaCategorias[contrato.categoria_ocupacional];
   if (!config) {
     throw new Error(
-      `No hay jornal configurado para la categoria '${contrato.categoria_ocupacional}' en parametros_normativos.tabla_categorias`
+      `No hay jornal configurado para la categoria '${contrato.categoria_ocupacional}' en tabla_salarial_mensual para este periodo`
     );
   }
   return config.jornal_basico;
@@ -115,10 +117,10 @@ export function calcularBonificacionBUC(
   contrato: Contrato,
   jornalDiario: number,
   asistencia: AsistenciaEntrada,
-  parametros: ParametrosNormativos
+  tablaCategorias: TablaSalarialMensual
 ): number {
   if (!esConstruccionCivil(contrato.categoria_ocupacional)) return 0;
-  const config = parametros.tabla_categorias[contrato.categoria_ocupacional];
+  const config = tablaCategorias[contrato.categoria_ocupacional];
   if (!config) return 0;
   return redondear(jornalDiario * config.buc * asistencia.dias_trabajados);
 }
@@ -212,7 +214,8 @@ export interface DetalleAportePension {
 export function calcularAportePension(
   contrato: Contrato,
   remuneracionAfecta: number,
-  parametros: ParametrosNormativos
+  parametros: ParametrosNormativos,
+  afpTasas: TasasAFPMensuales
 ): DetalleAportePension {
   if (contrato.sistema_pension === "ONP") {
     const onp = redondear(remuneracionAfecta * parametros.tasa_onp);
@@ -221,9 +224,9 @@ export function calcularAportePension(
   if (!contrato.afp_nombre) {
     throw new Error(`Contrato ${contrato.id} tiene sistema_pension=AFP sin afp_nombre`);
   }
-  const tasas = parametros.afp_tasas[contrato.afp_nombre];
+  const tasas = afpTasas[contrato.afp_nombre];
   if (!tasas) {
-    throw new Error(`No hay tasas configuradas para la AFP '${contrato.afp_nombre}'`);
+    throw new Error(`No hay tasas AFP configuradas para '${contrato.afp_nombre}' en tasas_afp_mensuales para este periodo`);
   }
   const aporteObligatorio = redondear(remuneracionAfecta * tasas.aporte_obligatorio);
   const comisionFlujo = redondear(remuneracionAfecta * tasas.comision_flujo);
@@ -322,11 +325,13 @@ export function calcularLineaPlanilla(
   numeroHijos: number,
   asistencia: AsistenciaEntrada,
   parametros: ParametrosNormativos,
+  tablaCategorias: TablaSalarialMensual,
+  afpTasas: TasasAFPMensuales,
   diasPeriodo: number,
   mes: number,
   anio: number
 ): ResultadoCalculoLinea {
-  const jornalDiario = calcularJornalDiario(contrato, parametros);
+  const jornalDiario = calcularJornalDiario(contrato, tablaCategorias);
   const sueldoBasico = calcularSueldoBasico(jornalDiario, asistencia, contrato.categoria_ocupacional);
   const remDominical = calcularRemuneracionDominical(jornalDiario, asistencia);
   const remFeriado = calcularRemuneracionFeriado(jornalDiario, asistencia);
@@ -338,7 +343,7 @@ export function calcularLineaPlanilla(
     parametros,
     diasPeriodo
   );
-  const bonificacionBUC = calcularBonificacionBUC(contrato, jornalDiario, asistencia, parametros);
+  const bonificacionBUC = calcularBonificacionBUC(contrato, jornalDiario, asistencia, tablaCategorias);
 
   // Remuneracion computable para gratificacion/CTS (sin horas extra ni bonos esporadicos)
   const remuneracionComputable = sueldoBasico + remDominical + asignacionFamiliar + bonificacionBUC;
@@ -363,7 +368,7 @@ export function calcularLineaPlanilla(
     sueldoBasico + remDominical + remFeriado + importeHorasExtra + asignacionFamiliar + bonificacionBUC
   );
 
-  const aportePension = calcularAportePension(contrato, remuneracionAfecta, parametros);
+  const aportePension = calcularAportePension(contrato, remuneracionAfecta, parametros, afpTasas);
   // PENDIENTE: en el Excel real (hoja AFPS-SALARIOS, columnas Z:AB "CUOTA SINDICATO")
   // la cuota sindical NO es un porcentaje del sueldo - es un monto FIJO semanal
   // que ademas varia por proyecto (ej. P006=S/.10/semana, P010=S/.20/semana,

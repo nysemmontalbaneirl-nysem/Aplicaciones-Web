@@ -32,23 +32,43 @@ CREATE TABLE usuarios (
 -- -------------------------------------------------------------------------
 -- parametros_normativos: constantes legales por año (editable sin tocar código)
 -- -------------------------------------------------------------------------
+-- Valores de frecuencia ANUAL (UIT, RMV, ESSALUD, ONP, etc.) - un registro por año.
 CREATE TABLE parametros_normativos (
-    id                   SERIAL PRIMARY KEY,
-    anio                 INT NOT NULL UNIQUE,
-    uit                  NUMERIC(10,2) NOT NULL,
-    tasa_essalud         NUMERIC(6,4)  NOT NULL DEFAULT 0.09,
-    tasa_onp             NUMERIC(6,4)  NOT NULL DEFAULT 0.13,
-    tasa_senati          NUMERIC(6,4)  NOT NULL DEFAULT 0.0075,
-    tasa_conafovicer     NUMERIC(6,4)  NOT NULL DEFAULT 0.02,
-    tasa_sctr_salud      NUMERIC(6,4)  NOT NULL DEFAULT 0.0155,
-    asignacion_familiar  NUMERIC(10,2) NOT NULL,
-    seguro_vida_ley      NUMERIC(10,2) NOT NULL DEFAULT 5.00,
-    -- tasas AFP por fondo: {"INTEGRA": {"comision_flujo":0.0130,"prima_seguro":0.0173}, "PRIMA": {...}, ...}
-    afp_tasas            JSONB NOT NULL DEFAULT '{}'::jsonb,
-    -- jornal/bonificación unificada de construcción por categoría ocupacional:
-    -- {"OPERARIO":{"buc":0.32,"jornal_basico":85.60}, "OFICIAL":{"buc":0.30,...}, "PEON":{"buc":0.30,...}}
-    tabla_categorias     JSONB NOT NULL DEFAULT '{}'::jsonb,
-    creado_en            TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                          SERIAL PRIMARY KEY,
+    anio                        INT NOT NULL UNIQUE,
+    uit                         NUMERIC(10,2) NOT NULL,
+    remuneracion_minima_vital   NUMERIC(10,2) NOT NULL DEFAULT 0,
+    tasa_essalud                NUMERIC(6,4)  NOT NULL DEFAULT 0.09,
+    tasa_onp                    NUMERIC(6,4)  NOT NULL DEFAULT 0.13,
+    tasa_senati                 NUMERIC(6,4)  NOT NULL DEFAULT 0.0075,
+    tasa_conafovicer            NUMERIC(6,4)  NOT NULL DEFAULT 0.02,
+    tasa_sctr_salud             NUMERIC(6,4)  NOT NULL DEFAULT 0.0155,
+    asignacion_familiar         NUMERIC(10,2) NOT NULL,
+    seguro_vida_ley             NUMERIC(10,2) NOT NULL DEFAULT 5.00,
+    creado_en                   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Tasas AFP de frecuencia MENSUAL (SBS publica valores nuevos cada mes).
+CREATE TABLE tasas_afp_mensuales (
+    id                  SERIAL PRIMARY KEY,
+    anio                INT NOT NULL,
+    mes                 INT NOT NULL CHECK (mes BETWEEN 1 AND 12),
+    afp_nombre          VARCHAR(30) NOT NULL, -- INTEGRA | PRIMA | PROFUTURO | HABITAT
+    comision_flujo      NUMERIC(6,4) NOT NULL DEFAULT 0,
+    prima_seguro        NUMERIC(6,4) NOT NULL DEFAULT 0,
+    aporte_obligatorio  NUMERIC(6,4) NOT NULL DEFAULT 0.10,
+    UNIQUE (anio, mes, afp_nombre)
+);
+
+-- Tabla salarial de construcción civil de frecuencia MENSUAL (jornal básico y BUC por categoría).
+CREATE TABLE tabla_salarial_mensual (
+    id              SERIAL PRIMARY KEY,
+    anio            INT NOT NULL,
+    mes             INT NOT NULL CHECK (mes BETWEEN 1 AND 12),
+    categoria       VARCHAR(30) NOT NULL, -- OPERARIO | OFICIAL | PEON | OPERARIO_EP | OPERARIO_EM | OPERARIO_TP
+    jornal_basico   NUMERIC(10,2) NOT NULL,
+    buc             NUMERIC(6,4) NOT NULL DEFAULT 0,
+    UNIQUE (anio, mes, categoria)
 );
 
 -- -------------------------------------------------------------------------
@@ -188,34 +208,38 @@ CREATE TABLE bitacora_planilla (
 );
 
 -- -------------------------------------------------------------------------
--- Parámetros 2026 - valores reales tomados de la hoja "AFPS-SALARIOS" del
--- Excel original ("TABLAS SALARIALES CONSTRUCCION CIVIL 02-2026"). Estos
--- son los vigentes a febrero 2026; como cambian mes a mes, actualízalos
--- desde la pestaña "Parametros" de la app cuando SBS/el sector publique
--- valores nuevos.
+-- Parámetros anuales 2026. OJO: remuneracion_minima_vital queda en 0 a
+-- proposito - no se encontro un valor confirmado en los archivos revisados,
+-- actualizalo desde la pestaña "Parametros" antes de usarlo en un calculo.
 -- -------------------------------------------------------------------------
 INSERT INTO parametros_normativos (
-    anio, uit, tasa_essalud, tasa_onp, tasa_senati, tasa_conafovicer, tasa_sctr_salud,
-    asignacion_familiar, seguro_vida_ley, afp_tasas, tabla_categorias
+    anio, uit, remuneracion_minima_vital, tasa_essalud, tasa_onp, tasa_senati,
+    tasa_conafovicer, tasa_sctr_salud, asignacion_familiar, seguro_vida_ley
 ) VALUES (
-    2026, 5500, 0.09, 0.13, 0.0075, 0.02, 0.0155,
-    113.00, 5.00,
-    '{
-        "INTEGRA":   {"comision_flujo": 0.0155, "prima_seguro": 0.0137, "aporte_obligatorio": 0.10},
-        "PRIMA":     {"comision_flujo": 0.0160, "prima_seguro": 0.0137, "aporte_obligatorio": 0.10},
-        "PROFUTURO": {"comision_flujo": 0.0169, "prima_seguro": 0.0137, "aporte_obligatorio": 0.10},
-        "HABITAT":   {"comision_flujo": 0.0147, "prima_seguro": 0.0137, "aporte_obligatorio": 0.10}
-    }'::jsonb,
-    '{
-        "OPERARIO":    {"buc": 0.32, "jornal_basico": 89.30},
-        "OFICIAL":     {"buc": 0.30, "jornal_basico": 69.75},
-        "PEON":        {"buc": 0.30, "jornal_basico": 62.80},
-        "OPERARIO_EP": {"buc": 0.32, "jornal_basico": 89.30},
-        "OPERARIO_EM": {"buc": 0.32, "jornal_basico": 89.30},
-        "OPERARIO_TP": {"buc": 0.32, "jornal_basico": 89.30}
-    }'::jsonb
+    2026, 5500, 0, 0.09, 0.13, 0.0075, 0.02, 0.0155, 113.00, 5.00
 );
--- NOTA: OPERARIO_EP/EM/TP comparten el jornal base de OPERARIO (asi esta en
--- AFPS-SALARIOS: L12/L13/L14 = "=+L7"). Cada una tiene ademas un porcentaje
--- "BAE" propio (EP=10%, EM=8%, TP=9%) que el motor de calculo TODAVIA NO
--- aplica - falta agregarlo como un concepto adicional en motorCalculo.ts.
+
+-- -------------------------------------------------------------------------
+-- Tasas AFP y tabla salarial de FEBRERO 2026 - valores reales tomados de la
+-- hoja "AFPS-SALARIOS" del Excel original ("TABLAS SALARIALES CONSTRUCCION
+-- CIVIL 02-2026"). Solo cubre ese mes; agrega los meses siguientes desde la
+-- pestaña "Parametros" cuando SBS/el sector publique valores nuevos.
+-- -------------------------------------------------------------------------
+INSERT INTO tasas_afp_mensuales (anio, mes, afp_nombre, comision_flujo, prima_seguro, aporte_obligatorio) VALUES
+    (2026, 2, 'INTEGRA',   0.0155, 0.0137, 0.10),
+    (2026, 2, 'PRIMA',     0.0160, 0.0137, 0.10),
+    (2026, 2, 'PROFUTURO', 0.0169, 0.0137, 0.10),
+    (2026, 2, 'HABITAT',   0.0147, 0.0137, 0.10);
+
+-- NOTA: OPERARIO_EP/EM/TP comparten el jornal básico de OPERARIO (así está
+-- en AFPS-SALARIOS: L12/L13/L14 = "=+L7"). Cada una tiene además un
+-- porcentaje "BAE" propio (EP=10%, EM=8%, TP=9%) que el motor de cálculo
+-- TODAVÍA NO aplica - falta agregarlo como un concepto adicional en
+-- motorCalculo.ts.
+INSERT INTO tabla_salarial_mensual (anio, mes, categoria, jornal_basico, buc) VALUES
+    (2026, 2, 'OPERARIO',    89.30, 0.32),
+    (2026, 2, 'OFICIAL',     69.75, 0.30),
+    (2026, 2, 'PEON',        62.80, 0.30),
+    (2026, 2, 'OPERARIO_EP', 89.30, 0.32),
+    (2026, 2, 'OPERARIO_EM', 89.30, 0.32),
+    (2026, 2, 'OPERARIO_TP', 89.30, 0.32);
