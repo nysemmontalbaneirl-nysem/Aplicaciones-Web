@@ -1,4 +1,4 @@
-const BASE_URL = "http://localhost:3000/api";
+export const BASE_URL = "http://localhost:3000/api";
 
 async function manejarRespuesta<T>(res: Response): Promise<T> {
   if (!res.ok) {

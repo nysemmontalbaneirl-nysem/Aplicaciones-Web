@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiGet, apiPost } from "../api";
+import { apiGet, apiPost, BASE_URL } from "../api";
 import { PeriodoPlanilla } from "../types";
 
 const MESES = [
@@ -110,11 +110,21 @@ export default function Periodos({ onSeleccionar }: { onSeleccionar?: (p: Period
                 <td>{p.fecha_inicio?.slice(0, 10)}</td>
                 <td>{p.fecha_fin?.slice(0, 10)}</td>
                 <td>{p.estado}</td>
-                <td>
+                <td style={{ display: "flex", gap: 6 }}>
                   {onSeleccionar && (
                     <button className="primario" onClick={() => onSeleccionar(p)}>
                       Calcular planilla
                     </button>
+                  )}
+                  {p.estado === "CALCULADO" && (
+                    <>
+                      <a href={`${BASE_URL}/periodos/${p.id}/exportar/rem`}>
+                        <button type="button">Descargar REM (PLAME)</button>
+                      </a>
+                      <a href={`${BASE_URL}/periodos/${p.id}/exportar/afpnet`}>
+                        <button type="button">Descargar AFPnet (CSV)</button>
+                      </a>
+                    </>
                   )}
                 </td>
               </tr>

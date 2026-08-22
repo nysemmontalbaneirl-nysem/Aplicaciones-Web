@@ -8,6 +8,7 @@ import { contratosRouter } from "./routes/contratos";
 import { periodosRouter } from "./routes/periodos";
 import { planillaRouter } from "./routes/planilla";
 import { parametrosRouter } from "./routes/parametros";
+import { exportacionesRouter } from "./routes/exportaciones";
 
 dotenv.config();
 
@@ -25,6 +26,7 @@ app.use("/api/periodos", periodosRouter);
 // El router de planilla cuelga de /api/periodos/:id/planilla y /api/periodos/:id/calcular
 app.use("/api/periodos", planillaRouter);
 app.use("/api/parametros", parametrosRouter);
+app.use("/api/periodos", exportacionesRouter);
 
 // Manejador de errores centralizado
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
