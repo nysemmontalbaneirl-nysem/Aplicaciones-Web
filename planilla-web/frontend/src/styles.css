@@ -172,3 +172,22 @@ button.primario:disabled {
 input[type="number"] {
   width: 90px;
 }
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .boleta-imprimible, .boleta-imprimible * {
+    visibility: visible;
+  }
+  .boleta-imprimible {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    box-shadow: none;
+  }
+  .no-imprimir {
+    display: none !important;
+  }
+}

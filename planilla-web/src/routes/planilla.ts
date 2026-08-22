@@ -25,7 +25,9 @@ planillaRouter.get("/:id/planilla", async (req: Request, res: Response) => {
   if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
 
   const resultado = await pool.query(
-    `SELECT d.*, e.apellidos_nombres, e.numero_documento, c.proyecto, c.categoria_ocupacional
+    `SELECT d.*, e.apellidos_nombres, e.numero_documento, e.numero_hijos,
+            c.proyecto, c.categoria_ocupacional, c.sistema_pension, c.afp_nombre,
+            c.cuspp, c.fecha_ingreso
      FROM detalle_planilla d
      JOIN contratos c ON c.id = d.contrato_id
      JOIN empleados e ON e.id = c.empleado_id

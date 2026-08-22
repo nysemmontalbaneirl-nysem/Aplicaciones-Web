@@ -198,14 +198,23 @@ export function calcularCTS(
   return redondear(base + sextaGrati);
 }
 
-/** Aporte a pension (ONP 13%, o AFP: aporte obligatorio + comision + prima de seguro). */
+export interface DetalleAportePension {
+  total: number;
+  onp: number;
+  aporteObligatorio: number;
+  comisionFlujo: number;
+  primaSeguro: number;
+}
+
+/** Aporte a pension (ONP 13%, o AFP: aporte obligatorio + comision + prima de seguro), desglosado. */
 export function calcularAportePension(
   contrato: Contrato,
   remuneracionAfecta: number,
   parametros: ParametrosNormativos
-): number {
+): DetalleAportePension {
   if (contrato.sistema_pension === "ONP") {
-    return redondear(remuneracionAfecta * parametros.tasa_onp);
+    const onp = redondear(remuneracionAfecta * parametros.tasa_onp);
+    return { total: onp, onp, aporteObligatorio: 0, comisionFlujo: 0, primaSeguro: 0 };
   }
   if (!contrato.afp_nombre) {
     throw new Error(`Contrato ${contrato.id} tiene sistema_pension=AFP sin afp_nombre`);
@@ -214,11 +223,11 @@ export function calcularAportePension(
   if (!tasas) {
     throw new Error(`No hay tasas configuradas para la AFP '${contrato.afp_nombre}'`);
   }
-  const total =
-    remuneracionAfecta * tasas.aporte_obligatorio +
-    remuneracionAfecta * tasas.comision_flujo +
-    remuneracionAfecta * tasas.prima_seguro;
-  return redondear(total);
+  const aporteObligatorio = redondear(remuneracionAfecta * tasas.aporte_obligatorio);
+  const comisionFlujo = redondear(remuneracionAfecta * tasas.comision_flujo);
+  const primaSeguro = redondear(remuneracionAfecta * tasas.prima_seguro);
+  const total = redondear(aporteObligatorio + comisionFlujo + primaSeguro);
+  return { total, onp: 0, aporteObligatorio, comisionFlujo, primaSeguro };
 }
 
 /** Aporte ESSALUD a cargo del empleador (informativo, no se descuenta al trabajador). */
@@ -360,7 +369,7 @@ export function calcularLineaPlanilla(
   const otrosDescuentos = 0;
 
   const totalDescuentos = redondear(
-    aportePension + descuentoSindicato + seguroVida + conafovicer + renta5ta + otrosDescuentos
+    aportePension.total + descuentoSindicato + seguroVida + conafovicer + renta5ta + otrosDescuentos
   );
 
   const essalud = calcularEssalud(remuneracionAfecta, parametros);
@@ -391,7 +400,7 @@ export function calcularLineaPlanilla(
       cts,
       vacaciones,
       total_ingresos: totalIngresos,
-      aporte_pension: aportePension,
+      aporte_pension: aportePension.total,
       descuento_sindicato: descuentoSindicato,
       seguro_vida: seguroVida,
       conafovicer,
@@ -405,6 +414,8 @@ export function calcularLineaPlanilla(
       detalle_json: {
         remuneracion_computable: remuneracionComputable,
         remuneracion_afecta: remuneracionAfecta,
+        aporte_pension_detalle: aportePension,
+        total_aportes_empleador: redondear(essalud + sctr + senati),
       },
     },
   };

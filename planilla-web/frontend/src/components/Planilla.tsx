@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "../api";
 import { AsistenciaEntrada, Contrato, DetallePlanilla, PeriodoPlanilla } from "../types";
+import Boleta from "./Boleta";
 
 interface Props {
   periodo: PeriodoPlanilla;
@@ -17,6 +18,7 @@ export default function Planilla({ periodo }: Props) {
   const [resultado, setResultado] = useState<DetallePlanilla[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [calculando, setCalculando] = useState(false);
+  const [boletaSeleccionada, setBoletaSeleccionada] = useState<DetallePlanilla | null>(null);
 
   useEffect(() => {
     async function cargar() {
@@ -159,6 +161,7 @@ export default function Planilla({ periodo }: Props) {
                 <th>Total ingresos</th>
                 <th>Total descuentos</th>
                 <th>Neto a pagar</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -170,6 +173,11 @@ export default function Planilla({ periodo }: Props) {
                   <td>S/ {Number(d.total_ingresos).toFixed(2)}</td>
                   <td>S/ {Number(d.total_descuentos).toFixed(2)}</td>
                   <td>S/ {Number(d.neto_pagar).toFixed(2)}</td>
+                  <td>
+                    <button type="button" onClick={() => setBoletaSeleccionada(d)}>
+                      Ver boleta
+                    </button>
+                  </td>
                 </tr>
               ))}
               <tr className="totales-fila">
@@ -177,10 +185,19 @@ export default function Planilla({ periodo }: Props) {
                 <td>S/ {totales.ingresos.toFixed(2)}</td>
                 <td>S/ {totales.descuentos.toFixed(2)}</td>
                 <td>S/ {totales.neto.toFixed(2)}</td>
+                <td></td>
               </tr>
             </tbody>
           </table>
         </div>
+      )}
+
+      {boletaSeleccionada && (
+        <Boleta
+          detalle={boletaSeleccionada}
+          periodo={periodo}
+          onCerrar={() => setBoletaSeleccionada(null)}
+        />
       )}
     </div>
   );
