@@ -87,6 +87,60 @@ contratosRouter.post("/", async (req: Request, res: Response) => {
   }
 });
 
+contratosRouter.put("/:id", async (req: Request, res: Response) => {
+  try {
+    const b = req.body;
+    const categoria_ocupacional = validarCategoriaOcupacional(b.categoria_ocupacional);
+    const sistema_pension = validarSistemaPension(b.sistema_pension);
+    const fecha_ingreso = validarFecha(b.fecha_ingreso, "fecha_ingreso");
+
+    if (sistema_pension === "AFP" && !b.afp_nombre) {
+      throw new ErrorValidacion("afp_nombre es obligatorio cuando sistema_pension = AFP");
+    }
+    if (categoria_ocupacional === "EMPLEADO" && !b.sueldo_base) {
+      throw new ErrorValidacion("sueldo_base es obligatorio para la categoria EMPLEADO");
+    }
+
+    const resultado = await pool.query(
+      `UPDATE contratos SET
+        proyecto = $1, grupo = $2, categoria_ocupacional = $3, ocupacion = $4,
+        sistema_pension = $5, afp_nombre = $6, cuspp = $7, sistema_comision = $8,
+        fecha_ingreso = $9, sueldo_base = $10, viaticos = $11, sindicalizado = $12,
+        poliza_seguro = $13, sctr_salud = $14, essalud_vida = $15, domiciliado = $16
+       WHERE id = $17
+       RETURNING *`,
+      [
+        b.proyecto ?? "",
+        b.grupo ?? null,
+        categoria_ocupacional,
+        b.ocupacion ?? null,
+        sistema_pension,
+        b.afp_nombre ?? null,
+        b.cuspp ?? null,
+        b.sistema_comision ?? null,
+        fecha_ingreso,
+        b.sueldo_base ?? null,
+        b.viaticos ?? 0,
+        b.sindicalizado ?? false,
+        b.poliza_seguro ?? false,
+        b.sctr_salud ?? false,
+        b.essalud_vida ?? false,
+        b.domiciliado ?? true,
+        req.params.id,
+      ]
+    );
+    if (resultado.rowCount === 0) {
+      return res.status(404).json({ error: "Contrato no encontrado" });
+    }
+    res.json(resultado.rows[0]);
+  } catch (err) {
+    if (err instanceof ErrorValidacion) {
+      return res.status(400).json({ error: err.message });
+    }
+    throw err;
+  }
+});
+
 contratosRouter.post("/:id/cese", async (req: Request, res: Response) => {
   try {
     const fecha_cese = validarFecha(req.body.fecha_cese, "fecha_cese");

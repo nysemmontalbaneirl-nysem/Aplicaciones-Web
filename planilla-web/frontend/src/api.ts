@@ -27,3 +27,12 @@ export async function apiPost<T>(ruta: string, cuerpo: unknown): Promise<T> {
   });
   return manejarRespuesta<T>(res);
 }
+
+export async function apiPut<T>(ruta: string, cuerpo: unknown): Promise<T> {
+  const res = await fetch(`${BASE_URL}${ruta}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cuerpo),
+  });
+  return manejarRespuesta<T>(res);
+}

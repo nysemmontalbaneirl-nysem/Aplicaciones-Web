@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiGet, apiPost } from "../api";
+import { apiGet, apiPost, apiPut } from "../api";
 import { CategoriaOcupacional, Contrato, Empleado } from "../types";
 
 const CATEGORIAS: CategoriaOcupacional[] = [
@@ -28,12 +28,16 @@ const estadoVacio = {
   sctr_salud: false,
 };
 
+type FormularioTrabajador = typeof estadoVacio;
+
 export default function Trabajadores() {
   const [contratos, setContratos] = useState<Contrato[]>([]);
-  const [form, setForm] = useState(estadoVacio);
+  const [form, setForm] = useState<FormularioTrabajador>(estadoVacio);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
+  // Cuando no es null, el formulario esta editando este contrato en vez de crear uno nuevo
+  const [contratoEnEdicion, setContratoEnEdicion] = useState<Contrato | null>(null);
 
   async function cargar() {
     try {
@@ -48,8 +52,43 @@ export default function Trabajadores() {
     cargar();
   }, []);
 
-  function actualizarCampo<K extends keyof typeof estadoVacio>(campo: K, valor: (typeof estadoVacio)[K]) {
+  function actualizarCampo<K extends keyof FormularioTrabajador>(campo: K, valor: FormularioTrabajador[K]) {
     setForm((f) => ({ ...f, [campo]: valor }));
+  }
+
+  async function iniciarEdicion(contrato: Contrato) {
+    setError(null);
+    setOk(null);
+    try {
+      const empleado = await apiGet<Empleado>(`/empleados/${contrato.empleado_id}`);
+      setContratoEnEdicion(contrato);
+      setForm({
+        numero_documento: empleado.numero_documento,
+        apellidos_nombres: empleado.apellidos_nombres,
+        fecha_nacimiento: empleado.fecha_nacimiento?.slice(0, 10) ?? "",
+        numero_hijos: String(empleado.numero_hijos ?? 0),
+        celular: empleado.celular ?? "",
+        proyecto: contrato.proyecto,
+        categoria_ocupacional: contrato.categoria_ocupacional,
+        sistema_pension: contrato.sistema_pension,
+        afp_nombre: contrato.afp_nombre ?? "",
+        fecha_ingreso: contrato.fecha_ingreso?.slice(0, 10) ?? "",
+        sueldo_base: contrato.sueldo_base != null ? String(contrato.sueldo_base) : "",
+        sindicalizado: contrato.sindicalizado,
+        poliza_seguro: contrato.poliza_seguro,
+        sctr_salud: contrato.sctr_salud,
+      });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  function cancelarEdicion() {
+    setContratoEnEdicion(null);
+    setForm(estadoVacio);
+    setError(null);
+    setOk(null);
   }
 
   async function guardarTrabajador(e: React.FormEvent) {
@@ -58,29 +97,52 @@ export default function Trabajadores() {
     setOk(null);
     setGuardando(true);
     try {
-      const empleado = await apiPost<Empleado>("/empleados", {
-        numero_documento: form.numero_documento,
-        apellidos_nombres: form.apellidos_nombres,
-        fecha_nacimiento: form.fecha_nacimiento || null,
-        numero_hijos: Number(form.numero_hijos) || 0,
-        celular: form.celular || null,
-      });
+      if (contratoEnEdicion) {
+        await apiPut<Empleado>(`/empleados/${contratoEnEdicion.empleado_id}`, {
+          apellidos_nombres: form.apellidos_nombres,
+          fecha_nacimiento: form.fecha_nacimiento || null,
+          numero_hijos: Number(form.numero_hijos) || 0,
+          celular: form.celular || null,
+        });
+        await apiPut<Contrato>(`/contratos/${contratoEnEdicion.id}`, {
+          proyecto: form.proyecto,
+          categoria_ocupacional: form.categoria_ocupacional,
+          sistema_pension: form.sistema_pension,
+          afp_nombre: form.sistema_pension === "AFP" ? form.afp_nombre : null,
+          fecha_ingreso: form.fecha_ingreso,
+          sueldo_base:
+            form.categoria_ocupacional === "EMPLEADO" ? Number(form.sueldo_base) : null,
+          sindicalizado: form.sindicalizado,
+          poliza_seguro: form.poliza_seguro,
+          sctr_salud: form.sctr_salud,
+        });
+        setOk(`Trabajador ${form.apellidos_nombres} actualizado correctamente.`);
+        setContratoEnEdicion(null);
+      } else {
+        const empleado = await apiPost<Empleado>("/empleados", {
+          numero_documento: form.numero_documento,
+          apellidos_nombres: form.apellidos_nombres,
+          fecha_nacimiento: form.fecha_nacimiento || null,
+          numero_hijos: Number(form.numero_hijos) || 0,
+          celular: form.celular || null,
+        });
 
-      await apiPost<Contrato>("/contratos", {
-        empleado_id: empleado.id,
-        proyecto: form.proyecto,
-        categoria_ocupacional: form.categoria_ocupacional,
-        sistema_pension: form.sistema_pension,
-        afp_nombre: form.sistema_pension === "AFP" ? form.afp_nombre : null,
-        fecha_ingreso: form.fecha_ingreso,
-        sueldo_base:
-          form.categoria_ocupacional === "EMPLEADO" ? Number(form.sueldo_base) : null,
-        sindicalizado: form.sindicalizado,
-        poliza_seguro: form.poliza_seguro,
-        sctr_salud: form.sctr_salud,
-      });
+        await apiPost<Contrato>("/contratos", {
+          empleado_id: empleado.id,
+          proyecto: form.proyecto,
+          categoria_ocupacional: form.categoria_ocupacional,
+          sistema_pension: form.sistema_pension,
+          afp_nombre: form.sistema_pension === "AFP" ? form.afp_nombre : null,
+          fecha_ingreso: form.fecha_ingreso,
+          sueldo_base:
+            form.categoria_ocupacional === "EMPLEADO" ? Number(form.sueldo_base) : null,
+          sindicalizado: form.sindicalizado,
+          poliza_seguro: form.poliza_seguro,
+          sctr_salud: form.sctr_salud,
+        });
+        setOk(`Trabajador ${form.apellidos_nombres} registrado correctamente.`);
+      }
 
-      setOk(`Trabajador ${form.apellidos_nombres} registrado correctamente.`);
       setForm(estadoVacio);
       await cargar();
     } catch (e) {
@@ -93,7 +155,7 @@ export default function Trabajadores() {
   return (
     <div>
       <div className="card">
-        <h2>Nuevo trabajador</h2>
+        <h2>{contratoEnEdicion ? `Editar trabajador — ${form.apellidos_nombres}` : "Nuevo trabajador"}</h2>
         {error && <div className="mensaje-error">{error}</div>}
         {ok && <div className="mensaje-ok">{ok}</div>}
         <form onSubmit={guardarTrabajador}>
@@ -102,6 +164,7 @@ export default function Trabajadores() {
               DNI
               <input
                 required
+                disabled={!!contratoEnEdicion}
                 value={form.numero_documento}
                 onChange={(e) => actualizarCampo("numero_documento", e.target.value)}
               />
@@ -231,10 +294,19 @@ export default function Trabajadores() {
             />
             SCTR salud
           </label>
-          <div>
+          <div style={{ display: "flex", gap: 10 }}>
             <button className="primario" type="submit" disabled={guardando}>
-              {guardando ? "Guardando..." : "Registrar trabajador"}
+              {guardando
+                ? "Guardando..."
+                : contratoEnEdicion
+                ? "Guardar cambios"
+                : "Registrar trabajador"}
             </button>
+            {contratoEnEdicion && (
+              <button type="button" onClick={cancelarEdicion} disabled={guardando}>
+                Cancelar
+              </button>
+            )}
           </div>
         </form>
       </div>
@@ -250,6 +322,7 @@ export default function Trabajadores() {
               <th>Categoria</th>
               <th>Pension</th>
               <th>Ingreso</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -261,6 +334,11 @@ export default function Trabajadores() {
                 <td>{c.categoria_ocupacional}</td>
                 <td>{c.sistema_pension === "AFP" ? c.afp_nombre : "ONP"}</td>
                 <td>{c.fecha_ingreso?.slice(0, 10)}</td>
+                <td>
+                  <button type="button" onClick={() => iniciarEdicion(c)}>
+                    Editar
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
