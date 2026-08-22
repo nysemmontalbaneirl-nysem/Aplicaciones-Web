@@ -1,10 +1,14 @@
 import { Router, Request, Response } from "express";
+import multer from "multer";
+import { parse } from "csv-parse/sync";
 import { pool } from "../db";
 import { calcularLineaPlanilla } from "../motorCalculo";
 import { Contrato, ParametrosNormativos, TablaSalarialMensual, TasasAFPMensuales } from "../tipos";
 import { ErrorValidacion, validarListaAsistencia } from "../validaciones";
 
 export const planillaRouter = Router();
+
+const uploadTareo = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 async function obtenerPeriodo(periodoId: string) {
   const r = await pool.query("SELECT * FROM periodos_planilla WHERE id = $1", [periodoId]);
@@ -75,6 +79,122 @@ planillaRouter.get("/:id/planilla", async (req: Request, res: Response) => {
   );
   res.json({ periodo, detalle: resultado.rows });
 });
+
+interface ErrorFilaTareo {
+  fila: number;
+  dni: string;
+  motivo: string;
+}
+
+// POST /api/periodos/:id/tareo/importar  (multipart, campo "archivo" = CSV con encabezado)
+// Columnas: DNI, PROYECTO (opcional, solo si el DNI tiene mas de un contrato habil),
+// DIAS_TRABAJADOS, DIAS_DOMINICAL, DIAS_FERIADO, DIAS_FALTA,
+// HORAS_EXTRA_25, HORAS_EXTRA_35, HORAS_EXTRA_100
+// No calcula ni graba nada: solo valida el CSV y devuelve las filas de asistencia
+// ya emparejadas con su contrato_id, para que el frontend las revise antes de calcular.
+planillaRouter.post(
+  "/:id/tareo/importar",
+  uploadTareo.single("archivo"),
+  async (req: Request, res: Response) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "Falta el archivo CSV (campo 'archivo')" });
+    }
+
+    let filas: Record<string, string>[];
+    try {
+      filas = parse(req.file.buffer, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+        bom: true,
+      });
+    } catch (err) {
+      return res.status(400).json({ error: `No se pudo leer el CSV: ${(err as Error).message}` });
+    }
+
+    const contratosResult = await pool.query(
+      `SELECT c.id, c.proyecto, e.numero_documento
+       FROM contratos c JOIN empleados e ON e.id = c.empleado_id
+       WHERE c.estado = 'HABIL'`
+    );
+    const contratosPorDni = new Map<string, { id: number; proyecto: string }[]>();
+    for (const fila of contratosResult.rows) {
+      const lista = contratosPorDni.get(fila.numero_documento) ?? [];
+      lista.push({ id: fila.id, proyecto: fila.proyecto });
+      contratosPorDni.set(fila.numero_documento, lista);
+    }
+
+    function num(valor: string): number {
+      const v = (valor ?? "").trim().replace(",", ".");
+      if (!v) return 0;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : NaN;
+    }
+
+    const errores: ErrorFilaTareo[] = [];
+    const asistencias: Array<{
+      contrato_id: number;
+      dias_trabajados: number;
+      dias_dominical: number;
+      dias_feriado: number;
+      dias_falta: number;
+      horas_extra_25: number;
+      horas_extra_35: number;
+      horas_extra_100: number;
+    }> = [];
+
+    filas.forEach((fila, i) => {
+      const numeroFila = i + 2;
+      const dni = (fila.DNI ?? "").trim();
+      if (!dni) {
+        errores.push({ fila: numeroFila, dni, motivo: "DNI vacio" });
+        return;
+      }
+      const candidatos = contratosPorDni.get(dni);
+      if (!candidatos || candidatos.length === 0) {
+        errores.push({ fila: numeroFila, dni, motivo: "No existe un contrato habil con ese DNI" });
+        return;
+      }
+      let contrato = candidatos[0];
+      if (candidatos.length > 1) {
+        const proyecto = (fila.PROYECTO ?? "").trim();
+        if (!proyecto) {
+          errores.push({
+            fila: numeroFila,
+            dni,
+            motivo: `DNI con ${candidatos.length} contratos habiles activos: agrega la columna PROYECTO para identificar cual`,
+          });
+          return;
+        }
+        const encontrado = candidatos.find((c) => c.proyecto.toLowerCase() === proyecto.toLowerCase());
+        if (!encontrado) {
+          errores.push({ fila: numeroFila, dni, motivo: `No se encontro un contrato habil en el proyecto '${proyecto}'` });
+          return;
+        }
+        contrato = encontrado;
+      }
+
+      const valores = {
+        dias_trabajados: num(fila.DIAS_TRABAJADOS ?? ""),
+        dias_dominical: num(fila.DIAS_DOMINICAL ?? ""),
+        dias_feriado: num(fila.DIAS_FERIADO ?? ""),
+        dias_falta: num(fila.DIAS_FALTA ?? ""),
+        horas_extra_25: num(fila.HORAS_EXTRA_25 ?? ""),
+        horas_extra_35: num(fila.HORAS_EXTRA_35 ?? ""),
+        horas_extra_100: num(fila.HORAS_EXTRA_100 ?? ""),
+      };
+      const campoInvalido = Object.entries(valores).find(([, v]) => Number.isNaN(v));
+      if (campoInvalido) {
+        errores.push({ fila: numeroFila, dni, motivo: `Valor invalido en la columna ${campoInvalido[0].toUpperCase()}` });
+        return;
+      }
+
+      asistencias.push({ contrato_id: contrato.id, ...valores });
+    });
+
+    res.json({ asistencias, errores });
+  }
+);
 
 // POST /api/periodos/:id/calcular  body: { asistencias: AsistenciaEntrada[] }
 planillaRouter.post("/:id/calcular", async (req: Request, res: Response) => {

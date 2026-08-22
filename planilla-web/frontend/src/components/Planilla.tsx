@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiGet, apiPost } from "../api";
+import { apiGet, apiPost, BASE_URL } from "../api";
 import { AsistenciaEntrada, Contrato, DetallePlanilla, PeriodoPlanilla } from "../types";
 import Boleta from "./Boleta";
 
@@ -12,6 +12,24 @@ type FilaAsistencia = AsistenciaEntrada & {
   numero_documento: string;
 };
 
+interface ErrorFilaTareo {
+  fila: number;
+  dni: string;
+  motivo: string;
+}
+
+const COLUMNAS_TAREO = [
+  "DNI",
+  "PROYECTO",
+  "DIAS_TRABAJADOS",
+  "DIAS_DOMINICAL",
+  "DIAS_FERIADO",
+  "DIAS_FALTA",
+  "HORAS_EXTRA_25",
+  "HORAS_EXTRA_35",
+  "HORAS_EXTRA_100",
+];
+
 export default function Planilla({ periodo }: Props) {
   const [contratos, setContratos] = useState<Contrato[]>([]);
   const [filas, setFilas] = useState<Record<number, FilaAsistencia>>({});
@@ -19,6 +37,9 @@ export default function Planilla({ periodo }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [calculando, setCalculando] = useState(false);
   const [boletaSeleccionada, setBoletaSeleccionada] = useState<DetallePlanilla | null>(null);
+  const [subiendoTareo, setSubiendoTareo] = useState(false);
+  const [erroresTareo, setErroresTareo] = useState<ErrorFilaTareo[]>([]);
+  const [filasCargadasTareo, setFilasCargadasTareo] = useState<number | null>(null);
 
   useEffect(() => {
     async function cargar() {
@@ -57,6 +78,64 @@ export default function Planilla({ periodo }: Props) {
     }));
   }
 
+  function descargarPlantillaTareo() {
+    const encabezado = COLUMNAS_TAREO.join(",");
+    const filasCsv = contratos.map(
+      (c) => `${c.numero_documento},${c.proyecto},,,,,,,`
+    );
+    const csv = [encabezado, ...filasCsv].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `tareo_plantilla_${periodo.mes}_${periodo.anio}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function cargarTareoCSV(e: React.ChangeEvent<HTMLInputElement>) {
+    const archivo = e.target.files?.[0];
+    e.target.value = "";
+    if (!archivo) return;
+
+    setError(null);
+    setErroresTareo([]);
+    setFilasCargadasTareo(null);
+    setSubiendoTareo(true);
+    try {
+      const formData = new FormData();
+      formData.append("archivo", archivo);
+      const res = await fetch(`${BASE_URL}/periodos/${periodo.id}/tareo/importar`, {
+        method: "POST",
+        body: formData,
+      });
+      const cuerpo = await res.json();
+      if (!res.ok) throw new Error(cuerpo.error ?? `Error ${res.status}`);
+
+      const { asistencias, errores } = cuerpo as {
+        asistencias: AsistenciaEntrada[];
+        errores: ErrorFilaTareo[];
+      };
+
+      setFilas((prev) => {
+        const actualizado = { ...prev };
+        for (const a of asistencias) {
+          const previa = actualizado[a.contrato_id];
+          if (previa) {
+            actualizado[a.contrato_id] = { ...previa, ...a };
+          }
+        }
+        return actualizado;
+      });
+      setErroresTareo(errores);
+      setFilasCargadasTareo(asistencias.length);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSubiendoTareo(false);
+    }
+  }
+
   async function calcularPlanilla() {
     setError(null);
     setCalculando(true);
@@ -92,6 +171,53 @@ export default function Planilla({ periodo }: Props) {
   return (
     <div>
       {error && <div className="mensaje-error">{error}</div>}
+
+      <div className="card">
+        <h2>Cargar tareo del mes (CSV)</h2>
+        <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
+          Sube un CSV con el tareo de todos los trabajadores (dias trabajados, dominical,
+          feriado, faltas y horas extra) y se completa la tabla de abajo automaticamente en
+          vez de llenarla uno por uno. Si un trabajador tiene mas de un contrato habil, agrega
+          la columna PROYECTO para identificar cual. Las horas extra se ingresan en decimal
+          (ej. 1 hora 30 min = 1.5).
+        </p>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <button type="button" onClick={descargarPlantillaTareo} disabled={contratos.length === 0}>
+            Descargar plantilla CSV
+          </button>
+          <input type="file" accept=".csv" onChange={cargarTareoCSV} disabled={subiendoTareo} />
+          {subiendoTareo && <span>Cargando...</span>}
+        </div>
+
+        {filasCargadasTareo !== null && (
+          <div className="mensaje-ok" style={{ marginTop: 12 }}>
+            {filasCargadasTareo} filas cargadas correctamente.
+          </div>
+        )}
+        {erroresTareo.length > 0 && (
+          <>
+            <h3>Filas con error ({erroresTareo.length})</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Fila</th>
+                  <th>DNI</th>
+                  <th>Motivo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {erroresTareo.map((e, idx) => (
+                  <tr key={idx}>
+                    <td>{e.fila}</td>
+                    <td>{e.dni}</td>
+                    <td>{e.motivo}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+      </div>
 
       <div className="card">
         <h2>
