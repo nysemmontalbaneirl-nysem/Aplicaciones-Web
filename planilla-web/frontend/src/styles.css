@@ -1,0 +1,174 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: #f4f5f7;
+  color: #1f2430;
+}
+
+.app-shell {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.app-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.app-header h1 {
+  font-size: 1.4rem;
+  margin: 0;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  border-bottom: 2px solid #dfe2e8;
+}
+
+.tab-button {
+  padding: 10px 18px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.95rem;
+  color: #5a6172;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+}
+
+.tab-button.activo {
+  color: #1f2430;
+  border-bottom-color: #2f6fed;
+  font-weight: 600;
+}
+
+.card {
+  background: white;
+  border-radius: 10px;
+  padding: 20px;
+  box-shadow: 0 1px 2px rgba(20, 24, 33, 0.06);
+  margin-bottom: 20px;
+}
+
+.card h2 {
+  margin-top: 0;
+  font-size: 1.1rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+th, td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid #eef0f3;
+}
+
+th {
+  color: #5a6172;
+  font-weight: 600;
+  background: #fafbfc;
+}
+
+tr:hover td {
+  background: #f8faff;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.82rem;
+  color: #5a6172;
+  gap: 4px;
+}
+
+input, select {
+  padding: 7px 9px;
+  border: 1px solid #d5d9e0;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+button.primario {
+  background: #2f6fed;
+  color: white;
+  border: none;
+  padding: 9px 18px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+button.primario:hover {
+  background: #2559c9;
+}
+
+button.primario:disabled {
+  background: #a9b6cf;
+  cursor: not-allowed;
+}
+
+.mensaje-error {
+  background: #fdecec;
+  color: #a02020;
+  padding: 10px 14px;
+  border-radius: 6px;
+  margin-bottom: 14px;
+  font-size: 0.88rem;
+}
+
+.mensaje-ok {
+  background: #eafaf0;
+  color: #17703a;
+  padding: 10px 14px;
+  border-radius: 6px;
+  margin-bottom: 14px;
+  font-size: 0.88rem;
+}
+
+.chip-estado {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.chip-habil {
+  background: #eafaf0;
+  color: #17703a;
+}
+
+.chip-cesado {
+  background: #f1f2f5;
+  color: #5a6172;
+}
+
+.totales-fila td {
+  font-weight: 700;
+  border-top: 2px solid #d5d9e0;
+}
+
+input[type="number"] {
+  width: 90px;
+}

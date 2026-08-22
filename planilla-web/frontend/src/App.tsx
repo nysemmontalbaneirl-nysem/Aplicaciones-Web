@@ -1,0 +1,51 @@
+import { useState } from "react";
+import Trabajadores from "./components/Trabajadores";
+import Periodos from "./components/Periodos";
+import Planilla from "./components/Planilla";
+import { PeriodoPlanilla } from "./types";
+
+type Pestana = "trabajadores" | "periodos" | "planilla";
+
+export default function App() {
+  const [pestana, setPestana] = useState<Pestana>("trabajadores");
+  const [periodoSeleccionado, setPeriodoSeleccionado] = useState<PeriodoPlanilla | null>(null);
+
+  function irACalcularPlanilla(periodo: PeriodoPlanilla) {
+    setPeriodoSeleccionado(periodo);
+    setPestana("planilla");
+  }
+
+  return (
+    <div className="app-shell">
+      <div className="app-header">
+        <h1>Sistema de Planillas — JHCR</h1>
+      </div>
+
+      <div className="tabs">
+        <button
+          className={`tab-button ${pestana === "trabajadores" ? "activo" : ""}`}
+          onClick={() => setPestana("trabajadores")}
+        >
+          Trabajadores
+        </button>
+        <button
+          className={`tab-button ${pestana === "periodos" ? "activo" : ""}`}
+          onClick={() => setPestana("periodos")}
+        >
+          Periodos
+        </button>
+        <button
+          className={`tab-button ${pestana === "planilla" ? "activo" : ""}`}
+          onClick={() => setPestana("planilla")}
+          disabled={!periodoSeleccionado}
+        >
+          Planilla
+        </button>
+      </div>
+
+      {pestana === "trabajadores" && <Trabajadores />}
+      {pestana === "periodos" && <Periodos onSeleccionar={irACalcularPlanilla} />}
+      {pestana === "planilla" && periodoSeleccionado && <Planilla periodo={periodoSeleccionado} />}
+    </div>
+  );
+}
