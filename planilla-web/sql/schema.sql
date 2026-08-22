@@ -1,0 +1,210 @@
+-- =========================================================================
+-- Esquema: planilla_construccion
+-- Sistema de planillas (migración desde Excel/VBA) - JHCR
+-- Régimen: Construcción Civil (BUC, CONAFOVICER, SENATI) + Empleados
+-- =========================================================================
+-- Ejecutar completo en pgAdmin (Query Tool) sobre la base planilla_construccion.
+-- Si ya existían las 7 tablas de la versión anterior (sin datos), este script
+-- las reemplaza por una versión más completa alineada al motor de cálculo real.
+-- =========================================================================
+
+DROP TABLE IF EXISTS bitacora_planilla CASCADE;
+DROP TABLE IF EXISTS detalle_planilla CASCADE;
+DROP TABLE IF EXISTS periodos_planilla CASCADE;
+DROP TABLE IF EXISTS contratos CASCADE;
+DROP TABLE IF EXISTS empleados CASCADE;
+DROP TABLE IF EXISTS parametros_normativos CASCADE;
+DROP TABLE IF EXISTS usuarios CASCADE;
+
+-- -------------------------------------------------------------------------
+-- usuarios: acceso al sistema
+-- -------------------------------------------------------------------------
+CREATE TABLE usuarios (
+    id              SERIAL PRIMARY KEY,
+    nombre          VARCHAR(150) NOT NULL,
+    correo          VARCHAR(150) NOT NULL UNIQUE,
+    password_hash   VARCHAR(255) NOT NULL,
+    rol             VARCHAR(30)  NOT NULL DEFAULT 'OPERADOR', -- ADMIN | OPERADOR | CONSULTA
+    activo          BOOLEAN      NOT NULL DEFAULT TRUE,
+    creado_en       TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+-- -------------------------------------------------------------------------
+-- parametros_normativos: constantes legales por año (editable sin tocar código)
+-- -------------------------------------------------------------------------
+CREATE TABLE parametros_normativos (
+    id                   SERIAL PRIMARY KEY,
+    anio                 INT NOT NULL UNIQUE,
+    uit                  NUMERIC(10,2) NOT NULL,
+    tasa_essalud         NUMERIC(6,4)  NOT NULL DEFAULT 0.09,
+    tasa_onp             NUMERIC(6,4)  NOT NULL DEFAULT 0.13,
+    tasa_senati          NUMERIC(6,4)  NOT NULL DEFAULT 0.0075,
+    tasa_conafovicer     NUMERIC(6,4)  NOT NULL DEFAULT 0.02,
+    tasa_sctr_salud      NUMERIC(6,4)  NOT NULL DEFAULT 0.0155,
+    asignacion_familiar  NUMERIC(10,2) NOT NULL,
+    seguro_vida_ley      NUMERIC(10,2) NOT NULL DEFAULT 5.00,
+    -- tasas AFP por fondo: {"INTEGRA": {"comision_flujo":0.0130,"prima_seguro":0.0173}, "PRIMA": {...}, ...}
+    afp_tasas            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- jornal/bonificación unificada de construcción por categoría ocupacional:
+    -- {"OPERARIO":{"buc":0.32,"jornal_basico":85.60}, "OFICIAL":{"buc":0.30,...}, "PEON":{"buc":0.30,...}}
+    tabla_categorias     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    creado_en            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- -------------------------------------------------------------------------
+-- empleados: datos maestros de la persona (no cambian por proyecto/periodo)
+-- -------------------------------------------------------------------------
+CREATE TABLE empleados (
+    id                  SERIAL PRIMARY KEY,
+    tipo_documento      VARCHAR(2)   NOT NULL DEFAULT '1', -- Tabla 3 T-Registro (1=DNI)
+    numero_documento    VARCHAR(15)  NOT NULL UNIQUE,
+    apellidos_nombres   VARCHAR(200) NOT NULL,
+    fecha_nacimiento    DATE,
+    grado_instruccion   VARCHAR(60),
+    numero_hijos        INT NOT NULL DEFAULT 0,
+    celular             VARCHAR(20),
+    correo              VARCHAR(120),
+    direccion           TEXT,
+    ubigeo              VARCHAR(10),
+    entidad_bancaria    VARCHAR(100),
+    cuenta_bancaria     VARCHAR(50),
+    estado              VARCHAR(20) NOT NULL DEFAULT 'ACTIVO', -- ACTIVO | INACTIVO
+    creado_en           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    actualizado_en      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- -------------------------------------------------------------------------
+-- contratos: relación laboral (una persona puede tener varios en el tiempo,
+-- o reingresar). Aquí vive todo lo que cambia por asignación de obra/proyecto.
+-- -------------------------------------------------------------------------
+CREATE TABLE contratos (
+    id                    SERIAL PRIMARY KEY,
+    empleado_id           INT NOT NULL REFERENCES empleados(id) ON DELETE RESTRICT,
+    proyecto              VARCHAR(150) NOT NULL, -- obra/centro de costo (ej. "P013-Tecnologico La Union-Piura")
+    grupo                 VARCHAR(100),          -- ej. "JHCR", "CRJH-SINDICATO"
+    categoria_ocupacional VARCHAR(30) NOT NULL,  -- OPERARIO | OFICIAL | PEON | EMPLEADO | EVENTUAL | OPERARIO EP
+    ocupacion             VARCHAR(120),
+    sistema_pension       VARCHAR(10) NOT NULL,  -- AFP | ONP
+    afp_nombre            VARCHAR(30),           -- INTEGRA | PRIMA | PROFUTURO | HABITAT (null si ONP)
+    cuspp                 VARCHAR(20),
+    sistema_comision      VARCHAR(5),            -- F=Flujo | S=Saldo | M=Mixta
+    fecha_ingreso         DATE NOT NULL,
+    fecha_cese            DATE,
+    sueldo_base           NUMERIC(10,2),         -- solo aplica a categoría EMPLEADO (mensual fijo)
+    viaticos              NUMERIC(10,2) NOT NULL DEFAULT 0,
+    sindicalizado         BOOLEAN NOT NULL DEFAULT FALSE,
+    poliza_seguro         BOOLEAN NOT NULL DEFAULT FALSE,
+    sctr_salud            BOOLEAN NOT NULL DEFAULT FALSE,
+    essalud_vida          BOOLEAN NOT NULL DEFAULT FALSE,
+    domiciliado           BOOLEAN NOT NULL DEFAULT TRUE,
+    estado                VARCHAR(20) NOT NULL DEFAULT 'HABIL', -- HABIL | CESADO
+    creado_en             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_contratos_empleado ON contratos(empleado_id);
+CREATE INDEX idx_contratos_estado ON contratos(estado);
+
+-- -------------------------------------------------------------------------
+-- periodos_planilla: cabecera de cada mes/quincena procesada
+-- -------------------------------------------------------------------------
+CREATE TABLE periodos_planilla (
+    id             SERIAL PRIMARY KEY,
+    anio           INT NOT NULL,
+    mes            INT NOT NULL CHECK (mes BETWEEN 1 AND 12),
+    quincena       INT CHECK (quincena IN (1,2)), -- NULL si es mensual
+    tipo           VARCHAR(20) NOT NULL DEFAULT 'MENSUAL', -- MENSUAL | QUINCENAL
+    fecha_inicio   DATE NOT NULL,
+    fecha_fin      DATE NOT NULL,
+    dias_periodo   INT NOT NULL DEFAULT 30,
+    estado         VARCHAR(20) NOT NULL DEFAULT 'ABIERTO', -- ABIERTO | CALCULADO | CERRADO | DECLARADO
+    creado_en      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (anio, mes, quincena, tipo)
+);
+
+-- -------------------------------------------------------------------------
+-- detalle_planilla: línea calculada por trabajador y periodo (el "resultado")
+-- -------------------------------------------------------------------------
+CREATE TABLE detalle_planilla (
+    id                     SERIAL PRIMARY KEY,
+    periodo_id             INT NOT NULL REFERENCES periodos_planilla(id) ON DELETE CASCADE,
+    contrato_id            INT NOT NULL REFERENCES contratos(id) ON DELETE RESTRICT,
+
+    -- asistencia
+    dias_trabajados        NUMERIC(6,2) NOT NULL DEFAULT 0,
+    dias_dominical         NUMERIC(6,2) NOT NULL DEFAULT 0,
+    dias_feriado           NUMERIC(6,2) NOT NULL DEFAULT 0,
+    dias_falta             NUMERIC(6,2) NOT NULL DEFAULT 0,
+    horas_extra_25         NUMERIC(6,2) NOT NULL DEFAULT 0,
+    horas_extra_35         NUMERIC(6,2) NOT NULL DEFAULT 0,
+    horas_extra_100        NUMERIC(6,2) NOT NULL DEFAULT 0,
+
+    -- ingresos
+    jornal_diario          NUMERIC(10,2) NOT NULL DEFAULT 0,
+    sueldo_basico          NUMERIC(10,2) NOT NULL DEFAULT 0,
+    remuneracion_dominical NUMERIC(10,2) NOT NULL DEFAULT 0,
+    remuneracion_feriado   NUMERIC(10,2) NOT NULL DEFAULT 0,
+    importe_horas_extra    NUMERIC(10,2) NOT NULL DEFAULT 0,
+    asignacion_familiar    NUMERIC(10,2) NOT NULL DEFAULT 0,
+    bonificacion_buc       NUMERIC(10,2) NOT NULL DEFAULT 0,
+    otras_bonificaciones   NUMERIC(10,2) NOT NULL DEFAULT 0,
+    gratificacion          NUMERIC(10,2) NOT NULL DEFAULT 0,
+    cts                    NUMERIC(10,2) NOT NULL DEFAULT 0,
+    vacaciones             NUMERIC(10,2) NOT NULL DEFAULT 0,
+    total_ingresos         NUMERIC(10,2) NOT NULL DEFAULT 0,
+
+    -- descuentos del trabajador
+    aporte_pension         NUMERIC(10,2) NOT NULL DEFAULT 0, -- ONP 13% u (obligatorio+comisión+prima AFP)
+    descuento_sindicato     NUMERIC(10,2) NOT NULL DEFAULT 0,
+    seguro_vida             NUMERIC(10,2) NOT NULL DEFAULT 0,
+    conafovicer              NUMERIC(10,2) NOT NULL DEFAULT 0,
+    renta_5ta               NUMERIC(10,2) NOT NULL DEFAULT 0,
+    otros_descuentos        NUMERIC(10,2) NOT NULL DEFAULT 0,
+    total_descuentos         NUMERIC(10,2) NOT NULL DEFAULT 0,
+
+    -- aportes del empleador (informativo, no se descuenta al trabajador)
+    essalud                NUMERIC(10,2) NOT NULL DEFAULT 0,
+    sctr                   NUMERIC(10,2) NOT NULL DEFAULT 0,
+    senati                 NUMERIC(10,2) NOT NULL DEFAULT 0,
+
+    neto_pagar             NUMERIC(10,2) NOT NULL DEFAULT 0,
+
+    detalle_json            JSONB, -- desglose completo para la boleta / auditoría fina
+    calculado_en            TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (periodo_id, contrato_id)
+);
+CREATE INDEX idx_detalle_periodo ON detalle_planilla(periodo_id);
+
+-- -------------------------------------------------------------------------
+-- bitacora_planilla: auditoría de acciones sensibles
+-- -------------------------------------------------------------------------
+CREATE TABLE bitacora_planilla (
+    id              SERIAL PRIMARY KEY,
+    usuario_id      INT REFERENCES usuarios(id),
+    accion          VARCHAR(50) NOT NULL,   -- CALCULO_PLANILLA | CIERRE_PERIODO | EDICION_EMPLEADO | ...
+    tabla_afectada  VARCHAR(50),
+    registro_id     INT,
+    detalle         JSONB,
+    fecha           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- -------------------------------------------------------------------------
+-- Parámetros 2026 de ejemplo (ajusta los valores reales antes de calcular)
+-- -------------------------------------------------------------------------
+INSERT INTO parametros_normativos (
+    anio, uit, tasa_essalud, tasa_onp, tasa_senati, tasa_conafovicer, tasa_sctr_salud,
+    asignacion_familiar, seguro_vida_ley, afp_tasas, tabla_categorias
+) VALUES (
+    2026, 5500, 0.09, 0.13, 0.0075, 0.02, 0.0155,
+    113.00, 5.00,
+    '{
+        "INTEGRA":   {"comision_flujo": 0.0130, "prima_seguro": 0.0173, "aporte_obligatorio": 0.10},
+        "PRIMA":     {"comision_flujo": 0.0160, "prima_seguro": 0.0174, "aporte_obligatorio": 0.10},
+        "PROFUTURO": {"comision_flujo": 0.0169, "prima_seguro": 0.0174, "aporte_obligatorio": 0.10},
+        "HABITAT":   {"comision_flujo": 0.0147, "prima_seguro": 0.0174, "aporte_obligatorio": 0.10}
+    }'::jsonb,
+    '{
+        "OPERARIO": {"buc": 0.32, "jornal_basico": 85.60},
+        "OFICIAL":  {"buc": 0.30, "jornal_basico": 70.50},
+        "PEON":     {"buc": 0.30, "jornal_basico": 63.30}
+    }'::jsonb
+);
