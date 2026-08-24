@@ -170,3 +170,10 @@ export interface AsistenciaEntrada {
   horas_extra_35: number;
   horas_extra_100: number;
 }
+
+export interface AsistenciaTareo extends AsistenciaEntrada {
+  numero_documento: string;
+  apellidos_nombres: string;
+  proyecto: string;
+  categoria_ocupacional: CategoriaOcupacional;
+}

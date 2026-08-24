@@ -1,20 +1,27 @@
 import { useState } from "react";
 import Trabajadores from "./components/Trabajadores";
 import Periodos from "./components/Periodos";
-import Planilla from "./components/Planilla";
+import Tareo from "./components/Tareo";
+import Calculo from "./components/Calculo";
+import Boletas from "./components/Boletas";
 import Parametros from "./components/Parametros";
 import Importar from "./components/Importar";
 import { PeriodoPlanilla } from "./types";
 
-type Pestana = "trabajadores" | "periodos" | "planilla" | "parametros" | "importar";
+type Pestana = "trabajadores" | "importar" | "periodos" | "tareo" | "calculo" | "boletas" | "parametros";
 
 export default function App() {
   const [pestana, setPestana] = useState<Pestana>("trabajadores");
   const [periodoSeleccionado, setPeriodoSeleccionado] = useState<PeriodoPlanilla | null>(null);
 
-  function irACalcularPlanilla(periodo: PeriodoPlanilla) {
+  function irATareo(periodo: PeriodoPlanilla) {
     setPeriodoSeleccionado(periodo);
-    setPestana("planilla");
+    setPestana("tareo");
+  }
+
+  function irACalculo(periodo: PeriodoPlanilla) {
+    setPeriodoSeleccionado(periodo);
+    setPestana("calculo");
   }
 
   return (
@@ -43,11 +50,24 @@ export default function App() {
           Periodos
         </button>
         <button
-          className={`tab-button ${pestana === "planilla" ? "activo" : ""}`}
-          onClick={() => setPestana("planilla")}
+          className={`tab-button ${pestana === "tareo" ? "activo" : ""}`}
+          onClick={() => setPestana("tareo")}
           disabled={!periodoSeleccionado}
         >
-          Planilla
+          Tareo
+        </button>
+        <button
+          className={`tab-button ${pestana === "calculo" ? "activo" : ""}`}
+          onClick={() => setPestana("calculo")}
+          disabled={!periodoSeleccionado}
+        >
+          Calcular
+        </button>
+        <button
+          className={`tab-button ${pestana === "boletas" ? "activo" : ""}`}
+          onClick={() => setPestana("boletas")}
+        >
+          Boletas
         </button>
         <button
           className={`tab-button ${pestana === "parametros" ? "activo" : ""}`}
@@ -59,8 +79,14 @@ export default function App() {
 
       {pestana === "trabajadores" && <Trabajadores />}
       {pestana === "importar" && <Importar />}
-      {pestana === "periodos" && <Periodos onSeleccionar={irACalcularPlanilla} />}
-      {pestana === "planilla" && periodoSeleccionado && <Planilla periodo={periodoSeleccionado} />}
+      {pestana === "periodos" && <Periodos onCargarTareo={irATareo} onCalcular={irACalculo} />}
+      {pestana === "tareo" && periodoSeleccionado && (
+        <Tareo periodo={periodoSeleccionado} onIrACalcular={() => setPestana("calculo")} />
+      )}
+      {pestana === "calculo" && periodoSeleccionado && (
+        <Calculo periodo={periodoSeleccionado} onVerBoletas={() => setPestana("boletas")} />
+      )}
+      {pestana === "boletas" && <Boletas periodoInicial={periodoSeleccionado} />}
       {pestana === "parametros" && <Parametros />}
     </div>
   );

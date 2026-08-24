@@ -6,7 +6,7 @@ import { asyncHandler } from "../asyncHandler";
 import { pool } from "../db";
 import { calcularLineaPlanilla } from "../motorCalculo";
 import { Contrato, ParametrosNormativos, TablaSalarialMensual, TasasAFPMensuales } from "../tipos";
-import { ErrorValidacion, validarListaAsistencia } from "../validaciones";
+import { ErrorValidacion } from "../validaciones";
 
 export const planillaRouter = Router();
 
@@ -69,10 +69,19 @@ async function obtenerAfpTasas(anio: number, mes: number): Promise<TasasAFPMensu
   return tasas;
 }
 
-// GET /api/periodos/:id/planilla -> planilla ya calculada de ese periodo
+// GET /api/periodos/:id/planilla?q=texto -> boletas ya calculadas de ese
+// periodo (usado por la pestana Boletas). q filtra por DNI o nombre.
 planillaRouter.get("/:id/planilla", asyncHandler(async (req: Request, res: Response) => {
   const periodo = await obtenerPeriodo(req.params.id);
   if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
+
+  const q = (req.query.q as string | undefined)?.trim();
+  const condiciones = ["d.periodo_id = $1"];
+  const valores: unknown[] = [req.params.id];
+  if (q) {
+    valores.push(`%${q}%`);
+    condiciones.push(`(e.numero_documento ILIKE $${valores.length} OR e.apellidos_nombres ILIKE $${valores.length})`);
+  }
 
   const resultado = await pool.query(
     `SELECT d.*, e.apellidos_nombres, e.numero_documento, e.numero_hijos,
@@ -81,9 +90,9 @@ planillaRouter.get("/:id/planilla", asyncHandler(async (req: Request, res: Respo
      FROM detalle_planilla d
      JOIN contratos c ON c.id = d.contrato_id
      JOIN empleados e ON e.id = c.empleado_id
-     WHERE d.periodo_id = $1
+     WHERE ${condiciones.join(" AND ")}
      ORDER BY e.apellidos_nombres ASC`,
-    [req.params.id]
+    valores
   );
   res.json({ periodo, detalle: resultado.rows });
 }));
@@ -138,6 +147,102 @@ planillaRouter.get("/:id/tareo/plantilla", asyncHandler(async (req: Request, res
   res.end();
 }));
 
+interface FilaAsistencia {
+  contrato_id: number;
+  dias_trabajados: number;
+  dias_dominical: number;
+  dias_feriado: number;
+  dias_falta: number;
+  horas_extra_25: number;
+  horas_extra_35: number;
+  horas_extra_100: number;
+}
+
+async function guardarAsistencia(periodoId: string, fila: FilaAsistencia) {
+  await pool.query(
+    `INSERT INTO asistencia_periodo (
+       periodo_id, contrato_id, dias_trabajados, dias_dominical, dias_feriado,
+       dias_falta, horas_extra_25, horas_extra_35, horas_extra_100
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (periodo_id, contrato_id) DO UPDATE SET
+       dias_trabajados = EXCLUDED.dias_trabajados,
+       dias_dominical = EXCLUDED.dias_dominical,
+       dias_feriado = EXCLUDED.dias_feriado,
+       dias_falta = EXCLUDED.dias_falta,
+       horas_extra_25 = EXCLUDED.horas_extra_25,
+       horas_extra_35 = EXCLUDED.horas_extra_35,
+       horas_extra_100 = EXCLUDED.horas_extra_100,
+       actualizado_en = now()`,
+    [
+      periodoId,
+      fila.contrato_id,
+      fila.dias_trabajados,
+      fila.dias_dominical,
+      fila.dias_feriado,
+      fila.dias_falta,
+      fila.horas_extra_25,
+      fila.horas_extra_35,
+      fila.horas_extra_100,
+    ]
+  );
+}
+
+// GET /api/periodos/:id/tareo -> tareo ya guardado para ese periodo (solo
+// trabajadores que tienen una fila cargada, no toda la planilla).
+planillaRouter.get("/:id/tareo", asyncHandler(async (req: Request, res: Response) => {
+  const periodo = await obtenerPeriodo(req.params.id);
+  if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
+
+  const resultado = await pool.query(
+    `SELECT a.*, e.numero_documento, e.apellidos_nombres, c.proyecto, c.categoria_ocupacional
+     FROM asistencia_periodo a
+     JOIN contratos c ON c.id = a.contrato_id
+     JOIN empleados e ON e.id = c.empleado_id
+     WHERE a.periodo_id = $1
+     ORDER BY e.apellidos_nombres ASC`,
+    [req.params.id]
+  );
+  res.json({ periodo, tareo: resultado.rows });
+}));
+
+// PUT /api/periodos/:id/tareo  body: FilaAsistencia -> agrega o edita un
+// trabajador puntual (para el caso de agregar a mano a alguien que no
+// vino en el archivo).
+planillaRouter.put("/:id/tareo", asyncHandler(async (req: Request, res: Response) => {
+  const periodo = await obtenerPeriodo(req.params.id);
+  if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
+
+  const b = req.body as Partial<FilaAsistencia>;
+  if (!b.contrato_id) {
+    return res.status(400).json({ error: "contrato_id es obligatorio" });
+  }
+
+  await guardarAsistencia(req.params.id, {
+    contrato_id: b.contrato_id,
+    dias_trabajados: b.dias_trabajados ?? 0,
+    dias_dominical: b.dias_dominical ?? 0,
+    dias_feriado: b.dias_feriado ?? 0,
+    dias_falta: b.dias_falta ?? 0,
+    horas_extra_25: b.horas_extra_25 ?? 0,
+    horas_extra_35: b.horas_extra_35 ?? 0,
+    horas_extra_100: b.horas_extra_100 ?? 0,
+  });
+  res.status(204).send();
+}));
+
+// DELETE /api/periodos/:id/tareo/:contratoId -> quita un trabajador del
+// tareo de ese periodo (no borra el contrato, solo su fila de asistencia).
+planillaRouter.delete("/:id/tareo/:contratoId", asyncHandler(async (req: Request, res: Response) => {
+  const resultado = await pool.query(
+    "DELETE FROM asistencia_periodo WHERE periodo_id = $1 AND contrato_id = $2 RETURNING id",
+    [req.params.id, req.params.contratoId]
+  );
+  if (resultado.rowCount === 0) {
+    return res.status(404).json({ error: "No hay tareo cargado para ese trabajador en este periodo" });
+  }
+  res.status(204).send();
+}));
+
 interface ErrorFilaTareo {
   fila: number;
   dni: string;
@@ -188,14 +293,16 @@ async function leerFilasXlsx(buffer: Buffer): Promise<Record<string, string>[]> 
 // Columnas: DNI, PROYECTO (opcional, solo si el DNI tiene mas de un contrato habil),
 // DIAS_TRABAJADOS, DIAS_DOMINICAL, DIAS_FERIADO, DIAS_FALTA,
 // HORAS_EXTRA_25, HORAS_EXTRA_35, HORAS_EXTRA_100
-// No calcula ni graba nada: solo valida el archivo y devuelve las filas de
-// asistencia ya emparejadas con su contrato_id, para que el frontend las
-// revise antes de calcular. No hace falta incluir a todos los trabajadores:
-// alcanza con las filas de los que trabajaron ese periodo.
+// Guarda directamente cada fila valida en asistencia_periodo (no hace
+// falta incluir a todos los trabajadores: alcanza con los que trabajaron
+// ese periodo - los que no aparecen en el archivo simplemente no quedan
+// en el tareo de este periodo).
 planillaRouter.post(
   "/:id/tareo/importar",
   uploadTareo.single("archivo"),
   asyncHandler(async (req: Request, res: Response) => {
+    const periodo = await obtenerPeriodo(req.params.id);
+    if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
     if (!req.file) {
       return res.status(400).json({ error: "Falta el archivo (campo 'archivo')" });
     }
@@ -231,28 +338,20 @@ planillaRouter.post(
     }
 
     const errores: ErrorFilaTareo[] = [];
-    const asistencias: Array<{
-      contrato_id: number;
-      dias_trabajados: number;
-      dias_dominical: number;
-      dias_feriado: number;
-      dias_falta: number;
-      horas_extra_25: number;
-      horas_extra_35: number;
-      horas_extra_100: number;
-    }> = [];
+    let guardados = 0;
 
-    filas.forEach((fila, i) => {
+    for (let i = 0; i < filas.length; i++) {
+      const fila = filas[i];
       const numeroFila = i + 2;
       const dni = (fila.DNI ?? "").trim();
       if (!dni) {
         errores.push({ fila: numeroFila, dni, motivo: "DNI vacio" });
-        return;
+        continue;
       }
       const candidatos = contratosPorDni.get(dni);
       if (!candidatos || candidatos.length === 0) {
         errores.push({ fila: numeroFila, dni, motivo: "No existe un contrato habil con ese DNI" });
-        return;
+        continue;
       }
       let contrato = candidatos[0];
       if (candidatos.length > 1) {
@@ -263,12 +362,12 @@ planillaRouter.post(
             dni,
             motivo: `DNI con ${candidatos.length} contratos habiles activos: agrega la columna PROYECTO para identificar cual`,
           });
-          return;
+          continue;
         }
         const encontrado = candidatos.find((c) => c.proyecto.toLowerCase() === proyecto.toLowerCase());
         if (!encontrado) {
           errores.push({ fila: numeroFila, dni, motivo: `No se encontro un contrato habil en el proyecto '${proyecto}'` });
-          return;
+          continue;
         }
         contrato = encontrado;
       }
@@ -285,54 +384,65 @@ planillaRouter.post(
       const campoInvalido = Object.entries(valores).find(([, v]) => Number.isNaN(v));
       if (campoInvalido) {
         errores.push({ fila: numeroFila, dni, motivo: `Valor invalido en la columna ${campoInvalido[0].toUpperCase()}` });
-        return;
+        continue;
       }
 
-      asistencias.push({ contrato_id: contrato.id, ...valores });
-    });
+      await guardarAsistencia(req.params.id, { contrato_id: contrato.id, ...valores });
+      guardados++;
+    }
 
-    res.json({ asistencias, errores });
+    res.json({ guardados, errores });
   })
 );
 
-// POST /api/periodos/:id/calcular  body: { asistencias: AsistenciaEntrada[] }
+// POST /api/periodos/:id/calcular -> calcula la planilla de este periodo a
+// partir del tareo ya guardado en asistencia_periodo (pestana Tareo). Solo
+// se calculan los trabajadores que tienen tareo cargado, no toda la
+// planilla.
 planillaRouter.post("/:id/calcular", asyncHandler(async (req: Request, res: Response) => {
   const cliente = await pool.connect();
   try {
     const periodo = await obtenerPeriodo(req.params.id);
     if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
 
-    const asistencias = validarListaAsistencia(req.body.asistencias);
+    const asistenciaResult = await pool.query(
+      `SELECT a.contrato_id, a.dias_trabajados, a.dias_dominical, a.dias_feriado, a.dias_falta,
+              a.horas_extra_25, a.horas_extra_35, a.horas_extra_100,
+              c.*, e.numero_hijos, e.numero_documento, e.apellidos_nombres
+       FROM asistencia_periodo a
+       JOIN contratos c ON c.id = a.contrato_id
+       JOIN empleados e ON e.id = c.empleado_id
+       WHERE a.periodo_id = $1`,
+      [req.params.id]
+    );
+    if (asistenciaResult.rowCount === 0) {
+      throw new ErrorValidacion(
+        "No hay tareo cargado para este periodo. Ve a la pestana Tareo y sube el archivo antes de calcular."
+      );
+    }
+
     const parametros = await obtenerParametros(periodo.anio);
     const tablaCategorias = await obtenerTablaCategorias(periodo.anio, periodo.mes);
     const afpTasas = await obtenerAfpTasas(periodo.anio, periodo.mes);
-
-    const contratoIds = asistencias.map((a) => a.contrato_id);
-    const contratosResult = await pool.query(
-      `SELECT c.*, e.numero_hijos, e.numero_documento, e.apellidos_nombres
-       FROM contratos c JOIN empleados e ON e.id = c.empleado_id
-       WHERE c.id = ANY($1::int[])`,
-      [contratoIds]
-    );
-    const contratosPorId = new Map<
-      number,
-      Contrato & { numero_hijos: number; numero_documento: string; apellidos_nombres: string }
-    >();
-    for (const fila of contratosResult.rows) {
-      contratosPorId.set(fila.id, fila);
-    }
 
     await cliente.query("BEGIN");
 
     const lineasCalculadas = [];
     const erroresCalculo: Array<{ contrato_id: number; dni: string; nombre: string; motivo: string }> = [];
 
-    for (let i = 0; i < asistencias.length; i++) {
-      const asistencia = asistencias[i];
-      const contrato = contratosPorId.get(asistencia.contrato_id);
-      if (!contrato) {
-        throw new ErrorValidacion(`contrato_id ${asistencia.contrato_id} no existe`);
-      }
+    for (let i = 0; i < asistenciaResult.rows.length; i++) {
+      const fila = asistenciaResult.rows[i];
+      const contrato = fila as Contrato & { numero_hijos: number; numero_documento: string; apellidos_nombres: string };
+      const asistencia = {
+        contrato_id: fila.contrato_id,
+        dias_trabajados: Number(fila.dias_trabajados),
+        dias_dominical: Number(fila.dias_dominical),
+        dias_feriado: Number(fila.dias_feriado),
+        dias_falta: Number(fila.dias_falta),
+        horas_extra_25: Number(fila.horas_extra_25),
+        horas_extra_35: Number(fila.horas_extra_35),
+        horas_extra_100: Number(fila.horas_extra_100),
+      };
 
       await cliente.query(`SAVEPOINT trabajador_${i}`);
       try {
@@ -349,87 +459,87 @@ planillaRouter.post("/:id/calcular", asyncHandler(async (req: Request, res: Resp
         );
 
         const r = await cliente.query(
-        `INSERT INTO detalle_planilla (
-           periodo_id, contrato_id, dias_trabajados, dias_dominical, dias_feriado, dias_falta,
-           horas_extra_25, horas_extra_35, horas_extra_100, jornal_diario, sueldo_basico,
-           remuneracion_dominical, remuneracion_feriado, importe_horas_extra, asignacion_familiar,
-           bonificacion_buc, otras_bonificaciones, gratificacion, cts, vacaciones, total_ingresos,
-           aporte_pension, descuento_sindicato, seguro_vida, conafovicer, renta_5ta,
-           otros_descuentos, total_descuentos, essalud, sctr, senati, neto_pagar, detalle_json
-         ) VALUES (
-           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
-           $22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33
-         )
-         ON CONFLICT (periodo_id, contrato_id) DO UPDATE SET
-           dias_trabajados = EXCLUDED.dias_trabajados,
-           dias_dominical = EXCLUDED.dias_dominical,
-           dias_feriado = EXCLUDED.dias_feriado,
-           dias_falta = EXCLUDED.dias_falta,
-           horas_extra_25 = EXCLUDED.horas_extra_25,
-           horas_extra_35 = EXCLUDED.horas_extra_35,
-           horas_extra_100 = EXCLUDED.horas_extra_100,
-           jornal_diario = EXCLUDED.jornal_diario,
-           sueldo_basico = EXCLUDED.sueldo_basico,
-           remuneracion_dominical = EXCLUDED.remuneracion_dominical,
-           remuneracion_feriado = EXCLUDED.remuneracion_feriado,
-           importe_horas_extra = EXCLUDED.importe_horas_extra,
-           asignacion_familiar = EXCLUDED.asignacion_familiar,
-           bonificacion_buc = EXCLUDED.bonificacion_buc,
-           otras_bonificaciones = EXCLUDED.otras_bonificaciones,
-           gratificacion = EXCLUDED.gratificacion,
-           cts = EXCLUDED.cts,
-           vacaciones = EXCLUDED.vacaciones,
-           total_ingresos = EXCLUDED.total_ingresos,
-           aporte_pension = EXCLUDED.aporte_pension,
-           descuento_sindicato = EXCLUDED.descuento_sindicato,
-           seguro_vida = EXCLUDED.seguro_vida,
-           conafovicer = EXCLUDED.conafovicer,
-           renta_5ta = EXCLUDED.renta_5ta,
-           otros_descuentos = EXCLUDED.otros_descuentos,
-           total_descuentos = EXCLUDED.total_descuentos,
-           essalud = EXCLUDED.essalud,
-           sctr = EXCLUDED.sctr,
-           senati = EXCLUDED.senati,
-           neto_pagar = EXCLUDED.neto_pagar,
-           detalle_json = EXCLUDED.detalle_json,
-           calculado_en = now()
-         RETURNING *`,
-        [
-          periodo.id,
-          detalle.contrato_id,
-          detalle.dias_trabajados,
-          detalle.dias_dominical,
-          detalle.dias_feriado,
-          detalle.dias_falta,
-          detalle.horas_extra_25,
-          detalle.horas_extra_35,
-          detalle.horas_extra_100,
-          detalle.jornal_diario,
-          detalle.sueldo_basico,
-          detalle.remuneracion_dominical,
-          detalle.remuneracion_feriado,
-          detalle.importe_horas_extra,
-          detalle.asignacion_familiar,
-          detalle.bonificacion_buc,
-          detalle.otras_bonificaciones,
-          detalle.gratificacion,
-          detalle.cts,
-          detalle.vacaciones,
-          detalle.total_ingresos,
-          detalle.aporte_pension,
-          detalle.descuento_sindicato,
-          detalle.seguro_vida,
-          detalle.conafovicer,
-          detalle.renta_5ta,
-          detalle.otros_descuentos,
-          detalle.total_descuentos,
-          detalle.essalud,
-          detalle.sctr,
-          detalle.senati,
-          detalle.neto_pagar,
-          JSON.stringify(detalle.detalle_json),
-        ]
-      );
+          `INSERT INTO detalle_planilla (
+             periodo_id, contrato_id, dias_trabajados, dias_dominical, dias_feriado, dias_falta,
+             horas_extra_25, horas_extra_35, horas_extra_100, jornal_diario, sueldo_basico,
+             remuneracion_dominical, remuneracion_feriado, importe_horas_extra, asignacion_familiar,
+             bonificacion_buc, otras_bonificaciones, gratificacion, cts, vacaciones, total_ingresos,
+             aporte_pension, descuento_sindicato, seguro_vida, conafovicer, renta_5ta,
+             otros_descuentos, total_descuentos, essalud, sctr, senati, neto_pagar, detalle_json
+           ) VALUES (
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
+             $22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33
+           )
+           ON CONFLICT (periodo_id, contrato_id) DO UPDATE SET
+             dias_trabajados = EXCLUDED.dias_trabajados,
+             dias_dominical = EXCLUDED.dias_dominical,
+             dias_feriado = EXCLUDED.dias_feriado,
+             dias_falta = EXCLUDED.dias_falta,
+             horas_extra_25 = EXCLUDED.horas_extra_25,
+             horas_extra_35 = EXCLUDED.horas_extra_35,
+             horas_extra_100 = EXCLUDED.horas_extra_100,
+             jornal_diario = EXCLUDED.jornal_diario,
+             sueldo_basico = EXCLUDED.sueldo_basico,
+             remuneracion_dominical = EXCLUDED.remuneracion_dominical,
+             remuneracion_feriado = EXCLUDED.remuneracion_feriado,
+             importe_horas_extra = EXCLUDED.importe_horas_extra,
+             asignacion_familiar = EXCLUDED.asignacion_familiar,
+             bonificacion_buc = EXCLUDED.bonificacion_buc,
+             otras_bonificaciones = EXCLUDED.otras_bonificaciones,
+             gratificacion = EXCLUDED.gratificacion,
+             cts = EXCLUDED.cts,
+             vacaciones = EXCLUDED.vacaciones,
+             total_ingresos = EXCLUDED.total_ingresos,
+             aporte_pension = EXCLUDED.aporte_pension,
+             descuento_sindicato = EXCLUDED.descuento_sindicato,
+             seguro_vida = EXCLUDED.seguro_vida,
+             conafovicer = EXCLUDED.conafovicer,
+             renta_5ta = EXCLUDED.renta_5ta,
+             otros_descuentos = EXCLUDED.otros_descuentos,
+             total_descuentos = EXCLUDED.total_descuentos,
+             essalud = EXCLUDED.essalud,
+             sctr = EXCLUDED.sctr,
+             senati = EXCLUDED.senati,
+             neto_pagar = EXCLUDED.neto_pagar,
+             detalle_json = EXCLUDED.detalle_json,
+             calculado_en = now()
+           RETURNING *`,
+          [
+            periodo.id,
+            detalle.contrato_id,
+            detalle.dias_trabajados,
+            detalle.dias_dominical,
+            detalle.dias_feriado,
+            detalle.dias_falta,
+            detalle.horas_extra_25,
+            detalle.horas_extra_35,
+            detalle.horas_extra_100,
+            detalle.jornal_diario,
+            detalle.sueldo_basico,
+            detalle.remuneracion_dominical,
+            detalle.remuneracion_feriado,
+            detalle.importe_horas_extra,
+            detalle.asignacion_familiar,
+            detalle.bonificacion_buc,
+            detalle.otras_bonificaciones,
+            detalle.gratificacion,
+            detalle.cts,
+            detalle.vacaciones,
+            detalle.total_ingresos,
+            detalle.aporte_pension,
+            detalle.descuento_sindicato,
+            detalle.seguro_vida,
+            detalle.conafovicer,
+            detalle.renta_5ta,
+            detalle.otros_descuentos,
+            detalle.total_descuentos,
+            detalle.essalud,
+            detalle.sctr,
+            detalle.senati,
+            detalle.neto_pagar,
+            JSON.stringify(detalle.detalle_json),
+          ]
+        );
         lineasCalculadas.push(r.rows[0]);
       } catch (errFila) {
         if (errFila instanceof ErrorValidacion) throw errFila;

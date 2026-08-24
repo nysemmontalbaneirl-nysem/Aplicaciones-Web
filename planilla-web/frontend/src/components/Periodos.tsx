@@ -16,7 +16,12 @@ function ultimoDia(anio: number, mes: number): string {
   return `${anio}-${String(mes).padStart(2, "0")}-${String(fecha.getDate()).padStart(2, "0")}`;
 }
 
-export default function Periodos({ onSeleccionar }: { onSeleccionar?: (p: PeriodoPlanilla) => void }) {
+interface Props {
+  onCargarTareo?: (p: PeriodoPlanilla) => void;
+  onCalcular?: (p: PeriodoPlanilla) => void;
+}
+
+export default function Periodos({ onCargarTareo, onCalcular }: Props) {
   const [periodos, setPeriodos] = useState<PeriodoPlanilla[]>([]);
   const [anio, setAnio] = useState(new Date().getFullYear());
   const [mes, setMes] = useState(new Date().getMonth() + 1);
@@ -123,10 +128,15 @@ export default function Periodos({ onSeleccionar }: { onSeleccionar?: (p: Period
                 <td>{p.fecha_inicio?.slice(0, 10)}</td>
                 <td>{p.fecha_fin?.slice(0, 10)}</td>
                 <td>{p.estado}</td>
-                <td style={{ display: "flex", gap: 6 }}>
-                  {onSeleccionar && (
-                    <button className="primario" onClick={() => onSeleccionar(p)}>
-                      Calcular planilla
+                <td style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {onCargarTareo && (
+                    <button className="primario" onClick={() => onCargarTareo(p)}>
+                      Cargar tareo
+                    </button>
+                  )}
+                  {onCalcular && (
+                    <button type="button" onClick={() => onCalcular(p)}>
+                      Calcular
                     </button>
                   )}
                   {p.estado === "CALCULADO" && (

@@ -151,6 +151,27 @@ CREATE UNIQUE INDEX periodos_planilla_periodo_unico
     ON periodos_planilla (anio, mes, tipo, COALESCE(quincena, 0));
 
 -- -------------------------------------------------------------------------
+-- asistencia_periodo: tareo cargado (Excel/CSV o manual) de un periodo.
+-- Solo existe una fila aqui para los trabajadores que efectivamente
+-- trabajaron ese periodo (no para toda la planilla) - es la fuente de la
+-- que se calcula detalle_planilla.
+-- -------------------------------------------------------------------------
+CREATE TABLE asistencia_periodo (
+    id              SERIAL PRIMARY KEY,
+    periodo_id      INT NOT NULL REFERENCES periodos_planilla(id) ON DELETE CASCADE,
+    contrato_id     INT NOT NULL REFERENCES contratos(id) ON DELETE RESTRICT,
+    dias_trabajados NUMERIC(5,2) NOT NULL DEFAULT 0,
+    dias_dominical  NUMERIC(5,2) NOT NULL DEFAULT 0,
+    dias_feriado    NUMERIC(5,2) NOT NULL DEFAULT 0,
+    dias_falta      NUMERIC(5,2) NOT NULL DEFAULT 0,
+    horas_extra_25  NUMERIC(6,2) NOT NULL DEFAULT 0,
+    horas_extra_35  NUMERIC(6,2) NOT NULL DEFAULT 0,
+    horas_extra_100 NUMERIC(6,2) NOT NULL DEFAULT 0,
+    actualizado_en  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (periodo_id, contrato_id)
+);
+
+-- -------------------------------------------------------------------------
 -- detalle_planilla: línea calculada por trabajador y periodo (el "resultado")
 -- -------------------------------------------------------------------------
 CREATE TABLE detalle_planilla (
