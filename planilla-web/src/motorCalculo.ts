@@ -166,6 +166,33 @@ export function calcularMesesEnSemestre(
 }
 
 /**
+ * Remuneracion computable "regular" para gratificacion y CTS: el sueldo de
+ * un mes COMPLETO (30 dias), no el del periodo que se esta calculando.
+ * BUG REAL corregido: antes se usaba sueldoBasico/BUC ya prorrateados por
+ * los dias_trabajados del periodo actual, asi que un trabajador con
+ * asistencia parcial en el mes de pago (ej. 15 de 30 dias) recibia la
+ * mitad de gratificacion/CTS que le correspondia. La ley solo prorratea
+ * la gratificacion/CTS por los MESES de antiguedad en el semestre
+ * (calcularMesesEnSemestre), no por la asistencia del mes de pago.
+ */
+function calcularRemuneracionComputableRegular(
+  contrato: Contrato,
+  jornalDiario: number,
+  numeroHijos: number,
+  parametros: ParametrosNormativos,
+  tablaCategorias: TablaSalarialMensual
+): number {
+  const sueldoBasicoRegular = redondear(jornalDiario * 30);
+  const config = tablaCategorias[contrato.categoria_ocupacional];
+  const bucRegular =
+    esConstruccionCivil(contrato.categoria_ocupacional) && config
+      ? redondear(jornalDiario * config.buc * 30)
+      : 0;
+  const asignacionFamiliarRegular = numeroHijos >= 1 ? parametros.asignacion_familiar : 0;
+  return sueldoBasicoRegular + bucRegular + asignacionFamiliarRegular;
+}
+
+/**
  * Gratificacion (Fiestas Patrias / Navidad).
  * Formula legal: (remuneracion computable / 6) x meses completos laborados
  * en el semestre (jul-dic o ene-jun). Se calcula solo cuando el periodo
@@ -358,10 +385,20 @@ export function calcularLineaPlanilla(
   );
   const bonificacionBUC = calcularBonificacionBUC(contrato, jornalDiario, asistencia, tablaCategorias);
 
-  // Remuneracion computable para gratificacion/CTS (sin horas extra ni bonos esporadicos)
+  // Remuneracion computable del periodo actual (solo para mostrar en el detalle)
   const remuneracionComputable = sueldoBasico + remDominical + asignacionFamiliar + bonificacionBUC;
-  const gratificacion = calcularGratificacion(remuneracionComputable, mes, anio, contrato.fecha_ingreso);
-  const cts = calcularCTS(remuneracionComputable, gratificacion, mes, anio, contrato.fecha_ingreso);
+  // Gratificacion y CTS usan el sueldo de un mes COMPLETO, no el de este
+  // periodo (que puede estar prorrateado por dias trabajados/faltas) - ver
+  // calcularRemuneracionComputableRegular.
+  const remuneracionComputableRegular = calcularRemuneracionComputableRegular(
+    contrato,
+    jornalDiario,
+    numeroHijos,
+    parametros,
+    tablaCategorias
+  );
+  const gratificacion = calcularGratificacion(remuneracionComputableRegular, mes, anio, contrato.fecha_ingreso);
+  const cts = calcularCTS(remuneracionComputableRegular, gratificacion, mes, anio, contrato.fecha_ingreso);
   const vacaciones = 0; // TODO: calcular record de vacaciones truncas/gozadas (Fase 2)
 
   const totalIngresos = redondear(
