@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { asyncHandler } from "../asyncHandler";
+import { requiereRol } from "../authMiddleware";
 import { pool } from "../db";
 import { ErrorValidacion } from "../validaciones";
 
@@ -26,7 +27,7 @@ parametrosRouter.get("/mensual", asyncHandler(async (_req: Request, res: Respons
 
 // POST /api/parametros/mensual  body: { anio, mes, copiar_de_anio, copiar_de_mes }
 // Crea un mes nuevo copiando las tasas AFP y tabla salarial de otro mes.
-parametrosRouter.post("/mensual", asyncHandler(async (req: Request, res: Response) => {
+parametrosRouter.post("/mensual", requiereRol("ADMIN"), asyncHandler(async (req: Request, res: Response) => {
   const { anio, mes, copiar_de_anio, copiar_de_mes } = req.body;
   if (!anio || !mes) {
     return res.status(400).json({ error: "anio y mes son obligatorios" });
@@ -99,7 +100,7 @@ parametrosRouter.get("/mensual/:anio/:mes", asyncHandler(async (req: Request, re
 
 // PUT /api/parametros/mensual/:anio/:mes  body: { afp_tasas: {...}, tabla_categorias: {...} }
 // Upsert de cada AFP/categoria presente en el body (no borra las que no se mencionen).
-parametrosRouter.put("/mensual/:anio/:mes", asyncHandler(async (req: Request, res: Response) => {
+parametrosRouter.put("/mensual/:anio/:mes", requiereRol("ADMIN"), asyncHandler(async (req: Request, res: Response) => {
   const anio = Number(req.params.anio);
   const mes = Number(req.params.mes);
   const { afp_tasas, tabla_categorias } = req.body as {
@@ -183,7 +184,7 @@ parametrosRouter.get("/:anio", asyncHandler(async (req: Request, res: Response) 
 }));
 
 // Crea el registro de un anio nuevo, opcionalmente copiando los valores de otro anio como base
-parametrosRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
+parametrosRouter.post("/", requiereRol("ADMIN"), asyncHandler(async (req: Request, res: Response) => {
   try {
     const b = req.body;
     if (!b.anio) throw new ErrorValidacion("anio es obligatorio");
@@ -241,7 +242,7 @@ parametrosRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
   }
 }));
 
-parametrosRouter.put("/:anio", asyncHandler(async (req: Request, res: Response) => {
+parametrosRouter.put("/:anio", requiereRol("ADMIN"), asyncHandler(async (req: Request, res: Response) => {
   const b = req.body;
   const resultado = await pool.query(
     `UPDATE parametros_normativos SET

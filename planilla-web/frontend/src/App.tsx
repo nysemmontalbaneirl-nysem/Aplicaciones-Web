@@ -53,6 +53,8 @@ export default function App() {
   }
 
   const esAdmin = usuario.rol === "ADMIN";
+  // TAREADOR solo carga tareo, no calcula ni ve boletas/reportes.
+  const puedeCalcular = esAdmin || usuario.rol === "RESPONSABLE_PLANILLA";
 
   return (
     <div className="app-shell">
@@ -82,12 +84,14 @@ export default function App() {
         >
           Trabajadores
         </button>
-        <button
-          className={`tab-button ${pestana === "importar" ? "activo" : ""}`}
-          onClick={() => setPestana("importar")}
-        >
-          Importar
-        </button>
+        {esAdmin && (
+          <button
+            className={`tab-button ${pestana === "importar" ? "activo" : ""}`}
+            onClick={() => setPestana("importar")}
+          >
+            Importar
+          </button>
+        )}
         <button
           className={`tab-button ${pestana === "periodos" ? "activo" : ""}`}
           onClick={() => setPestana("periodos")}
@@ -101,25 +105,29 @@ export default function App() {
         >
           Tareo
         </button>
-        <button
-          className={`tab-button ${pestana === "calculo" ? "activo" : ""}`}
-          onClick={() => setPestana("calculo")}
-          disabled={!periodoSeleccionado}
-        >
-          Calcular
-        </button>
-        <button
-          className={`tab-button ${pestana === "boletas" ? "activo" : ""}`}
-          onClick={() => setPestana("boletas")}
-        >
-          Boletas
-        </button>
-        <button
-          className={`tab-button ${pestana === "reportes" ? "activo" : ""}`}
-          onClick={() => setPestana("reportes")}
-        >
-          Reportes
-        </button>
+        {puedeCalcular && (
+          <>
+            <button
+              className={`tab-button ${pestana === "calculo" ? "activo" : ""}`}
+              onClick={() => setPestana("calculo")}
+              disabled={!periodoSeleccionado}
+            >
+              Calcular
+            </button>
+            <button
+              className={`tab-button ${pestana === "boletas" ? "activo" : ""}`}
+              onClick={() => setPestana("boletas")}
+            >
+              Boletas
+            </button>
+            <button
+              className={`tab-button ${pestana === "reportes" ? "activo" : ""}`}
+              onClick={() => setPestana("reportes")}
+            >
+              Reportes
+            </button>
+          </>
+        )}
         {esAdmin && (
           <>
             <button
@@ -151,16 +159,18 @@ export default function App() {
       </div>
 
       {pestana === "trabajadores" && <Trabajadores />}
-      {pestana === "importar" && <Importar />}
-      {pestana === "periodos" && <Periodos onCargarTareo={irATareo} onCalcular={irACalculo} />}
+      {pestana === "importar" && esAdmin && <Importar />}
+      {pestana === "periodos" && (
+        <Periodos onCargarTareo={irATareo} onCalcular={puedeCalcular ? irACalculo : undefined} />
+      )}
       {pestana === "tareo" && periodoSeleccionado && (
         <Tareo periodo={periodoSeleccionado} onIrACalcular={() => setPestana("calculo")} />
       )}
-      {pestana === "calculo" && periodoSeleccionado && (
+      {pestana === "calculo" && periodoSeleccionado && puedeCalcular && (
         <Calculo periodo={periodoSeleccionado} onVerBoletas={() => setPestana("boletas")} />
       )}
-      {pestana === "boletas" && <Boletas periodoInicial={periodoSeleccionado} />}
-      {pestana === "reportes" && <Reportes />}
+      {pestana === "boletas" && puedeCalcular && <Boletas periodoInicial={periodoSeleccionado} />}
+      {pestana === "reportes" && puedeCalcular && <Reportes />}
       {pestana === "parametros" && esAdmin && <Parametros />}
       {pestana === "proyectos" && esAdmin && <Proyectos />}
       {pestana === "usuarios" && esAdmin && <Usuarios />}

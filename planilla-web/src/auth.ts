@@ -20,6 +20,9 @@ export interface TokenPayload {
   nombre: string;
   correo: string;
   rol: RolUsuario;
+  // Nombres de los proyectos a los que tiene acceso (vacio/ignorado si rol === "ADMIN",
+  // que tiene acceso a todos).
+  proyectos: string[];
 }
 
 export function firmarToken(payload: TokenPayload): string {

@@ -31,7 +31,16 @@ authRouter.post(
       return res.status(401).json({ error: "Correo o contraseña incorrectos." });
     }
 
-    const payload = { id: usuario.id, nombre: usuario.nombre, correo: usuario.correo, rol: usuario.rol };
+    let proyectos: string[] = [];
+    if (usuario.rol !== "ADMIN") {
+      const rp = await pool.query(
+        `SELECT p.nombre FROM usuario_proyecto up JOIN proyectos p ON p.id = up.proyecto_id WHERE up.usuario_id = $1`,
+        [usuario.id]
+      );
+      proyectos = rp.rows.map((f) => f.nombre);
+    }
+
+    const payload = { id: usuario.id, nombre: usuario.nombre, correo: usuario.correo, rol: usuario.rol, proyectos };
     const token = firmarToken(payload);
     res.json({ token, usuario: payload });
   })

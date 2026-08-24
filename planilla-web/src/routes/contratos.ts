@@ -1,6 +1,8 @@
 import { Router, Request, Response } from "express";
 import { asyncHandler } from "../asyncHandler";
+import { requiereRol } from "../authMiddleware";
 import { pool } from "../db";
+import { tieneAccesoProyecto } from "../permisos";
 import {
   ErrorValidacion,
   validarCategoriaOcupacional,
@@ -23,6 +25,10 @@ contratosRouter.get("/", asyncHandler(async (req: Request, res: Response) => {
     valores.push(estado);
     condiciones.push(`c.estado = $${valores.length}`);
   }
+  if (req.usuario!.rol !== "ADMIN") {
+    valores.push(req.usuario!.proyectos);
+    condiciones.push(`c.proyecto = ANY($${valores.length}::text[])`);
+  }
   const where = condiciones.length ? `WHERE ${condiciones.join(" AND ")}` : "";
 
   const resultado = await pool.query(
@@ -35,7 +41,7 @@ contratosRouter.get("/", asyncHandler(async (req: Request, res: Response) => {
   res.json(resultado.rows);
 }));
 
-contratosRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
+contratosRouter.post("/", requiereRol("ADMIN", "RESPONSABLE_PLANILLA"), asyncHandler(async (req: Request, res: Response) => {
   try {
     const b = req.body;
     const categoria_ocupacional = validarCategoriaOcupacional(b.categoria_ocupacional);
@@ -50,6 +56,9 @@ contratosRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
     }
     if (categoria_ocupacional === "EMPLEADO" && !b.sueldo_base) {
       throw new ErrorValidacion("sueldo_base es obligatorio para la categoria EMPLEADO");
+    }
+    if (!tieneAccesoProyecto(req.usuario!, b.proyecto ?? "")) {
+      return res.status(403).json({ error: "No tienes acceso a ese proyecto" });
     }
 
     const resultado = await pool.query(
@@ -88,7 +97,7 @@ contratosRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
   }
 }));
 
-contratosRouter.put("/:id", asyncHandler(async (req: Request, res: Response) => {
+contratosRouter.put("/:id", requiereRol("ADMIN", "RESPONSABLE_PLANILLA"), asyncHandler(async (req: Request, res: Response) => {
   try {
     const b = req.body;
     const categoria_ocupacional = validarCategoriaOcupacional(b.categoria_ocupacional);
@@ -100,6 +109,17 @@ contratosRouter.put("/:id", asyncHandler(async (req: Request, res: Response) => 
     }
     if (categoria_ocupacional === "EMPLEADO" && !b.sueldo_base) {
       throw new ErrorValidacion("sueldo_base es obligatorio para la categoria EMPLEADO");
+    }
+
+    const actual = await pool.query("SELECT proyecto FROM contratos WHERE id = $1", [req.params.id]);
+    if (actual.rowCount === 0) {
+      return res.status(404).json({ error: "Contrato no encontrado" });
+    }
+    if (
+      !tieneAccesoProyecto(req.usuario!, actual.rows[0].proyecto) ||
+      !tieneAccesoProyecto(req.usuario!, b.proyecto ?? "")
+    ) {
+      return res.status(403).json({ error: "No tienes acceso a ese proyecto" });
     }
 
     const resultado = await pool.query(
@@ -142,9 +162,16 @@ contratosRouter.put("/:id", asyncHandler(async (req: Request, res: Response) => 
   }
 }));
 
-contratosRouter.post("/:id/cese", asyncHandler(async (req: Request, res: Response) => {
+contratosRouter.post("/:id/cese", requiereRol("ADMIN", "RESPONSABLE_PLANILLA"), asyncHandler(async (req: Request, res: Response) => {
   try {
     const fecha_cese = validarFecha(req.body.fecha_cese, "fecha_cese");
+    const actual = await pool.query("SELECT proyecto FROM contratos WHERE id = $1", [req.params.id]);
+    if (actual.rowCount === 0) {
+      return res.status(404).json({ error: "Contrato no encontrado" });
+    }
+    if (!tieneAccesoProyecto(req.usuario!, actual.rows[0].proyecto)) {
+      return res.status(403).json({ error: "No tienes acceso a ese proyecto" });
+    }
     const resultado = await pool.query(
       `UPDATE contratos SET fecha_cese = $1, estado = 'CESADO' WHERE id = $2 RETURNING *`,
       [fecha_cese, req.params.id]

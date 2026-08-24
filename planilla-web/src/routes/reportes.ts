@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import ExcelJS from "exceljs";
 import { asyncHandler } from "../asyncHandler";
+import { requiereRol } from "../authMiddleware";
 import { pool } from "../db";
 import { esConstruccionCivil } from "../motorCalculo";
 
@@ -33,13 +34,17 @@ function fecha(v: unknown): string {
   return new Date(v as string).toISOString().slice(0, 10);
 }
 
+// TAREADOR no tiene acceso a reportes; RESPONSABLE_PLANILLA solo ve sus
+// proyectos asignados.
 reportesRouter.get(
   "/:id/reporte",
+  requiereRol("ADMIN", "RESPONSABLE_PLANILLA"),
   asyncHandler(async (req: Request, res: Response) => {
     const periodoResult = await pool.query("SELECT * FROM periodos_planilla WHERE id = $1", [req.params.id]);
     const periodo = periodoResult.rows[0];
     if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
 
+    const esAdminReporte = req.usuario!.rol === "ADMIN";
     const resultado = await pool.query(
       `SELECT d.*, e.apellidos_nombres, e.numero_documento, e.numero_hijos, e.fecha_nacimiento,
               c.proyecto, c.categoria_ocupacional, c.sistema_pension, c.afp_nombre, c.cuspp,
@@ -48,9 +53,9 @@ reportesRouter.get(
        FROM detalle_planilla d
        JOIN contratos c ON c.id = d.contrato_id
        JOIN empleados e ON e.id = c.empleado_id
-       WHERE d.periodo_id = $1
+       WHERE d.periodo_id = $1 ${esAdminReporte ? "" : "AND c.proyecto = ANY($2::text[])"}
        ORDER BY e.apellidos_nombres ASC`,
-      [req.params.id]
+      esAdminReporte ? [req.params.id] : [req.params.id, req.usuario!.proyectos]
     );
 
     const workbook = new ExcelJS.Workbook();

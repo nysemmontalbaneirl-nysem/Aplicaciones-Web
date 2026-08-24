@@ -188,6 +188,7 @@ export interface Usuario {
   correo: string;
   rol: RolUsuario;
   activo: boolean;
+  proyectos: string[];
 }
 
 export interface Proyecto {

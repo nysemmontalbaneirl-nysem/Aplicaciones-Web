@@ -3,8 +3,10 @@ import multer from "multer";
 import { parse } from "csv-parse/sync";
 import ExcelJS from "exceljs";
 import { asyncHandler } from "../asyncHandler";
+import { requiereRol } from "../authMiddleware";
 import { pool } from "../db";
 import { calcularLineaPlanilla } from "../motorCalculo";
+import { tieneAccesoProyecto } from "../permisos";
 import { Contrato, ParametrosNormativos, TablaSalarialMensual, TasasAFPMensuales } from "../tipos";
 import { ErrorValidacion } from "../validaciones";
 
@@ -71,7 +73,12 @@ async function obtenerAfpTasas(anio: number, mes: number): Promise<TasasAFPMensu
 
 // GET /api/periodos/:id/planilla?q=texto -> boletas ya calculadas de ese
 // periodo (usado por la pestana Boletas). q filtra por DNI o nombre.
-planillaRouter.get("/:id/planilla", asyncHandler(async (req: Request, res: Response) => {
+// TAREADOR no tiene acceso a boletas; RESPONSABLE_PLANILLA solo ve las de
+// sus proyectos asignados.
+planillaRouter.get(
+  "/:id/planilla",
+  requiereRol("ADMIN", "RESPONSABLE_PLANILLA"),
+  asyncHandler(async (req: Request, res: Response) => {
   const periodo = await obtenerPeriodo(req.params.id);
   if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
 
@@ -81,6 +88,10 @@ planillaRouter.get("/:id/planilla", asyncHandler(async (req: Request, res: Respo
   if (q) {
     valores.push(`%${q}%`);
     condiciones.push(`(e.numero_documento ILIKE $${valores.length} OR e.apellidos_nombres ILIKE $${valores.length})`);
+  }
+  if (req.usuario!.rol !== "ADMIN") {
+    valores.push(req.usuario!.proyectos);
+    condiciones.push(`c.proyecto = ANY($${valores.length}::text[])`);
   }
 
   const resultado = await pool.query(
@@ -117,11 +128,13 @@ planillaRouter.get("/:id/tareo/plantilla", asyncHandler(async (req: Request, res
   const periodo = await obtenerPeriodo(req.params.id);
   if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
 
+  const esAdmin = req.usuario!.rol === "ADMIN";
   const contratosResult = await pool.query(
     `SELECT e.numero_documento, e.apellidos_nombres, c.proyecto
      FROM contratos c JOIN empleados e ON e.id = c.empleado_id
-     WHERE c.estado = 'HABIL'
-     ORDER BY e.apellidos_nombres ASC`
+     WHERE c.estado = 'HABIL' ${esAdmin ? "" : "AND c.proyecto = ANY($1::text[])"}
+     ORDER BY e.apellidos_nombres ASC`,
+    esAdmin ? [] : [req.usuario!.proyectos]
   );
 
   const workbook = new ExcelJS.Workbook();
@@ -193,14 +206,15 @@ planillaRouter.get("/:id/tareo", asyncHandler(async (req: Request, res: Response
   const periodo = await obtenerPeriodo(req.params.id);
   if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
 
+  const esAdmin = req.usuario!.rol === "ADMIN";
   const resultado = await pool.query(
     `SELECT a.*, e.numero_documento, e.apellidos_nombres, c.proyecto, c.categoria_ocupacional
      FROM asistencia_periodo a
      JOIN contratos c ON c.id = a.contrato_id
      JOIN empleados e ON e.id = c.empleado_id
-     WHERE a.periodo_id = $1
+     WHERE a.periodo_id = $1 ${esAdmin ? "" : "AND c.proyecto = ANY($2::text[])"}
      ORDER BY e.apellidos_nombres ASC`,
-    [req.params.id]
+    esAdmin ? [req.params.id] : [req.params.id, req.usuario!.proyectos]
   );
   res.json({ periodo, tareo: resultado.rows });
 }));
@@ -215,6 +229,14 @@ planillaRouter.put("/:id/tareo", asyncHandler(async (req: Request, res: Response
   const b = req.body as Partial<FilaAsistencia>;
   if (!b.contrato_id) {
     return res.status(400).json({ error: "contrato_id es obligatorio" });
+  }
+
+  const contratoResult = await pool.query("SELECT proyecto FROM contratos WHERE id = $1", [b.contrato_id]);
+  if (contratoResult.rowCount === 0) {
+    return res.status(404).json({ error: "El contrato no existe" });
+  }
+  if (!tieneAccesoProyecto(req.usuario!, contratoResult.rows[0].proyecto)) {
+    return res.status(403).json({ error: "No tienes acceso a ese proyecto" });
   }
 
   await guardarAsistencia(req.params.id, {
@@ -233,6 +255,14 @@ planillaRouter.put("/:id/tareo", asyncHandler(async (req: Request, res: Response
 // DELETE /api/periodos/:id/tareo/:contratoId -> quita un trabajador del
 // tareo de ese periodo (no borra el contrato, solo su fila de asistencia).
 planillaRouter.delete("/:id/tareo/:contratoId", asyncHandler(async (req: Request, res: Response) => {
+  const contratoResult = await pool.query("SELECT proyecto FROM contratos WHERE id = $1", [req.params.contratoId]);
+  if (contratoResult.rowCount === 0) {
+    return res.status(404).json({ error: "El contrato no existe" });
+  }
+  if (!tieneAccesoProyecto(req.usuario!, contratoResult.rows[0].proyecto)) {
+    return res.status(403).json({ error: "No tienes acceso a ese proyecto" });
+  }
+
   const resultado = await pool.query(
     "DELETE FROM asistencia_periodo WHERE periodo_id = $1 AND contrato_id = $2 RETURNING id",
     [req.params.id, req.params.contratoId]
@@ -318,10 +348,12 @@ planillaRouter.post(
       return res.status(400).json({ error: `No se pudo leer el archivo: ${(err as Error).message}` });
     }
 
+    const esAdminImportar = req.usuario!.rol === "ADMIN";
     const contratosResult = await pool.query(
       `SELECT c.id, c.proyecto, e.numero_documento
        FROM contratos c JOIN empleados e ON e.id = c.empleado_id
-       WHERE c.estado = 'HABIL'`
+       WHERE c.estado = 'HABIL' ${esAdminImportar ? "" : "AND c.proyecto = ANY($1::text[])"}`,
+      esAdminImportar ? [] : [req.usuario!.proyectos]
     );
     const contratosPorDni = new Map<string, { id: number; proyecto: string }[]>();
     for (const fila of contratosResult.rows) {
@@ -399,12 +431,19 @@ planillaRouter.post(
 // partir del tareo ya guardado en asistencia_periodo (pestana Tareo). Solo
 // se calculan los trabajadores que tienen tareo cargado, no toda la
 // planilla.
-planillaRouter.post("/:id/calcular", asyncHandler(async (req: Request, res: Response) => {
+// TAREADOR solo carga tareo, no calcula. RESPONSABLE_PLANILLA calcula solo
+// los trabajadores de sus proyectos asignados (no toca boletas de otros
+// proyectos que haya calculado otro responsable en el mismo periodo).
+planillaRouter.post(
+  "/:id/calcular",
+  requiereRol("ADMIN", "RESPONSABLE_PLANILLA"),
+  asyncHandler(async (req: Request, res: Response) => {
   const cliente = await pool.connect();
   try {
     const periodo = await obtenerPeriodo(req.params.id);
     if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
 
+    const esAdminCalculo = req.usuario!.rol === "ADMIN";
     const asistenciaResult = await pool.query(
       `SELECT a.contrato_id, a.dias_trabajados, a.dias_dominical, a.dias_feriado, a.dias_falta,
               a.horas_extra_25, a.horas_extra_35, a.horas_extra_100,
@@ -412,12 +451,14 @@ planillaRouter.post("/:id/calcular", asyncHandler(async (req: Request, res: Resp
        FROM asistencia_periodo a
        JOIN contratos c ON c.id = a.contrato_id
        JOIN empleados e ON e.id = c.empleado_id
-       WHERE a.periodo_id = $1`,
-      [req.params.id]
+       WHERE a.periodo_id = $1 ${esAdminCalculo ? "" : "AND c.proyecto = ANY($2::text[])"}`,
+      esAdminCalculo ? [req.params.id] : [req.params.id, req.usuario!.proyectos]
     );
     if (asistenciaResult.rowCount === 0) {
       throw new ErrorValidacion(
-        "No hay tareo cargado para este periodo. Ve a la pestana Tareo y sube el archivo antes de calcular."
+        esAdminCalculo
+          ? "No hay tareo cargado para este periodo. Ve a la pestana Tareo y sube el archivo antes de calcular."
+          : "No hay tareo cargado para tus proyectos en este periodo."
       );
     }
 
@@ -430,11 +471,17 @@ planillaRouter.post("/:id/calcular", asyncHandler(async (req: Request, res: Resp
     // Deja detalle_planilla en sincronia exacta con el tareo actual: borra
     // boletas de trabajadores que ya no estan en el tareo de este periodo
     // (ej. quedaron de un calculo anterior con otra lista de trabajadores).
+    // Si el usuario no es ADMIN, esta limpieza se limita a sus proyectos
+    // para no tocar boletas de otros proyectos calculadas por otro
+    // responsable en el mismo periodo.
     await cliente.query(
-      `DELETE FROM detalle_planilla
-       WHERE periodo_id = $1
-         AND contrato_id NOT IN (SELECT contrato_id FROM asistencia_periodo WHERE periodo_id = $1)`,
-      [periodo.id]
+      `DELETE FROM detalle_planilla d
+       USING contratos c
+       WHERE d.contrato_id = c.id
+         AND d.periodo_id = $1
+         AND d.contrato_id NOT IN (SELECT contrato_id FROM asistencia_periodo WHERE periodo_id = $1)
+         ${esAdminCalculo ? "" : "AND c.proyecto = ANY($2::text[])"}`,
+      esAdminCalculo ? [periodo.id] : [periodo.id, req.usuario!.proyectos]
     );
 
     const lineasCalculadas = [];
