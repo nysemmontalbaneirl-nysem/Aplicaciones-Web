@@ -427,6 +427,16 @@ planillaRouter.post("/:id/calcular", asyncHandler(async (req: Request, res: Resp
 
     await cliente.query("BEGIN");
 
+    // Deja detalle_planilla en sincronia exacta con el tareo actual: borra
+    // boletas de trabajadores que ya no estan en el tareo de este periodo
+    // (ej. quedaron de un calculo anterior con otra lista de trabajadores).
+    await cliente.query(
+      `DELETE FROM detalle_planilla
+       WHERE periodo_id = $1
+         AND contrato_id NOT IN (SELECT contrato_id FROM asistencia_periodo WHERE periodo_id = $1)`,
+      [periodo.id]
+    );
+
     const lineasCalculadas = [];
     const erroresCalculo: Array<{ contrato_id: number; dni: string; nombre: string; motivo: string }> = [];
 
