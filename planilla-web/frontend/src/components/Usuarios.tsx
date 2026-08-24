@@ -160,9 +160,20 @@ export default function Usuarios() {
               <p style={{ marginBottom: 6, fontSize: "0.88rem", color: "#5a6172" }}>
                 Proyectos a los que tiene acceso este usuario:
               </p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, minmax(220px, 1fr))",
+                  gap: "6px 20px",
+                  maxHeight: 260,
+                  overflowY: "auto",
+                  border: "1px solid #e3e5ea",
+                  borderRadius: 6,
+                  padding: 12,
+                }}
+              >
                 {proyectos.map((p) => (
-                  <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 4, fontWeight: 400 }}>
+                  <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 400 }}>
                     <input
                       type="checkbox"
                       checked={form.proyecto_ids.includes(p.id)}
