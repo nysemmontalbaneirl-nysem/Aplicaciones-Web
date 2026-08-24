@@ -4,6 +4,9 @@ interface Props {
   detalle: DetallePlanilla;
   periodo: PeriodoPlanilla;
   onCerrar: () => void;
+  // Oculta los botones Imprimir/Cerrar propios de esta boleta, para cuando
+  // se muestra dentro de un lote con sus propios controles compartidos.
+  ocultarControles?: boolean;
 }
 
 const MESES = [
@@ -24,7 +27,7 @@ function filasSinCero(lineas: Linea[]): Linea[] {
   return lineas.filter((l) => l.valor !== 0);
 }
 
-export default function Boleta({ detalle, periodo, onCerrar }: Props) {
+export default function Boleta({ detalle, periodo, onCerrar, ocultarControles }: Props) {
   const aporteDetalle = detalle.detalle_json?.aporte_pension_detalle;
 
   const ingresos = filasSinCero([
@@ -70,14 +73,16 @@ export default function Boleta({ detalle, periodo, onCerrar }: Props) {
             D.S. Nº 003-97-TR — {MESES[periodo.mes - 1]} {periodo.anio}
           </div>
         </div>
-        <div className="no-imprimir" style={{ display: "flex", gap: 8 }}>
-          <button className="primario" type="button" onClick={() => window.print()}>
-            Imprimir
-          </button>
-          <button type="button" onClick={onCerrar}>
-            Cerrar
-          </button>
-        </div>
+        {!ocultarControles && (
+          <div className="no-imprimir" style={{ display: "flex", gap: 8 }}>
+            <button className="primario" type="button" onClick={() => window.print()}>
+              Imprimir
+            </button>
+            <button type="button" onClick={onCerrar}>
+              Cerrar
+            </button>
+          </div>
+        )}
       </div>
 
       <table style={{ marginTop: 16, marginBottom: 16 }}>

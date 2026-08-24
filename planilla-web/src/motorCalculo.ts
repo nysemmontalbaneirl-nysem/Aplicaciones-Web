@@ -188,7 +188,11 @@ function calcularRemuneracionComputableRegular(
     esConstruccionCivil(contrato.categoria_ocupacional) && config
       ? redondear(jornalDiario * config.buc * 30)
       : 0;
-  const asignacionFamiliarRegular = numeroHijos >= 1 ? parametros.asignacion_familiar : 0;
+  // parametros.asignacion_familiar viene de una columna NUMERIC de Postgres,
+  // que el driver "pg" entrega como string; sin el Number() aca, la suma de
+  // abajo hace concatenacion de texto en vez de suma (bug real: producia
+  // gratificacion/CTS = NaN para cualquier trabajador con hijos).
+  const asignacionFamiliarRegular = numeroHijos >= 1 ? Number(parametros.asignacion_familiar) : 0;
   return sueldoBasicoRegular + bucRegular + asignacionFamiliarRegular;
 }
 

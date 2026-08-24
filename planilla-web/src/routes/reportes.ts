@@ -34,40 +34,38 @@ function fecha(v: unknown): string {
   return new Date(v as string).toISOString().slice(0, 10);
 }
 
-// TAREADOR no tiene acceso a reportes; RESPONSABLE_PLANILLA solo ve sus
-// proyectos asignados.
-reportesRouter.get(
-  "/:id/reporte",
-  requiereRol("ADMIN", "RESPONSABLE_PLANILLA"),
-  asyncHandler(async (req: Request, res: Response) => {
-    const periodoResult = await pool.query("SELECT * FROM periodos_planilla WHERE id = $1", [req.params.id]);
-    const periodo = periodoResult.rows[0];
-    if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
+interface FilaReporte {
+  periodo: Record<string, unknown>;
+  filas: (string | number)[][];
+}
 
-    const esAdminReporte = req.usuario!.rol === "ADMIN";
-    const resultado = await pool.query(
-      `SELECT d.*, e.apellidos_nombres, e.numero_documento, e.numero_hijos, e.fecha_nacimiento,
-              c.proyecto, c.categoria_ocupacional, c.sistema_pension, c.afp_nombre, c.cuspp,
-              c.fecha_ingreso, c.fecha_cese, c.sistema_comision, c.viaticos, c.sueldo_base,
-              c.sindicalizado, c.poliza_seguro, c.sctr_salud
-       FROM detalle_planilla d
-       JOIN contratos c ON c.id = d.contrato_id
-       JOIN empleados e ON e.id = c.empleado_id
-       WHERE d.periodo_id = $1 ${esAdminReporte ? "" : "AND c.proyecto = ANY($2::text[])"}
-       ORDER BY e.apellidos_nombres ASC`,
-      esAdminReporte ? [req.params.id] : [req.params.id, req.usuario!.proyectos]
-    );
+// Trae y arma las filas del resumen de planilla (una fila por trabajador,
+// mismo orden/columnas que COLUMNAS). Usado tanto para la vista previa en
+// pantalla como para la descarga en Excel, para no duplicar la logica de
+// calculo de cada columna.
+async function construirFilasReporte(periodoId: string, usuario: NonNullable<Request["usuario"]>): Promise<FilaReporte> {
+  const periodoResult = await pool.query("SELECT * FROM periodos_planilla WHERE id = $1", [periodoId]);
+  const periodo = periodoResult.rows[0];
+  if (!periodo) {
+    throw Object.assign(new Error("Periodo no encontrado"), { status: 404 });
+  }
 
-    const workbook = new ExcelJS.Workbook();
-    const hoja = workbook.addWorksheet(`Resumen ${periodo.mes}-${periodo.anio}`);
-    hoja.addRow([...COLUMNAS]);
-    hoja.getRow(1).font = { bold: true };
-    hoja.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: COLUMNAS.length } };
-    // Congela la columna DNI y Apellidos/Nombres (y la fila de encabezado)
-    // al desplazarse horizontalmente por las 74 columnas.
-    hoja.views = [{ state: "frozen", xSplit: 3, ySplit: 1 }];
+  const esAdminReporte = usuario.rol === "ADMIN";
+  const resultado = await pool.query(
+    `SELECT d.*, e.apellidos_nombres, e.numero_documento, e.numero_hijos, e.fecha_nacimiento,
+            c.proyecto, c.categoria_ocupacional, c.sistema_pension, c.afp_nombre, c.cuspp,
+            c.fecha_ingreso, c.fecha_cese, c.sistema_comision, c.viaticos, c.sueldo_base,
+            c.sindicalizado, c.poliza_seguro, c.sctr_salud
+     FROM detalle_planilla d
+     JOIN contratos c ON c.id = d.contrato_id
+     JOIN empleados e ON e.id = c.empleado_id
+     WHERE d.periodo_id = $1 ${esAdminReporte ? "" : "AND c.proyecto = ANY($2::text[])"}
+     ORDER BY e.apellidos_nombres ASC`,
+    esAdminReporte ? [periodoId] : [periodoId, usuario.proyectos]
+  );
 
-    for (const d of resultado.rows) {
+  const filas: (string | number)[][] = [];
+  for (const d of resultado.rows) {
       const detalleJson = typeof d.detalle_json === "string" ? JSON.parse(d.detalle_json) : d.detalle_json ?? {};
       const aportePension = detalleJson.aporte_pension_detalle ?? {};
       const esAfp = d.sistema_pension === "AFP";
@@ -156,6 +154,55 @@ reportesRouter.get(
         Number(d.senati),
         Number(detalleJson.total_aportes_empleador ?? 0),
       ];
+      filas.push(fila);
+  }
+
+  return { periodo, filas };
+}
+
+// TAREADOR no tiene acceso a reportes; RESPONSABLE_PLANILLA solo ve sus
+// proyectos asignados.
+
+// Vista previa en pantalla: mismas columnas y filas que el Excel, en JSON.
+reportesRouter.get(
+  "/:id/reporte/datos",
+  requiereRol("ADMIN", "RESPONSABLE_PLANILLA"),
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const { periodo, filas } = await construirFilasReporte(req.params.id, req.usuario!);
+      res.json({ periodo, columnas: COLUMNAS, filas });
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      if (status === 404) return res.status(404).json({ error: "Periodo no encontrado" });
+      throw err;
+    }
+  })
+);
+
+reportesRouter.get(
+  "/:id/reporte",
+  requiereRol("ADMIN", "RESPONSABLE_PLANILLA"),
+  asyncHandler(async (req: Request, res: Response) => {
+    let datos: FilaReporte;
+    try {
+      datos = await construirFilasReporte(req.params.id, req.usuario!);
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      if (status === 404) return res.status(404).json({ error: "Periodo no encontrado" });
+      throw err;
+    }
+    const { periodo, filas } = datos;
+
+    const workbook = new ExcelJS.Workbook();
+    const hoja = workbook.addWorksheet(`Resumen ${periodo.mes}-${periodo.anio}`);
+    hoja.addRow([...COLUMNAS]);
+    hoja.getRow(1).font = { bold: true };
+    hoja.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: COLUMNAS.length } };
+    // Congela la columna DNI y Apellidos/Nombres (y la fila de encabezado)
+    // al desplazarse horizontalmente por las 74 columnas.
+    hoja.views = [{ state: "frozen", xSplit: 3, ySplit: 1 }];
+
+    for (const fila of filas) {
       hoja.addRow(fila);
     }
 

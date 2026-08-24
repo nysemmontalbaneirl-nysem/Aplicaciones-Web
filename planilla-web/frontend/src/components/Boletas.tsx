@@ -20,6 +20,8 @@ export default function Boletas({ periodoInicial }: Props) {
   const [periodoActual, setPeriodoActual] = useState<PeriodoPlanilla | null>(periodoInicial);
   const [error, setError] = useState<string | null>(null);
   const [boletaSeleccionada, setBoletaSeleccionada] = useState<DetallePlanilla | null>(null);
+  const [seleccionados, setSeleccionados] = useState<Set<number>>(new Set());
+  const [imprimiendoLote, setImprimiendoLote] = useState(false);
 
   useEffect(() => {
     apiGet<PeriodoPlanilla[]>("/periodos")
@@ -36,6 +38,8 @@ export default function Boletas({ periodoInicial }: Props) {
   useEffect(() => {
     if (!periodoId) return;
     setError(null);
+    setSeleccionados(new Set());
+    setImprimiendoLote(false);
     const q = busqueda.trim() ? `?q=${encodeURIComponent(busqueda.trim())}` : "";
     apiGet<{ periodo: PeriodoPlanilla; detalle: DetallePlanilla[] }>(`/periodos/${periodoId}/planilla${q}`)
       .then((d) => {
@@ -53,6 +57,23 @@ export default function Boletas({ periodoInicial }: Props) {
     }),
     { ingresos: 0, descuentos: 0, neto: 0 }
   );
+
+  function alternarSeleccion(id: number) {
+    setSeleccionados((prev) => {
+      const nuevo = new Set(prev);
+      if (nuevo.has(id)) nuevo.delete(id);
+      else nuevo.add(id);
+      return nuevo;
+    });
+  }
+
+  function alternarSeleccionTodos() {
+    setSeleccionados((prev) =>
+      prev.size === resultado.length ? new Set() : new Set(resultado.map((d) => d.id))
+    );
+  }
+
+  const boletasDelLote = resultado.filter((d) => seleccionados.has(d.id));
 
   return (
     <div>
@@ -86,12 +107,30 @@ export default function Boletas({ periodoInicial }: Props) {
 
       {periodoActual && (
         <div className="card">
-          <h2>
-            {resultado.length} boletas — {MESES[periodoActual.mes - 1]} {periodoActual.anio}
-          </h2>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <h2>
+              {resultado.length} boletas — {MESES[periodoActual.mes - 1]} {periodoActual.anio}
+            </h2>
+            <button
+              className="primario"
+              type="button"
+              disabled={seleccionados.size === 0}
+              onClick={() => setImprimiendoLote(true)}
+            >
+              Imprimir seleccionadas ({seleccionados.size})
+            </button>
+          </div>
           <table>
             <thead>
               <tr>
+                <th>
+                  <input
+                    type="checkbox"
+                    checked={resultado.length > 0 && seleccionados.size === resultado.length}
+                    onChange={alternarSeleccionTodos}
+                    title="Seleccionar todas"
+                  />
+                </th>
                 <th>DNI</th>
                 <th>Trabajador</th>
                 <th>Categoria</th>
@@ -105,6 +144,13 @@ export default function Boletas({ periodoInicial }: Props) {
             <tbody>
               {resultado.map((d) => (
                 <tr key={d.id}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={seleccionados.has(d.id)}
+                      onChange={() => alternarSeleccion(d.id)}
+                    />
+                  </td>
                   <td>{d.numero_documento}</td>
                   <td>{d.apellidos_nombres}</td>
                   <td>{d.categoria_ocupacional}</td>
@@ -121,14 +167,14 @@ export default function Boletas({ periodoInicial }: Props) {
               ))}
               {resultado.length === 0 && (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: "center", color: "#5a6172" }}>
+                  <td colSpan={9} style={{ textAlign: "center", color: "#5a6172" }}>
                     No se encontraron boletas.
                   </td>
                 </tr>
               )}
               {resultado.length > 0 && (
                 <tr className="totales-fila">
-                  <td colSpan={4}>Totales</td>
+                  <td colSpan={5}>Totales</td>
                   <td>S/ {totales.ingresos.toFixed(2)}</td>
                   <td>S/ {totales.descuentos.toFixed(2)}</td>
                   <td>S/ {totales.neto.toFixed(2)}</td>
@@ -146,6 +192,22 @@ export default function Boletas({ periodoInicial }: Props) {
           periodo={periodoActual}
           onCerrar={() => setBoletaSeleccionada(null)}
         />
+      )}
+
+      {imprimiendoLote && periodoActual && (
+        <div className="lote-imprimible">
+          <div className="no-imprimir card" style={{ display: "flex", gap: 8 }}>
+            <button className="primario" type="button" onClick={() => window.print()}>
+              Imprimir {boletasDelLote.length} boletas
+            </button>
+            <button type="button" onClick={() => setImprimiendoLote(false)}>
+              Cerrar
+            </button>
+          </div>
+          {boletasDelLote.map((d) => (
+            <Boleta key={d.id} detalle={d} periodo={periodoActual} onCerrar={() => {}} ocultarControles />
+          ))}
+        </div>
       )}
     </div>
   );

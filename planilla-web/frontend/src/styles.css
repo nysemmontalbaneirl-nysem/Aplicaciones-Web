@@ -288,7 +288,8 @@ input[type="number"] {
   body * {
     visibility: hidden;
   }
-  .boleta-imprimible, .boleta-imprimible * {
+  .boleta-imprimible, .boleta-imprimible *,
+  .lote-imprimible, .lote-imprimible * {
     visibility: visible;
   }
   .boleta-imprimible {
@@ -297,6 +298,22 @@ input[type="number"] {
     top: 0;
     width: 100%;
     box-shadow: none;
+  }
+  .lote-imprimible {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+  /* Dentro de un lote, cada boleta pasa a flujo normal y se imprime en su
+     propia hoja (equivalente a la impresion "por bloques" del Excel). */
+  .lote-imprimible .boleta-imprimible {
+    position: static;
+    box-shadow: none;
+    page-break-after: always;
+  }
+  .lote-imprimible .boleta-imprimible:last-child {
+    page-break-after: auto;
   }
   .no-imprimir {
     display: none !important;
