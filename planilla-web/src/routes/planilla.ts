@@ -309,12 +309,15 @@ planillaRouter.post("/:id/calcular", asyncHandler(async (req: Request, res: Resp
 
     const contratoIds = asistencias.map((a) => a.contrato_id);
     const contratosResult = await pool.query(
-      `SELECT c.*, e.numero_hijos
+      `SELECT c.*, e.numero_hijos, e.numero_documento, e.apellidos_nombres
        FROM contratos c JOIN empleados e ON e.id = c.empleado_id
        WHERE c.id = ANY($1::int[])`,
       [contratoIds]
     );
-    const contratosPorId = new Map<number, Contrato & { numero_hijos: number }>();
+    const contratosPorId = new Map<
+      number,
+      Contrato & { numero_hijos: number; numero_documento: string; apellidos_nombres: string }
+    >();
     for (const fila of contratosResult.rows) {
       contratosPorId.set(fila.id, fila);
     }
@@ -322,25 +325,30 @@ planillaRouter.post("/:id/calcular", asyncHandler(async (req: Request, res: Resp
     await cliente.query("BEGIN");
 
     const lineasCalculadas = [];
-    for (const asistencia of asistencias) {
+    const erroresCalculo: Array<{ contrato_id: number; dni: string; nombre: string; motivo: string }> = [];
+
+    for (let i = 0; i < asistencias.length; i++) {
+      const asistencia = asistencias[i];
       const contrato = contratosPorId.get(asistencia.contrato_id);
       if (!contrato) {
         throw new ErrorValidacion(`contrato_id ${asistencia.contrato_id} no existe`);
       }
 
-      const { detalle } = calcularLineaPlanilla(
-        contrato,
-        contrato.numero_hijos,
-        asistencia,
-        parametros,
-        tablaCategorias,
-        afpTasas,
-        periodo.dias_periodo,
-        periodo.mes,
-        periodo.anio
-      );
+      await cliente.query(`SAVEPOINT trabajador_${i}`);
+      try {
+        const { detalle } = calcularLineaPlanilla(
+          contrato,
+          contrato.numero_hijos,
+          asistencia,
+          parametros,
+          tablaCategorias,
+          afpTasas,
+          periodo.dias_periodo,
+          periodo.mes,
+          periodo.anio
+        );
 
-      const r = await cliente.query(
+        const r = await cliente.query(
         `INSERT INTO detalle_planilla (
            periodo_id, contrato_id, dias_trabajados, dias_dominical, dias_feriado, dias_falta,
            horas_extra_25, horas_extra_35, horas_extra_100, jornal_diario, sueldo_basico,
@@ -422,7 +430,17 @@ planillaRouter.post("/:id/calcular", asyncHandler(async (req: Request, res: Resp
           JSON.stringify(detalle.detalle_json),
         ]
       );
-      lineasCalculadas.push(r.rows[0]);
+        lineasCalculadas.push(r.rows[0]);
+      } catch (errFila) {
+        if (errFila instanceof ErrorValidacion) throw errFila;
+        await cliente.query(`ROLLBACK TO SAVEPOINT trabajador_${i}`);
+        erroresCalculo.push({
+          contrato_id: contrato.id,
+          dni: contrato.numero_documento,
+          nombre: contrato.apellidos_nombres,
+          motivo: (errFila as Error).message,
+        });
+      }
     }
 
     await cliente.query(
@@ -431,7 +449,12 @@ planillaRouter.post("/:id/calcular", asyncHandler(async (req: Request, res: Resp
     );
 
     await cliente.query("COMMIT");
-    res.json({ periodo_id: periodo.id, trabajadores_calculados: lineasCalculadas.length, detalle: lineasCalculadas });
+    res.json({
+      periodo_id: periodo.id,
+      trabajadores_calculados: lineasCalculadas.length,
+      detalle: lineasCalculadas,
+      errores: erroresCalculo,
+    });
   } catch (err) {
     await cliente.query("ROLLBACK");
     if (err instanceof ErrorValidacion) {

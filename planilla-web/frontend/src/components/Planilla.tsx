@@ -18,6 +18,13 @@ interface ErrorFilaTareo {
   motivo: string;
 }
 
+interface ErrorCalculo {
+  contrato_id: number;
+  dni: string;
+  nombre: string;
+  motivo: string;
+}
+
 export default function Planilla({ periodo }: Props) {
   const [contratos, setContratos] = useState<Contrato[]>([]);
   const [filas, setFilas] = useState<Record<number, FilaAsistencia>>({});
@@ -28,6 +35,7 @@ export default function Planilla({ periodo }: Props) {
   const [subiendoTareo, setSubiendoTareo] = useState(false);
   const [erroresTareo, setErroresTareo] = useState<ErrorFilaTareo[]>([]);
   const [filasCargadasTareo, setFilasCargadasTareo] = useState<number | null>(null);
+  const [erroresCalculo, setErroresCalculo] = useState<ErrorCalculo[]>([]);
 
   useEffect(() => {
     async function cargar() {
@@ -113,12 +121,13 @@ export default function Planilla({ periodo }: Props) {
 
   async function calcularPlanilla() {
     setError(null);
+    setErroresCalculo([]);
     setCalculando(true);
     try {
       const asistencias = Object.values(filas).map(
         ({ apellidos_nombres, numero_documento, ...resto }) => resto
       );
-      const respuesta = await apiPost<{ detalle: DetallePlanilla[] }>(
+      const respuesta = await apiPost<{ detalle: DetallePlanilla[]; errores: ErrorCalculo[] }>(
         `/periodos/${periodo.id}/calcular`,
         { asistencias }
       );
@@ -127,6 +136,7 @@ export default function Planilla({ periodo }: Props) {
         `/periodos/${periodo.id}/planilla`
       );
       setResultado(planillaActualizada.detalle);
+      setErroresCalculo(respuesta.errores ?? []);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -250,6 +260,34 @@ export default function Planilla({ periodo }: Props) {
             {calculando ? "Calculando..." : "Calcular planilla"}
           </button>
         </div>
+
+        {erroresCalculo.length > 0 && (
+          <>
+            <h3>Trabajadores no calculados ({erroresCalculo.length})</h3>
+            <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
+              El resto de la planilla se calculo con normalidad. Corrige los datos de estos
+              trabajadores (en la pestana Trabajadores) y vuelve a presionar "Calcular planilla".
+            </p>
+            <table>
+              <thead>
+                <tr>
+                  <th>DNI</th>
+                  <th>Trabajador</th>
+                  <th>Motivo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {erroresCalculo.map((e) => (
+                  <tr key={e.contrato_id}>
+                    <td>{e.dni}</td>
+                    <td>{e.nombre}</td>
+                    <td>{e.motivo}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
       </div>
 
       {resultado.length > 0 && (
