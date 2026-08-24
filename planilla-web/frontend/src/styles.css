@@ -9,46 +9,135 @@ body {
   color: #1f2430;
 }
 
-.app-shell {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 24px;
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+  align-items: stretch;
 }
 
-.app-header {
+.sidebar {
+  width: 250px;
+  flex-shrink: 0;
+  background: #1f2430;
+  color: #e7e9ee;
   display: flex;
-  align-items: baseline;
+  flex-direction: column;
+  padding: 20px 0;
+}
+
+.sidebar-titulo {
+  font-size: 1.1rem;
+  font-weight: 700;
+  padding: 0 20px;
+  color: #fff;
+}
+
+.sidebar-subtitulo {
+  font-size: 0.8rem;
+  color: #9aa1b0;
+  padding: 0 20px;
+  margin-bottom: 24px;
+}
+
+.sidebar-nav {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.sidebar-grupo {
+  margin-bottom: 4px;
+}
+
+.sidebar-grupo-boton {
+  width: 100%;
+  display: flex;
   justify-content: space-between;
-  margin-bottom: 20px;
-}
-
-.app-header h1 {
-  font-size: 1.4rem;
-  margin: 0;
-}
-
-.tabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 20px;
-  border-bottom: 2px solid #dfe2e8;
-}
-
-.tab-button {
-  padding: 10px 18px;
-  border: none;
+  align-items: center;
+  padding: 10px 20px;
   background: transparent;
+  border: none;
+  color: #c3c7d1;
+  font-size: 0.92rem;
+  font-weight: 600;
   cursor: pointer;
-  font-size: 0.95rem;
-  color: #5a6172;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -2px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
-.tab-button.activo {
-  color: #1f2430;
-  border-bottom-color: #2f6fed;
+.sidebar-grupo-boton:hover,
+.sidebar-grupo-boton.abierto {
+  color: #fff;
+}
+
+.sidebar-flecha {
+  font-size: 0.75rem;
+}
+
+.sidebar-submenu {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 8px;
+}
+
+.sidebar-item {
+  text-align: left;
+  padding: 9px 20px 9px 32px;
+  background: transparent;
+  border: none;
+  color: #aab0bd;
+  font-size: 0.9rem;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+}
+
+.sidebar-item:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.sidebar-item.activo {
+  color: #fff;
+  background: rgba(47, 111, 237, 0.18);
+  border-left-color: #2f6fed;
   font-weight: 600;
+}
+
+.sidebar-item:disabled {
+  color: #565c6b;
+  cursor: not-allowed;
+}
+
+.sidebar-usuario {
+  padding: 16px 20px 0;
+  border-top: 1px solid #333949;
+  margin-top: 12px;
+}
+
+.sidebar-usuario-nombre {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.sidebar-usuario-rol {
+  font-size: 0.78rem;
+  color: #9aa1b0;
+  margin-bottom: 10px;
+}
+
+.sidebar-usuario button {
+  width: 100%;
+  margin-bottom: 8px;
+  background: #2a303e;
+  color: #e7e9ee;
+  border: 1px solid #3a4152;
+}
+
+.main-content {
+  flex: 1;
+  min-width: 0;
+  padding: 24px;
+  max-width: 1200px;
 }
 
 .card {
