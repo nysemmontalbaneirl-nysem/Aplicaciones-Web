@@ -30,7 +30,7 @@ const CATEGORIAS_CONSTRUCCION_CIVIL: CategoriaOcupacional[] = [
   "OPERARIO_TP",
 ];
 
-function esConstruccionCivil(categoria: CategoriaOcupacional): boolean {
+export function esConstruccionCivil(categoria: CategoriaOcupacional): boolean {
   return CATEGORIAS_CONSTRUCCION_CIVIL.includes(categoria);
 }
 

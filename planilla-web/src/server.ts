@@ -16,6 +16,7 @@ import { periodosRouter } from "./routes/periodos";
 import { planillaRouter } from "./routes/planilla";
 import { parametrosRouter } from "./routes/parametros";
 import { exportacionesRouter } from "./routes/exportaciones";
+import { reportesRouter } from "./routes/reportes";
 import { importacionRouter } from "./routes/importacion";
 
 // Red de seguridad adicional: si algo lanza un error fuera de una peticion
@@ -57,6 +58,7 @@ app.use("/api/periodos", periodosRouter);
 app.use("/api/periodos", planillaRouter);
 app.use("/api/parametros", parametrosRouter);
 app.use("/api/periodos", exportacionesRouter);
+app.use("/api/periodos", reportesRouter);
 app.use("/api/empleados", importacionRouter);
 
 // Manejador de errores centralizado

@@ -7,6 +7,7 @@ import Periodos from "./components/Periodos";
 import Tareo from "./components/Tareo";
 import Calculo from "./components/Calculo";
 import Boletas from "./components/Boletas";
+import Reportes from "./components/Reportes";
 import Parametros from "./components/Parametros";
 import Importar from "./components/Importar";
 import Usuarios from "./components/Usuarios";
@@ -21,6 +22,7 @@ type Pestana =
   | "tareo"
   | "calculo"
   | "boletas"
+  | "reportes"
   | "parametros"
   | "usuarios"
   | "empresa"
@@ -112,6 +114,12 @@ export default function App() {
         >
           Boletas
         </button>
+        <button
+          className={`tab-button ${pestana === "reportes" ? "activo" : ""}`}
+          onClick={() => setPestana("reportes")}
+        >
+          Reportes
+        </button>
         {esAdmin && (
           <>
             <button
@@ -152,6 +160,7 @@ export default function App() {
         <Calculo periodo={periodoSeleccionado} onVerBoletas={() => setPestana("boletas")} />
       )}
       {pestana === "boletas" && <Boletas periodoInicial={periodoSeleccionado} />}
+      {pestana === "reportes" && <Reportes />}
       {pestana === "parametros" && esAdmin && <Parametros />}
       {pestana === "proyectos" && esAdmin && <Proyectos />}
       {pestana === "usuarios" && esAdmin && <Usuarios />}
