@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
 import { parse } from "csv-parse/sync";
+import ExcelJS from "exceljs";
 import { pool } from "../db";
 import { calcularLineaPlanilla } from "../motorCalculo";
 import { Contrato, ParametrosNormativos, TablaSalarialMensual, TasasAFPMensuales } from "../tipos";
@@ -86,36 +87,127 @@ planillaRouter.get("/:id/planilla", async (req: Request, res: Response) => {
   res.json({ periodo, detalle: resultado.rows });
 });
 
+const COLUMNAS_TAREO = [
+  "DNI",
+  "PROYECTO",
+  "DIAS_TRABAJADOS",
+  "DIAS_DOMINICAL",
+  "DIAS_FERIADO",
+  "DIAS_FALTA",
+  "HORAS_EXTRA_25",
+  "HORAS_EXTRA_35",
+  "HORAS_EXTRA_100",
+];
+
+// GET /api/periodos/:id/tareo/plantilla -> descarga un .xlsx con el DNI y
+// proyecto de cada trabajador habil, listo para llenar y volver a subir.
+// El DNI se guarda como texto (no como numero) para que Excel no le borre
+// los ceros a la izquierda.
+planillaRouter.get("/:id/tareo/plantilla", async (req: Request, res: Response) => {
+  const periodo = await obtenerPeriodo(req.params.id);
+  if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
+
+  const contratosResult = await pool.query(
+    `SELECT e.numero_documento, e.apellidos_nombres, c.proyecto
+     FROM contratos c JOIN empleados e ON e.id = c.empleado_id
+     WHERE c.estado = 'HABIL'
+     ORDER BY e.apellidos_nombres ASC`
+  );
+
+  const workbook = new ExcelJS.Workbook();
+  const hoja = workbook.addWorksheet("Tareo");
+  hoja.columns = COLUMNAS_TAREO.map((nombre) => ({ header: nombre, key: nombre, width: 18 }));
+  hoja.getColumn("DNI").numFmt = "@"; // formato texto, evita que se pierdan los ceros a la izquierda
+
+  for (const c of contratosResult.rows) {
+    const fila = hoja.addRow({ DNI: c.numero_documento, PROYECTO: c.proyecto });
+    fila.getCell("DNI").numFmt = "@";
+    fila.getCell("DNI").value = c.numero_documento; // valor de texto explicito
+  }
+
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="tareo_plantilla_${periodo.mes}_${periodo.anio}.xlsx"`
+  );
+  await workbook.xlsx.write(res);
+  res.end();
+});
+
 interface ErrorFilaTareo {
   fila: number;
   dni: string;
   motivo: string;
 }
 
-// POST /api/periodos/:id/tareo/importar  (multipart, campo "archivo" = CSV con encabezado)
+// Convierte el valor de una celda de exceljs a texto plano (maneja texto
+// enriquecido, formulas ya calculadas, numeros y fechas).
+function celdaATexto(valor: ExcelJS.CellValue): string {
+  if (valor === null || valor === undefined) return "";
+  if (typeof valor === "object") {
+    if ("text" in valor) return String((valor as { text: unknown }).text ?? "");
+    if ("result" in valor) return String((valor as { result: unknown }).result ?? "");
+  }
+  return String(valor);
+}
+
+async function leerFilasXlsx(buffer: Buffer): Promise<Record<string, string>[]> {
+  const workbook = new ExcelJS.Workbook();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await workbook.xlsx.load(buffer as any);
+  const hoja = workbook.worksheets[0];
+  if (!hoja) return [];
+
+  const encabezados: string[] = [];
+  hoja.getRow(1).eachCell((cell, colNumber) => {
+    encabezados[colNumber] = celdaATexto(cell.value).trim().toUpperCase();
+  });
+
+  const filas: Record<string, string>[] = [];
+  hoja.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return;
+    const obj: Record<string, string> = {};
+    let tieneAlgo = false;
+    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      const nombreCol = encabezados[colNumber];
+      if (!nombreCol) return;
+      const texto = celdaATexto(cell.value).trim();
+      if (texto) tieneAlgo = true;
+      obj[nombreCol] = texto;
+    });
+    if (tieneAlgo) filas.push(obj);
+  });
+  return filas;
+}
+
+// POST /api/periodos/:id/tareo/importar  (multipart, campo "archivo" = .xlsx o .csv con encabezado)
 // Columnas: DNI, PROYECTO (opcional, solo si el DNI tiene mas de un contrato habil),
 // DIAS_TRABAJADOS, DIAS_DOMINICAL, DIAS_FERIADO, DIAS_FALTA,
 // HORAS_EXTRA_25, HORAS_EXTRA_35, HORAS_EXTRA_100
-// No calcula ni graba nada: solo valida el CSV y devuelve las filas de asistencia
-// ya emparejadas con su contrato_id, para que el frontend las revise antes de calcular.
+// No calcula ni graba nada: solo valida el archivo y devuelve las filas de
+// asistencia ya emparejadas con su contrato_id, para que el frontend las
+// revise antes de calcular. No hace falta incluir a todos los trabajadores:
+// alcanza con las filas de los que trabajaron ese periodo.
 planillaRouter.post(
   "/:id/tareo/importar",
   uploadTareo.single("archivo"),
   async (req: Request, res: Response) => {
     if (!req.file) {
-      return res.status(400).json({ error: "Falta el archivo CSV (campo 'archivo')" });
+      return res.status(400).json({ error: "Falta el archivo (campo 'archivo')" });
     }
+
+    const esExcel = /\.xlsx$/i.test(req.file.originalname);
 
     let filas: Record<string, string>[];
     try {
-      filas = parse(req.file.buffer, {
-        columns: true,
-        skip_empty_lines: true,
-        trim: true,
-        bom: true,
-      });
+      filas = esExcel
+        ? await leerFilasXlsx(req.file.buffer)
+        : parse(req.file.buffer, { columns: true, skip_empty_lines: true, trim: true, bom: true });
     } catch (err) {
-      return res.status(400).json({ error: `No se pudo leer el CSV: ${(err as Error).message}` });
+      return res.status(400).json({ error: `No se pudo leer el archivo: ${(err as Error).message}` });
     }
 
     const contratosResult = await pool.query(

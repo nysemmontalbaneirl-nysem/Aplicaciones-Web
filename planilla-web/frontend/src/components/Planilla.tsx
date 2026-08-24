@@ -18,18 +18,6 @@ interface ErrorFilaTareo {
   motivo: string;
 }
 
-const COLUMNAS_TAREO = [
-  "DNI",
-  "PROYECTO",
-  "DIAS_TRABAJADOS",
-  "DIAS_DOMINICAL",
-  "DIAS_FERIADO",
-  "DIAS_FALTA",
-  "HORAS_EXTRA_25",
-  "HORAS_EXTRA_35",
-  "HORAS_EXTRA_100",
-];
-
 export default function Planilla({ periodo }: Props) {
   const [contratos, setContratos] = useState<Contrato[]>([]);
   const [filas, setFilas] = useState<Record<number, FilaAsistencia>>({});
@@ -57,7 +45,9 @@ export default function Planilla({ periodo }: Props) {
           contrato_id: c.id,
           apellidos_nombres: c.apellidos_nombres ?? "",
           numero_documento: c.numero_documento ?? "",
-          dias_trabajados: previo?.dias_trabajados ?? 30,
+          // Por defecto 0: si un trabajador no aparece en el tareo subido,
+          // no debe cobrar ese periodo (antes quedaba en 30 por error).
+          dias_trabajados: previo?.dias_trabajados ?? 0,
           dias_dominical: 0,
           dias_feriado: 0,
           dias_falta: 0,
@@ -78,22 +68,7 @@ export default function Planilla({ periodo }: Props) {
     }));
   }
 
-  function descargarPlantillaTareo() {
-    const encabezado = COLUMNAS_TAREO.join(",");
-    const filasCsv = contratos.map(
-      (c) => `${c.numero_documento},${c.proyecto},,,,,,,`
-    );
-    const csv = [encabezado, ...filasCsv].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `tareo_plantilla_${periodo.mes}_${periodo.anio}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function cargarTareoCSV(e: React.ChangeEvent<HTMLInputElement>) {
+  async function cargarTareoArchivo(e: React.ChangeEvent<HTMLInputElement>) {
     const archivo = e.target.files?.[0];
     e.target.value = "";
     if (!archivo) return;
@@ -173,19 +148,21 @@ export default function Planilla({ periodo }: Props) {
       {error && <div className="mensaje-error">{error}</div>}
 
       <div className="card">
-        <h2>Cargar tareo del mes (CSV)</h2>
+        <h2>Cargar tareo del mes (Excel)</h2>
         <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
-          Sube un CSV con el tareo de todos los trabajadores (dias trabajados, dominical,
-          feriado, faltas y horas extra) y se completa la tabla de abajo automaticamente en
-          vez de llenarla uno por uno. Si un trabajador tiene mas de un contrato habil, agrega
-          la columna PROYECTO para identificar cual. Las horas extra se ingresan en decimal
-          (ej. 1 hora 30 min = 1.5).
+          Descarga la plantilla en Excel, bórrale las filas de los trabajadores que no
+          trabajaron ese periodo (no hace falta incluir a todos, solo a los que corresponda),
+          llena los dias trabajados/dominical/feriado/faltas y horas extra, y vuelve a subirla.
+          Se completa la tabla de abajo automaticamente en vez de llenarla uno por uno. Si un
+          trabajador tiene mas de un contrato habil, agrega la columna PROYECTO para identificar
+          cual. Las horas extra se ingresan en decimal (ej. 1 hora 30 min = 1.5). El trabajador
+          que no aparezca en el archivo simplemente no cobra ese periodo.
         </p>
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <button type="button" onClick={descargarPlantillaTareo} disabled={contratos.length === 0}>
-            Descargar plantilla CSV
-          </button>
-          <input type="file" accept=".csv" onChange={cargarTareoCSV} disabled={subiendoTareo} />
+          <a href={`${BASE_URL}/periodos/${periodo.id}/tareo/plantilla`}>
+            <button type="button">Descargar plantilla Excel</button>
+          </a>
+          <input type="file" accept=".xlsx,.csv" onChange={cargarTareoArchivo} disabled={subiendoTareo} />
           {subiendoTareo && <span>Cargando...</span>}
         </div>
 
