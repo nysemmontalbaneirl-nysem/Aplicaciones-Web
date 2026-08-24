@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
 import { parse } from "csv-parse/sync";
+import { asyncHandler } from "../asyncHandler";
 import { pool } from "../db";
 import { CategoriaOcupacional, SistemaPension } from "../tipos";
 
@@ -90,7 +91,7 @@ function num(valor: string): number | null {
 }
 
 // POST /api/empleados/importar-masivo  (multipart, campo "archivo" = CSV con encabezado)
-importacionRouter.post("/importar-masivo", upload.single("archivo"), async (req: Request, res: Response) => {
+importacionRouter.post("/importar-masivo", upload.single("archivo"), asyncHandler(async (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ error: "Falta el archivo CSV (campo 'archivo')" });
   }
@@ -262,7 +263,7 @@ importacionRouter.post("/importar-masivo", upload.single("archivo"), async (req:
   } finally {
     cliente.release();
   }
-});
+}));
 
 // Referencia de columnas esperadas, para que el frontend pueda mostrar ayuda
 importacionRouter.get("/importar-masivo/plantilla", (_req: Request, res: Response) => {

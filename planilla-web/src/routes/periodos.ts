@@ -1,17 +1,18 @@
 import { Router, Request, Response } from "express";
+import { asyncHandler } from "../asyncHandler";
 import { pool } from "../db";
 import { ErrorValidacion } from "../validaciones";
 
 export const periodosRouter = Router();
 
-periodosRouter.get("/", async (_req: Request, res: Response) => {
+periodosRouter.get("/", asyncHandler(async (_req: Request, res: Response) => {
   const resultado = await pool.query(
     "SELECT * FROM periodos_planilla ORDER BY anio DESC, mes DESC, quincena NULLS FIRST"
   );
   res.json(resultado.rows);
-});
+}));
 
-periodosRouter.post("/", async (req: Request, res: Response) => {
+periodosRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
   try {
     const b = req.body;
     if (!b.anio || !b.mes || !b.fecha_inicio || !b.fecha_fin) {
@@ -41,11 +42,11 @@ periodosRouter.post("/", async (req: Request, res: Response) => {
     }
     throw err;
   }
-});
+}));
 
 // Solo se puede eliminar un periodo que todavia no tiene planilla calculada,
 // para no perder resultados ya generados.
-periodosRouter.delete("/:id", async (req: Request, res: Response) => {
+periodosRouter.delete("/:id", asyncHandler(async (req: Request, res: Response) => {
   const resultado = await pool.query(
     "DELETE FROM periodos_planilla WHERE id = $1 AND estado = 'ABIERTO' RETURNING id",
     [req.params.id]
@@ -56,4 +57,4 @@ periodosRouter.delete("/:id", async (req: Request, res: Response) => {
     });
   }
   res.status(204).send();
-});
+}));

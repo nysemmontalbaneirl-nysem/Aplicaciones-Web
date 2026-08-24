@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { asyncHandler } from "../asyncHandler";
 import { pool } from "../db";
 import { ErrorValidacion } from "../validaciones";
 
@@ -11,7 +12,7 @@ export const parametrosRouter = Router();
 // ==========================================================================
 
 // Lista los periodos (anio,mes) que ya tienen tasas AFP/tabla salarial configuradas
-parametrosRouter.get("/mensual", async (_req: Request, res: Response) => {
+parametrosRouter.get("/mensual", asyncHandler(async (_req: Request, res: Response) => {
   const resultado = await pool.query(
     `SELECT DISTINCT anio, mes FROM (
        SELECT anio, mes FROM tasas_afp_mensuales
@@ -21,11 +22,11 @@ parametrosRouter.get("/mensual", async (_req: Request, res: Response) => {
      ORDER BY anio DESC, mes DESC`
   );
   res.json(resultado.rows);
-});
+}));
 
 // POST /api/parametros/mensual  body: { anio, mes, copiar_de_anio, copiar_de_mes }
 // Crea un mes nuevo copiando las tasas AFP y tabla salarial de otro mes.
-parametrosRouter.post("/mensual", async (req: Request, res: Response) => {
+parametrosRouter.post("/mensual", asyncHandler(async (req: Request, res: Response) => {
   const { anio, mes, copiar_de_anio, copiar_de_mes } = req.body;
   if (!anio || !mes) {
     return res.status(400).json({ error: "anio y mes son obligatorios" });
@@ -59,10 +60,10 @@ parametrosRouter.post("/mensual", async (req: Request, res: Response) => {
   } finally {
     cliente.release();
   }
-});
+}));
 
 // GET /api/parametros/mensual/:anio/:mes -> { afp_tasas: {...}, tabla_categorias: {...} }
-parametrosRouter.get("/mensual/:anio/:mes", async (req: Request, res: Response) => {
+parametrosRouter.get("/mensual/:anio/:mes", asyncHandler(async (req: Request, res: Response) => {
   const { anio, mes } = req.params;
 
   const afpResult = await pool.query(
@@ -94,11 +95,11 @@ parametrosRouter.get("/mensual/:anio/:mes", async (req: Request, res: Response) 
   }
 
   res.json({ anio: Number(anio), mes: Number(mes), afp_tasas, tabla_categorias });
-});
+}));
 
 // PUT /api/parametros/mensual/:anio/:mes  body: { afp_tasas: {...}, tabla_categorias: {...} }
 // Upsert de cada AFP/categoria presente en el body (no borra las que no se mencionen).
-parametrosRouter.put("/mensual/:anio/:mes", async (req: Request, res: Response) => {
+parametrosRouter.put("/mensual/:anio/:mes", asyncHandler(async (req: Request, res: Response) => {
   const anio = Number(req.params.anio);
   const mes = Number(req.params.mes);
   const { afp_tasas, tabla_categorias } = req.body as {
@@ -156,21 +157,21 @@ parametrosRouter.put("/mensual/:anio/:mes", async (req: Request, res: Response) 
   } finally {
     cliente.release();
   }
-});
+}));
 
 // ==========================================================================
 // Parametros ANUALES (UIT, RMV, ESSALUD, ONP, SENATI, CONAFOVICER, SCTR,
 // asignacion familiar, seguro vida)
 // ==========================================================================
 
-parametrosRouter.get("/", async (_req: Request, res: Response) => {
+parametrosRouter.get("/", asyncHandler(async (_req: Request, res: Response) => {
   const resultado = await pool.query(
     "SELECT * FROM parametros_normativos ORDER BY anio DESC"
   );
   res.json(resultado.rows);
-});
+}));
 
-parametrosRouter.get("/:anio", async (req: Request, res: Response) => {
+parametrosRouter.get("/:anio", asyncHandler(async (req: Request, res: Response) => {
   const resultado = await pool.query(
     "SELECT * FROM parametros_normativos WHERE anio = $1",
     [req.params.anio]
@@ -179,10 +180,10 @@ parametrosRouter.get("/:anio", async (req: Request, res: Response) => {
     return res.status(404).json({ error: `No hay parametros configurados para el anio ${req.params.anio}` });
   }
   res.json(resultado.rows[0]);
-});
+}));
 
 // Crea el registro de un anio nuevo, opcionalmente copiando los valores de otro anio como base
-parametrosRouter.post("/", async (req: Request, res: Response) => {
+parametrosRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
   try {
     const b = req.body;
     if (!b.anio) throw new ErrorValidacion("anio es obligatorio");
@@ -238,9 +239,9 @@ parametrosRouter.post("/", async (req: Request, res: Response) => {
     }
     throw err;
   }
-});
+}));
 
-parametrosRouter.put("/:anio", async (req: Request, res: Response) => {
+parametrosRouter.put("/:anio", asyncHandler(async (req: Request, res: Response) => {
   const b = req.body;
   const resultado = await pool.query(
     `UPDATE parametros_normativos SET
@@ -266,4 +267,4 @@ parametrosRouter.put("/:anio", async (req: Request, res: Response) => {
     return res.status(404).json({ error: `No hay parametros configurados para el anio ${req.params.anio}` });
   }
   res.json(resultado.rows[0]);
-});
+}));

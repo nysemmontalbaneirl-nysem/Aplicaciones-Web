@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { asyncHandler } from "../asyncHandler";
 import { pool } from "../db";
 import { generarLineasREM } from "../plame";
 import { generarCSVAFPnet } from "../afpnet";
@@ -11,7 +12,7 @@ async function obtenerPeriodo(periodoId: string) {
 }
 
 // GET /api/periodos/:id/exportar/rem -> archivo .rem para PLAME/T-Registro
-exportacionesRouter.get("/:id/exportar/rem", async (req: Request, res: Response) => {
+exportacionesRouter.get("/:id/exportar/rem", asyncHandler(async (req: Request, res: Response) => {
   const periodo = await obtenerPeriodo(req.params.id);
   if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
 
@@ -22,10 +23,10 @@ exportacionesRouter.get("/:id/exportar/rem", async (req: Request, res: Response)
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="${nombreArchivo}"`);
   res.send(contenido);
-});
+}));
 
 // GET /api/periodos/:id/exportar/afpnet?proyecto=... -> CSV para digitar en AFPnet
-exportacionesRouter.get("/:id/exportar/afpnet", async (req: Request, res: Response) => {
+exportacionesRouter.get("/:id/exportar/afpnet", asyncHandler(async (req: Request, res: Response) => {
   const periodo = await obtenerPeriodo(req.params.id);
   if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
 
@@ -36,4 +37,4 @@ exportacionesRouter.get("/:id/exportar/afpnet", async (req: Request, res: Respon
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="${nombreArchivo}"`);
   res.send("﻿" + csv); // BOM para que Excel detecte UTF-8 correctamente
-});
+}));

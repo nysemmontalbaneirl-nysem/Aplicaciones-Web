@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import multer from "multer";
 import { parse } from "csv-parse/sync";
 import ExcelJS from "exceljs";
+import { asyncHandler } from "../asyncHandler";
 import { pool } from "../db";
 import { calcularLineaPlanilla } from "../motorCalculo";
 import { Contrato, ParametrosNormativos, TablaSalarialMensual, TasasAFPMensuales } from "../tipos";
@@ -69,7 +70,7 @@ async function obtenerAfpTasas(anio: number, mes: number): Promise<TasasAFPMensu
 }
 
 // GET /api/periodos/:id/planilla -> planilla ya calculada de ese periodo
-planillaRouter.get("/:id/planilla", async (req: Request, res: Response) => {
+planillaRouter.get("/:id/planilla", asyncHandler(async (req: Request, res: Response) => {
   const periodo = await obtenerPeriodo(req.params.id);
   if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
 
@@ -85,7 +86,7 @@ planillaRouter.get("/:id/planilla", async (req: Request, res: Response) => {
     [req.params.id]
   );
   res.json({ periodo, detalle: resultado.rows });
-});
+}));
 
 const COLUMNAS_TAREO = [
   "DNI",
@@ -103,7 +104,7 @@ const COLUMNAS_TAREO = [
 // proyecto de cada trabajador habil, listo para llenar y volver a subir.
 // El DNI se guarda como texto (no como numero) para que Excel no le borre
 // los ceros a la izquierda.
-planillaRouter.get("/:id/tareo/plantilla", async (req: Request, res: Response) => {
+planillaRouter.get("/:id/tareo/plantilla", asyncHandler(async (req: Request, res: Response) => {
   const periodo = await obtenerPeriodo(req.params.id);
   if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
 
@@ -135,7 +136,7 @@ planillaRouter.get("/:id/tareo/plantilla", async (req: Request, res: Response) =
   );
   await workbook.xlsx.write(res);
   res.end();
-});
+}));
 
 interface ErrorFilaTareo {
   fila: number;
@@ -194,7 +195,7 @@ async function leerFilasXlsx(buffer: Buffer): Promise<Record<string, string>[]> 
 planillaRouter.post(
   "/:id/tareo/importar",
   uploadTareo.single("archivo"),
-  async (req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     if (!req.file) {
       return res.status(400).json({ error: "Falta el archivo (campo 'archivo')" });
     }
@@ -291,11 +292,11 @@ planillaRouter.post(
     });
 
     res.json({ asistencias, errores });
-  }
+  })
 );
 
 // POST /api/periodos/:id/calcular  body: { asistencias: AsistenciaEntrada[] }
-planillaRouter.post("/:id/calcular", async (req: Request, res: Response) => {
+planillaRouter.post("/:id/calcular", asyncHandler(async (req: Request, res: Response) => {
   const cliente = await pool.connect();
   try {
     const periodo = await obtenerPeriodo(req.params.id);
@@ -440,4 +441,4 @@ planillaRouter.post("/:id/calcular", async (req: Request, res: Response) => {
   } finally {
     cliente.release();
   }
-});
+}));

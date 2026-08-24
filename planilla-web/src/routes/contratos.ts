@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { asyncHandler } from "../asyncHandler";
 import { pool } from "../db";
 import {
   ErrorValidacion,
@@ -9,7 +10,7 @@ import {
 
 export const contratosRouter = Router();
 
-contratosRouter.get("/", async (req: Request, res: Response) => {
+contratosRouter.get("/", asyncHandler(async (req: Request, res: Response) => {
   const { empleado_id, estado } = req.query;
   const condiciones: string[] = [];
   const valores: unknown[] = [];
@@ -32,9 +33,9 @@ contratosRouter.get("/", async (req: Request, res: Response) => {
     valores
   );
   res.json(resultado.rows);
-});
+}));
 
-contratosRouter.post("/", async (req: Request, res: Response) => {
+contratosRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
   try {
     const b = req.body;
     const categoria_ocupacional = validarCategoriaOcupacional(b.categoria_ocupacional);
@@ -85,9 +86,9 @@ contratosRouter.post("/", async (req: Request, res: Response) => {
     }
     throw err;
   }
-});
+}));
 
-contratosRouter.put("/:id", async (req: Request, res: Response) => {
+contratosRouter.put("/:id", asyncHandler(async (req: Request, res: Response) => {
   try {
     const b = req.body;
     const categoria_ocupacional = validarCategoriaOcupacional(b.categoria_ocupacional);
@@ -139,9 +140,9 @@ contratosRouter.put("/:id", async (req: Request, res: Response) => {
     }
     throw err;
   }
-});
+}));
 
-contratosRouter.post("/:id/cese", async (req: Request, res: Response) => {
+contratosRouter.post("/:id/cese", asyncHandler(async (req: Request, res: Response) => {
   try {
     const fecha_cese = validarFecha(req.body.fecha_cese, "fecha_cese");
     const resultado = await pool.query(
@@ -158,4 +159,4 @@ contratosRouter.post("/:id/cese", async (req: Request, res: Response) => {
     }
     throw err;
   }
-});
+}));

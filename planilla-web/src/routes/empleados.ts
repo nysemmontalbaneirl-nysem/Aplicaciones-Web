@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { asyncHandler } from "../asyncHandler";
 import { pool } from "../db";
 import {
   ErrorValidacion,
@@ -8,14 +9,14 @@ import {
 
 export const empleadosRouter = Router();
 
-empleadosRouter.get("/", async (_req: Request, res: Response) => {
+empleadosRouter.get("/", asyncHandler(async (_req: Request, res: Response) => {
   const resultado = await pool.query(
     "SELECT * FROM empleados ORDER BY apellidos_nombres ASC"
   );
   res.json(resultado.rows);
-});
+}));
 
-empleadosRouter.get("/:id", async (req: Request, res: Response) => {
+empleadosRouter.get("/:id", asyncHandler(async (req: Request, res: Response) => {
   const resultado = await pool.query("SELECT * FROM empleados WHERE id = $1", [
     req.params.id,
   ]);
@@ -23,9 +24,9 @@ empleadosRouter.get("/:id", async (req: Request, res: Response) => {
     return res.status(404).json({ error: "Empleado no encontrado" });
   }
   res.json(resultado.rows[0]);
-});
+}));
 
-empleadosRouter.post("/", async (req: Request, res: Response) => {
+empleadosRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
   try {
     const b = req.body;
     const numero_documento = validarNumeroDocumento(b.numero_documento);
@@ -63,9 +64,9 @@ empleadosRouter.post("/", async (req: Request, res: Response) => {
     }
     throw err;
   }
-});
+}));
 
-empleadosRouter.put("/:id", async (req: Request, res: Response) => {
+empleadosRouter.put("/:id", asyncHandler(async (req: Request, res: Response) => {
   try {
     const b = req.body;
     const apellidos_nombres = validarApellidosNombres(b.apellidos_nombres);
@@ -102,4 +103,4 @@ empleadosRouter.put("/:id", async (req: Request, res: Response) => {
     }
     throw err;
   }
-});
+}));

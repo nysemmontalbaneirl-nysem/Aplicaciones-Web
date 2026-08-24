@@ -13,6 +13,16 @@ import { importacionRouter } from "./routes/importacion";
 
 dotenv.config();
 
+// Red de seguridad adicional: si algo lanza un error fuera de una peticion
+// HTTP (o se escapa del asyncHandler de las rutas), que quede en el log en
+// vez de tumbar el servidor completo.
+process.on("uncaughtException", (err) => {
+  console.error("Excepcion no capturada:", err);
+});
+process.on("unhandledRejection", (err) => {
+  console.error("Promesa rechazada sin capturar:", err);
+});
+
 const app = express();
 app.use(cors());
 // El limite por defecto de 100kb se queda corto al calcular planilla con
