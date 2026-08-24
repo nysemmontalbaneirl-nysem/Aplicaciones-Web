@@ -154,3 +154,37 @@ export interface DetallePlanilla {
   neto_pagar: number;
   detalle_json: Record<string, unknown>;
 }
+
+// ADMIN: acceso total. RESPONSABLE_PLANILLA: tareo/calculo/boletas solo de
+// sus proyectos asignados. TAREADOR: solo carga tareo de sus proyectos.
+export type RolUsuario = "ADMIN" | "RESPONSABLE_PLANILLA" | "TAREADOR";
+
+export interface Usuario {
+  id: number;
+  nombre: string;
+  correo: string;
+  rol: RolUsuario;
+  activo: boolean;
+}
+
+export interface Proyecto {
+  id: number;
+  nombre: string;
+  ubicacion: string | null;
+  estado: "ACTIVO" | "CERRADO";
+}
+
+export interface DatosEmpresa {
+  id: number;
+  ruc: string;
+  razon_social: string;
+  nombre_comercial: string | null;
+  domicilio_fiscal: string | null;
+  ubigeo: string | null;
+  actividad_economica: string | null;
+  tipo_empresa: string | null;
+  regimen_laboral: string | null;
+  representante_legal: string | null;
+  telefono: string | null;
+  correo: string | null;
+}

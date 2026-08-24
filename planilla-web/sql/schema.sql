@@ -14,19 +14,69 @@ DROP TABLE IF EXISTS periodos_planilla CASCADE;
 DROP TABLE IF EXISTS contratos CASCADE;
 DROP TABLE IF EXISTS empleados CASCADE;
 DROP TABLE IF EXISTS parametros_normativos CASCADE;
+DROP TABLE IF EXISTS usuario_proyecto CASCADE;
 DROP TABLE IF EXISTS usuarios CASCADE;
+DROP TABLE IF EXISTS proyectos CASCADE;
+DROP TABLE IF EXISTS datos_empresa CASCADE;
 
 -- -------------------------------------------------------------------------
--- usuarios: acceso al sistema
+-- usuarios: acceso al sistema (login real con contraseña)
 -- -------------------------------------------------------------------------
 CREATE TABLE usuarios (
     id              SERIAL PRIMARY KEY,
     nombre          VARCHAR(150) NOT NULL,
     correo          VARCHAR(150) NOT NULL UNIQUE,
     password_hash   VARCHAR(255) NOT NULL,
-    rol             VARCHAR(30)  NOT NULL DEFAULT 'OPERADOR', -- ADMIN | OPERADOR | CONSULTA
+    -- ADMIN: acceso total. RESPONSABLE_PLANILLA: tareo/calculo/boletas solo
+    -- de sus proyectos asignados. TAREADOR: solo carga tareo de sus
+    -- proyectos asignados (no calcula ni ve boletas).
+    rol             VARCHAR(30)  NOT NULL DEFAULT 'TAREADOR',
     activo          BOOLEAN      NOT NULL DEFAULT TRUE,
     creado_en       TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+-- -------------------------------------------------------------------------
+-- proyectos: obras/centros de costo (la empresa es constructora, cada
+-- proyecto puede estar en una ciudad distinta con su propio encargado de
+-- planilla y tareadores). Por ahora es una tabla de referencia: el campo
+-- contratos.proyecto sigue siendo texto libre (para no romper los ~3200
+-- contratos ya migrados), pero debe coincidir con proyectos.nombre.
+-- -------------------------------------------------------------------------
+CREATE TABLE proyectos (
+    id          SERIAL PRIMARY KEY,
+    nombre      VARCHAR(200) NOT NULL UNIQUE, -- debe coincidir con contratos.proyecto
+    ubicacion   VARCHAR(200),
+    estado      VARCHAR(20) NOT NULL DEFAULT 'ACTIVO', -- ACTIVO | CERRADO
+    creado_en   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- -------------------------------------------------------------------------
+-- usuario_proyecto: a que proyecto(s) tiene acceso cada usuario (no aplica
+-- a ADMIN, que ve todos).
+-- -------------------------------------------------------------------------
+CREATE TABLE usuario_proyecto (
+    usuario_id  INT NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+    proyecto_id INT NOT NULL REFERENCES proyectos(id) ON DELETE CASCADE,
+    PRIMARY KEY (usuario_id, proyecto_id)
+);
+
+-- -------------------------------------------------------------------------
+-- datos_empresa: datos del empleador para PLAME/T-Registro (fila unica)
+-- -------------------------------------------------------------------------
+CREATE TABLE datos_empresa (
+    id                    SERIAL PRIMARY KEY,
+    ruc                   VARCHAR(11) NOT NULL,
+    razon_social          VARCHAR(200) NOT NULL,
+    nombre_comercial      VARCHAR(200),
+    domicilio_fiscal      VARCHAR(250),
+    ubigeo                VARCHAR(200),
+    actividad_economica   VARCHAR(200),
+    tipo_empresa          VARCHAR(100), -- ej. Sociedad Anonima Cerrada, E.I.R.L, etc
+    regimen_laboral       VARCHAR(100), -- ej. Construccion Civil
+    representante_legal   VARCHAR(200),
+    telefono              VARCHAR(30),
+    correo                VARCHAR(150),
+    actualizado_en        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- -------------------------------------------------------------------------
@@ -276,3 +326,16 @@ INSERT INTO tabla_salarial_mensual (anio, mes, categoria, jornal_basico, buc, ba
     (2026, 2, 'OPERARIO_TP', 89.30, 0.32, 0.09, 8.60, 17.01),
     (2026, 2, 'PEON_A',      47.61, 0,    0,    0,    0),
     (2026, 2, 'R_GENERAL',   37.67, 0,    0,    0,    0);
+
+-- -------------------------------------------------------------------------
+-- Usuario administrador inicial. Contraseña temporal: Cambiar123!
+-- IMPORTANTE: entra con este usuario y cambia la contraseña de inmediato
+-- desde la pestaña Usuarios.
+-- -------------------------------------------------------------------------
+INSERT INTO usuarios (nombre, correo, password_hash, rol) VALUES
+    ('Administrador', 'admin@jhcr.pe', '$2b$10$8Lxwd51pi2/sDoPsybebsewOTlQ615wedQrrQkPA80EFMdlUr4uiK', 'ADMIN');
+
+-- -------------------------------------------------------------------------
+-- Fila inicial de datos_empresa (vacia, se completa desde la pestaña Empresa)
+-- -------------------------------------------------------------------------
+INSERT INTO datos_empresa (ruc, razon_social) VALUES ('', '');

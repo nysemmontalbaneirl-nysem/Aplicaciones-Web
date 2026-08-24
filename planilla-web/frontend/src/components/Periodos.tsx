@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiDelete, apiGet, apiPost, BASE_URL } from "../api";
+import { apiDelete, apiGet, apiPost, BASE_URL, conToken } from "../api";
 import { PeriodoPlanilla } from "../types";
 
 const MESES = [
@@ -141,10 +141,10 @@ export default function Periodos({ onCargarTareo, onCalcular }: Props) {
                   )}
                   {p.estado === "CALCULADO" && (
                     <>
-                      <a href={`${BASE_URL}/periodos/${p.id}/exportar/rem`}>
+                      <a href={conToken(`${BASE_URL}/periodos/${p.id}/exportar/rem`)}>
                         <button type="button">Descargar REM (PLAME)</button>
                       </a>
-                      <a href={`${BASE_URL}/periodos/${p.id}/exportar/afpnet`}>
+                      <a href={conToken(`${BASE_URL}/periodos/${p.id}/exportar/afpnet`)}>
                         <button type="button">Descargar AFPnet (CSV)</button>
                       </a>
                     </>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { apiDelete, apiGet, apiPut, BASE_URL } from "../api";
+import { apiDelete, apiGet, apiPostArchivo, apiPut, BASE_URL, conToken } from "../api";
 import { AsistenciaTareo, Contrato, PeriodoPlanilla } from "../types";
 
 interface Props {
@@ -57,12 +57,10 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
     try {
       const formData = new FormData();
       formData.append("archivo", archivo);
-      const res = await fetch(`${BASE_URL}/periodos/${periodo.id}/tareo/importar`, {
-        method: "POST",
-        body: formData,
-      });
-      const cuerpo = await res.json();
-      if (!res.ok) throw new Error(cuerpo.error ?? `Error ${res.status}`);
+      const cuerpo = await apiPostArchivo<{ guardados: number; errores: ErrorFilaTareo[] }>(
+        `/periodos/${periodo.id}/tareo/importar`,
+        formData
+      );
 
       setGuardadosTareo(cuerpo.guardados);
       setErroresTareo(cuerpo.errores);
@@ -147,7 +145,7 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
           decimal (ej. 1 hora 30 min = 1.5).
         </p>
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <a href={`${BASE_URL}/periodos/${periodo.id}/tareo/plantilla`}>
+          <a href={conToken(`${BASE_URL}/periodos/${periodo.id}/tareo/plantilla`)}>
             <button type="button">Descargar plantilla Excel</button>
           </a>
           <input type="file" accept=".xlsx,.csv" onChange={cargarArchivo} disabled={subiendo} />

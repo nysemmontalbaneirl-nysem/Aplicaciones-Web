@@ -2,7 +2,14 @@ import express, { NextFunction, Request, Response } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 
+dotenv.config();
+
 import { verificarConexion } from "./db";
+import { requiereLogin } from "./authMiddleware";
+import { authRouter } from "./routes/auth";
+import { usuariosRouter } from "./routes/usuarios";
+import { proyectosRouter } from "./routes/proyectos";
+import { empresaRouter } from "./routes/empresa";
 import { empleadosRouter } from "./routes/empleados";
 import { contratosRouter } from "./routes/contratos";
 import { periodosRouter } from "./routes/periodos";
@@ -10,8 +17,6 @@ import { planillaRouter } from "./routes/planilla";
 import { parametrosRouter } from "./routes/parametros";
 import { exportacionesRouter } from "./routes/exportaciones";
 import { importacionRouter } from "./routes/importacion";
-
-dotenv.config();
 
 // Red de seguridad adicional: si algo lanza un error fuera de una peticion
 // HTTP (o se escapa del asyncHandler de las rutas), que quede en el log en
@@ -34,6 +39,17 @@ app.get("/api/salud", (_req: Request, res: Response) => {
   res.json({ estado: "ok" });
 });
 
+// /api/auth es publico (el login no puede requerir estar logueado); las
+// demas rutas de este mismo router (me, cambiar-password) se protegen a si
+// mismas con requiereLogin.
+app.use("/api/auth", authRouter);
+
+// A partir de aca, toda ruta requiere sesion activa.
+app.use(requiereLogin);
+
+app.use("/api/usuarios", usuariosRouter);
+app.use("/api/proyectos", proyectosRouter);
+app.use("/api/empresa", empresaRouter);
 app.use("/api/empleados", empleadosRouter);
 app.use("/api/contratos", contratosRouter);
 app.use("/api/periodos", periodosRouter);

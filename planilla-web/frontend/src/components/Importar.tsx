@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BASE_URL } from "../api";
+import { apiPostArchivo } from "../api";
 
 interface ErrorFila {
   fila: number;
@@ -38,12 +38,7 @@ export default function Importar() {
     try {
       const formData = new FormData();
       formData.append("archivo", archivo);
-      const res = await fetch(`${BASE_URL}/empleados/importar-masivo`, {
-        method: "POST",
-        body: formData,
-      });
-      const cuerpo = await res.json();
-      if (!res.ok) throw new Error(cuerpo.error ?? `Error ${res.status}`);
+      const cuerpo = await apiPostArchivo<ResultadoImportacion>("/empleados/importar-masivo", formData);
       setResultado(cuerpo);
     } catch (e) {
       setError((e as Error).message);
