@@ -163,9 +163,14 @@ function SeccionAnual() {
                 onChange={(e) => actualizarEscalar("remuneracion_minima_vital", Number(e.target.value))} />
             </label>
             <label>
-              Asignación familiar (S/.)
-              <input type="number" step="0.01" value={parametros.asignacion_familiar}
-                onChange={(e) => actualizarEscalar("asignacion_familiar", Number(e.target.value))} />
+              Asignación familiar (S/.) — 10% de la RMV, se calcula sola
+              <input
+                type="number"
+                step="0.01"
+                value={(parametros.remuneracion_minima_vital * 0.1).toFixed(2)}
+                disabled
+                style={{ background: "#f7f8fa", color: "#5a6172" }}
+              />
             </label>
             <label>
               Seguro vida ley (S/.)

@@ -118,11 +118,16 @@ export function calcularHorasExtra(
 }
 
 /**
- * Asignacion familiar (RMV): solo aplica a EMPLEADO (regimen general). Los
- * trabajadores de construccion civil NO la reciben - en su lugar tienen la
- * asignacion por escolaridad (ver calcularAsignacionEscolar). Verificado
- * contra boletas reales: el total de ingresos de obreros con hijos cuadra
- * exacto sin esta linea.
+ * Asignacion familiar: 10% de la Remuneracion Minima Vital (RMV), solo
+ * aplica a EMPLEADO (regimen general). Los trabajadores de construccion
+ * civil NO la reciben - en su lugar tienen la asignacion por escolaridad
+ * (ver calcularAsignacionEscolar). Verificado contra boletas reales: el
+ * total de ingresos de obreros con hijos cuadra exacto sin esta linea.
+ *
+ * Se calcula SIEMPRE como 10% de parametros.remuneracion_minima_vital, no
+ * se lee de un campo aparte (asignacion_familiar) que haya que editar a
+ * mano cada vez que sube la RMV - mismo motivo que el factor de
+ * gratificacion de construccion civil.
  */
 export function calcularAsignacionFamiliar(
   contrato: Contrato,
@@ -134,7 +139,11 @@ export function calcularAsignacionFamiliar(
   if (esConstruccionCivil(contrato.categoria_ocupacional)) return 0;
   if (numeroHijos < 1) return 0;
   const proporcion = Math.min(asistencia.dias_trabajados / diasPeriodo, 1);
-  return redondear(parametros.asignacion_familiar * proporcion);
+  // parametros.remuneracion_minima_vital viene de una columna NUMERIC de
+  // Postgres (el driver "pg" la entrega como string) - Number() evita el
+  // mismo bug de concatenacion de texto ya corregido antes en otros campos.
+  const asignacionFamiliarCompleta = Number(parametros.remuneracion_minima_vital) * 0.1;
+  return redondear(asignacionFamiliarCompleta * proporcion);
 }
 
 /**
@@ -265,11 +274,13 @@ function calcularRemuneracionComputableRegular(
     esConstruccionCivil(contrato.categoria_ocupacional) && config
       ? redondear(jornalDiario * config.buc * 30)
       : 0;
-  // parametros.asignacion_familiar viene de una columna NUMERIC de Postgres,
-  // que el driver "pg" entrega como string; sin el Number() aca, la suma de
-  // abajo hace concatenacion de texto en vez de suma (bug real: producia
-  // gratificacion/CTS = NaN para cualquier trabajador con hijos).
-  const asignacionFamiliarRegular = numeroHijos >= 1 ? Number(parametros.asignacion_familiar) : 0;
+  // Asignacion familiar = 10% de la RMV (ver calcularAsignacionFamiliar).
+  // parametros.remuneracion_minima_vital viene de una columna NUMERIC de
+  // Postgres, que el driver "pg" entrega como string; sin el Number() aca,
+  // la suma de abajo hace concatenacion de texto en vez de suma (bug real
+  // ya visto antes: producia gratificacion/CTS = NaN para cualquier
+  // trabajador con hijos).
+  const asignacionFamiliarRegular = numeroHijos >= 1 ? Number(parametros.remuneracion_minima_vital) * 0.1 : 0;
   return sueldoBasicoRegular + bucRegular + asignacionFamiliarRegular;
 }
 

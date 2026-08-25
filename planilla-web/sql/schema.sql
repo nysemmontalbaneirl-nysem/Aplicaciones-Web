@@ -298,15 +298,17 @@ CREATE TABLE bitacora_planilla (
 );
 
 -- -------------------------------------------------------------------------
--- Parámetros anuales 2026. OJO: remuneracion_minima_vital queda en 0 a
--- proposito - no se encontro un valor confirmado en los archivos revisados,
--- actualizalo desde la pestaña "Parametros" antes de usarlo en un calculo.
+-- Parámetros anuales 2026. remuneracion_minima_vital = S/1,130 (RMV vigente).
+-- La asignacion familiar YA NO se lee de la columna asignacion_familiar -
+-- se calcula siempre como 10% de la RMV (ver calcularAsignacionFamiliar en
+-- motorCalculo.ts); la columna se deja solo por compatibilidad. Verifica
+-- que la RMV siga vigente antes de usar el sistema en un anio nuevo.
 -- -------------------------------------------------------------------------
 INSERT INTO parametros_normativos (
     anio, uit, remuneracion_minima_vital, tasa_essalud, tasa_onp, tasa_senati,
     tasa_conafovicer, tasa_sctr_salud, asignacion_familiar, seguro_vida_ley
 ) VALUES (
-    2026, 5500, 0, 0.09, 0.13, 0.0045, 0.02, 0.0155, 113.00, 5.00
+    2026, 5500, 1130.00, 0.09, 0.13, 0.0045, 0.02, 0.0155, 113.00, 5.00
 );
 
 -- -------------------------------------------------------------------------
