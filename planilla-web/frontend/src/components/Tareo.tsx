@@ -32,6 +32,9 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
 
   const [busquedaAgregar, setBusquedaAgregar] = useState("");
   const [contratosDisponibles, setContratosDisponibles] = useState<Contrato[]>([]);
+  const [busquedaTareo, setBusquedaTareo] = useState("");
+  const [seleccionados, setSeleccionados] = useState<Set<number>>(new Set());
+  const [eliminandoLote, setEliminandoLote] = useState(false);
 
   async function cargarTareo() {
     const datos = await apiGet<{ tareo: AsistenciaTareo[] }>(`/periodos/${periodo.id}/tareo`);
@@ -95,6 +98,57 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
       setError((e as Error).message);
     }
   }
+
+  function alternarSeleccion(contratoId: number) {
+    setSeleccionados((prev) => {
+      const nuevo = new Set(prev);
+      if (nuevo.has(contratoId)) nuevo.delete(contratoId);
+      else nuevo.add(contratoId);
+      return nuevo;
+    });
+  }
+
+  function alternarSeleccionTodos() {
+    setSeleccionados((prev) =>
+      prev.size === tareoFiltrado.length && tareoFiltrado.length > 0
+        ? new Set()
+        : new Set(tareoFiltrado.map((f) => f.contrato_id))
+    );
+  }
+
+  async function eliminarSeleccionados() {
+    if (
+      !window.confirm(
+        `¿Quitar a ${seleccionados.size} trabajador(es) del tareo de este periodo?`
+      )
+    )
+      return;
+    setError(null);
+    setEliminandoLote(true);
+    try {
+      await Promise.all(
+        Array.from(seleccionados).map((contratoId) =>
+          apiDelete(`/periodos/${periodo.id}/tareo/${contratoId}`)
+        )
+      );
+      setSeleccionados(new Set());
+      await cargarTareo();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setEliminandoLote(false);
+    }
+  }
+
+  const tareoFiltrado = useMemo(() => {
+    const q = busquedaTareo.trim().toLowerCase();
+    if (!q) return tareo;
+    return tareo.filter(
+      (f) =>
+        f.numero_documento?.toLowerCase().includes(q) ||
+        f.apellidos_nombres?.toLowerCase().includes(q)
+    );
+  }, [busquedaTareo, tareo]);
 
   const contratosFiltrados = useMemo(() => {
     const q = busquedaAgregar.trim().toLowerCase();
@@ -204,10 +258,42 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
       </div>
 
       <div className="card">
-        <h2>Trabajadores con tareo cargado ({tareo.length})</h2>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <h2>
+            Trabajadores con tareo cargado ({tareoFiltrado.length}
+            {busquedaTareo.trim() ? ` de ${tareo.length}` : ""})
+          </h2>
+          <button
+            className="primario"
+            type="button"
+            disabled={seleccionados.size === 0 || eliminandoLote}
+            onClick={eliminarSeleccionados}
+          >
+            {eliminandoLote ? "Quitando..." : `Quitar seleccionados (${seleccionados.size})`}
+          </button>
+        </div>
+        <div style={{ maxWidth: 400, marginBottom: 12 }}>
+          <label>
+            Buscar en esta lista (por DNI o nombre)
+            <input
+              type="text"
+              value={busquedaTareo}
+              onChange={(e) => setBusquedaTareo(e.target.value)}
+              placeholder="Ej. 12345678 o Perez"
+            />
+          </label>
+        </div>
         <table>
           <thead>
             <tr>
+              <th>
+                <input
+                  type="checkbox"
+                  checked={tareoFiltrado.length > 0 && seleccionados.size === tareoFiltrado.length}
+                  onChange={alternarSeleccionTodos}
+                  title="Seleccionar todos"
+                />
+              </th>
               <th>DNI</th>
               <th>Trabajador</th>
               <th>Dias trab.</th>
@@ -221,8 +307,15 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
             </tr>
           </thead>
           <tbody>
-            {tareo.map((fila) => (
+            {tareoFiltrado.map((fila) => (
               <tr key={fila.contrato_id}>
+                <td>
+                  <input
+                    type="checkbox"
+                    checked={seleccionados.has(fila.contrato_id)}
+                    onChange={() => alternarSeleccion(fila.contrato_id)}
+                  />
+                </td>
                 <td>{fila.numero_documento}</td>
                 <td>{fila.apellidos_nombres}</td>
                 {CAMPOS_ASISTENCIA.map((campo) => (
@@ -245,8 +338,15 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
             ))}
             {tareo.length === 0 && (
               <tr>
-                <td colSpan={10} style={{ textAlign: "center", color: "#5a6172" }}>
+                <td colSpan={11} style={{ textAlign: "center", color: "#5a6172" }}>
                   Todavia no hay tareo cargado para este periodo.
+                </td>
+              </tr>
+            )}
+            {tareo.length > 0 && tareoFiltrado.length === 0 && (
+              <tr>
+                <td colSpan={11} style={{ textAlign: "center", color: "#5a6172" }}>
+                  Ningún trabajador cargado coincide con "{busquedaTareo}".
                 </td>
               </tr>
             )}
