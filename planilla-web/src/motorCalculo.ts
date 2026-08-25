@@ -510,6 +510,10 @@ export function calcularConafovicer(
  * y aplica los tramos vigentes. Es una aproximacion: para un calculo exacto
  * se requiere el acumulado real ano a la fecha (ingresos ya pagados).
  * VALIDAR contra la columna "Dscto Renta 5ta" del Excel.
+ *
+ * remuneracionMensual debe incluir la asignacion por escolaridad (Tabla 22
+ * de SUNAT: codigo 211, afecto a Renta 5ta a diferencia de EsSalud/SCTR/
+ * AFP-ONP) - ver remuneracionAfectaRenta5ta en calcularLineaPlanilla.
  */
 export function calcularRenta5ta(
   contrato: Contrato,
@@ -716,7 +720,15 @@ export function calcularLineaPlanilla(
   const aportePension = calcularAportePension(contrato, remuneracionAfecta, parametros, afpTasas);
   const descuentoSindicato = calcularCuotaSindical(contrato, asistencia, cuotaSindicalSemanal);
   const conafovicer = calcularConafovicer(contrato, sueldoBasico, remDominical, parametros);
-  const renta5ta = calcularRenta5ta(contrato, remuneracionAfecta, parametros);
+  // La asignacion por escolaridad SI esta afecta a Renta de 5ta segun la
+  // Tabla 22 de SUNAT (codigo 211), a diferencia de EsSalud/SCTR/AFP-ONP
+  // (esos si la excluyen, ver remuneracionAfecta arriba). Por eso Renta 5ta
+  // usa una base propia en vez de remuneracionAfecta. Hoy esto no cambia
+  // ningun monto real: la escolaridad solo se calcula para construccion
+  // civil y Renta 5ta solo para EMPLEADO (categorias mutuamente
+  // excluyentes en este sistema), pero se deja correcto por si eso cambia.
+  const remuneracionAfectaRenta5ta = redondear(remuneracionAfecta + asignacionEscolaridad);
+  const renta5ta = calcularRenta5ta(contrato, remuneracionAfectaRenta5ta, parametros);
   const otrosDescuentos = 0;
 
   const totalDescuentos = redondear(

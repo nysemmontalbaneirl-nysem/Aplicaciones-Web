@@ -36,9 +36,9 @@ Tabla 22. "✅ coincide" = el código ya excluye/incluye igual que la tabla.
 | Remuneración dominical/feriado | 115 | SI | SI | SI | SI | SI | SI | ✅ incluido |
 | Horas extra 25%/35% | 105/106 | SI | SI | SI | SI | SI | SI | ✅ incluido |
 | Asignación familiar | 201 | SI | SI | SI | SI | SI | SI | ✅ incluido |
-| BUC (Bonif. Unif. Construcción) | 311 | SI | SI | **SI** | SI | SI | SI | ⚠️ ver nota SENATI abajo |
+| BUC (Bonif. Unif. Construcción) | 311 | SI | SI | **SI** | SI | SI | SI | ✅ incluido (corregido, ver nota SENATI abajo) |
 | Vacaciones (truncas/remun./compensación) | 114/117/118 | SI | SI | SI | SI | SI | SI | ✅ incluido |
-| Asignación por escolaridad | 211 | NO | — | NO | NO | NO | **SI** | ⚠️ ver nota Renta 5ta abajo |
+| Asignación por escolaridad | 211 | NO | — | NO | NO | NO | **SI** | ✅ incluida en base de Renta 5ta (corregido, ver nota abajo) |
 | Movilidad supeditada a asistencia (solo traslado) | 909 | NO | — | NO | NO | NO | SI | ✅ excluido de remuneración afecta (correcto: la movilidad de este sistema es "supeditada a asistencia", no "de libre disposición" -código 908, que sí sería SI a todo) |
 | Gratificación Fiestas Patrias/Navidad (Ley 29351/30334, la que exonera EsSalud/pensión) | 406 | NO | — | NO | NO | NO | SI | ✅ excluido de remuneración afecta |
 | Bonificación Extraordinaria (Ley 29351/30334) | 312/313 | NO | — | NO | NO | NO | SI | ✅ excluido de remuneración afecta |
@@ -51,27 +51,24 @@ empleador (807). BAE (Bonificación por Alta Especialización) tampoco
 aparece: es un beneficio propio del convenio colectivo de construcción
 civil, no un código estándar de PLAME.
 
-## ⚠️ Dos discrepancias encontradas (no corregidas todavía, requieren tu confirmación)
+## Discrepancias encontradas — ambas ya corregidas
 
-1. **SENATI y el BUC**: la Tabla 22 dice que el BUC (código 311) SÍ está
-   afecto a SENATI. Pero `calcularSenati` en el motor de cálculo excluye el
-   BUC de su base (`sueldoBasico + remuneracionDominical + remuneracionFeriado`,
-   sin BUC), con un comentario que dice que esa base "se verificó contra
-   boletas reales". Puede ser que las boletas reales revisadas tuvieran BUC
-   en 0 esos periodos (y por eso no se notó la diferencia), o que la
-   práctica real de la empresa difiera del catálogo genérico. Si me
-   consigues una boleta real de un periodo donde el BUC no sea cero, puedo
-   verificar cuál de las dos es la correcta y ajustar el código si hace
-   falta.
+1. **SENATI y el BUC** (corregido): la Tabla 22 dice que el BUC (código 311)
+   SÍ está afecto a SENATI. `calcularSenati` ahora incluye el BUC en su
+   base (`sueldoBasico + remuneracionDominical + remuneracionFeriado +
+   bonificacionBUC`). Antes lo excluía por error (verificado contra boletas
+   reales que probablemente tenían el BUC en 0 esos periodos, ocultando la
+   diferencia). Probado: Operario con BUC=685.82, SENATI subió de S/11.25 a
+   S/14.34.
 
-2. **Renta de 5ta y la asignación por escolaridad**: la Tabla 22 dice que la
-   asignación por escolaridad (211) SÍ está afecta a Renta de 5ta, pero
-   `calcularRenta5ta` usa como base `remuneracionAfecta`, que no incluye la
-   escolaridad. El cálculo de Renta 5ta ya está marcado en el código como
-   una aproximación simplificada ("VALIDAR contra la columna Dscto Renta
-   5ta del Excel"), así que esto es un ajuste pendiente más, no una
-   regresión nueva. Como la escolaridad suele ser un monto pequeño, el
-   impacto en la retención es menor, pero lo dejo anotado.
+2. **Renta de 5ta y la asignación por escolaridad** (corregido): la Tabla 22
+   dice que la asignación por escolaridad (211) SÍ está afecta a Renta de
+   5ta. `calcularRenta5ta` ahora recibe una base propia
+   (`remuneracionAfectaRenta5ta = remuneracionAfecta + asignacionEscolaridad`)
+   en vez de `remuneracionAfecta` a secas. En la práctica esto no cambia
+   ningún monto hoy: la escolaridad solo se calcula para construcción civil
+   y la Renta de 5ta solo para EMPLEADO (categorías mutuamente excluyentes
+   en este sistema), pero queda correcto por si eso cambia más adelante.
 
 Todo lo demás (jornal básico, dominical/feriado, horas extra, asignación
 familiar, BUC, vacaciones, movilidad, gratificación, bonificación
