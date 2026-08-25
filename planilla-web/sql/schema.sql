@@ -259,7 +259,7 @@ CREATE TABLE detalle_planilla (
     -- descuentos del trabajador
     aporte_pension         NUMERIC(10,2) NOT NULL DEFAULT 0, -- ONP 13% u (obligatorio+comisión+prima AFP)
     descuento_sindicato     NUMERIC(10,2) NOT NULL DEFAULT 0,
-    seguro_vida             NUMERIC(10,2) NOT NULL DEFAULT 0,
+    seguro_vida             NUMERIC(10,2) NOT NULL DEFAULT 0, -- Poliza de vida Ley (D.Leg 688): aporte integro del empleador, NO se descuenta al trabajador (no se suma a total_descuentos)
     conafovicer              NUMERIC(10,2) NOT NULL DEFAULT 0,
     renta_5ta               NUMERIC(10,2) NOT NULL DEFAULT 0,
     otros_descuentos        NUMERIC(10,2) NOT NULL DEFAULT 0,

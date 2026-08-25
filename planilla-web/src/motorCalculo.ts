@@ -605,18 +605,25 @@ export function calcularLineaPlanilla(
   // temporal, no confiable. Falta que el usuario defina la tarifa por proyecto
   // antes de usar este descuento en un calculo real.
   const descuentoSindicato = contrato.sindicalizado ? redondear(remuneracionAfecta * 0.02) : 0; // VALIDAR tasa real
-  const seguroVida = contrato.poliza_seguro ? parametros.seguro_vida_ley : 0;
   const conafovicer = calcularConafovicer(contrato, sueldoBasico, remDominical, parametros);
   const renta5ta = calcularRenta5ta(contrato, remuneracionAfecta, parametros);
   const otrosDescuentos = 0;
 
   const totalDescuentos = redondear(
-    aportePension.total + descuentoSindicato + seguroVida + conafovicer + renta5ta + otrosDescuentos
+    aportePension.total + descuentoSindicato + conafovicer + renta5ta + otrosDescuentos
   );
 
   const essalud = calcularEssalud(remuneracionAfecta, parametros);
   const sctr = calcularSCTR(contrato, remuneracionAfecta, parametros);
   const senati = calcularSenati(contrato, sueldoBasico, remDominical, remFeriado, parametros);
+  // Poliza de vida (D.Leg. N°688 / convenio EsSalud+Vida): es un aporte
+  // INTEGRO del empleador - esta prohibido descontarselo al trabajador. Se
+  // reclasifico aqui (antes se restaba de total_descuentos por error).
+  // parametros.seguro_vida_ley viene de una columna NUMERIC de Postgres (el
+  // driver "pg" la entrega como string); sin el Number() aca, la suma de
+  // total_aportes_empleador mas abajo hace concatenacion de texto en vez de
+  // suma (mismo patron de bug ya corregido antes en asignacion_familiar).
+  const seguroVida = contrato.poliza_seguro ? Number(parametros.seguro_vida_ley) : 0;
 
   const netoPagar = redondear(totalIngresos - totalDescuentos);
 
@@ -661,7 +668,7 @@ export function calcularLineaPlanilla(
         remuneracion_computable: remuneracionComputable,
         remuneracion_afecta: remuneracionAfecta,
         aporte_pension_detalle: aportePension,
-        total_aportes_empleador: redondear(essalud + sctr + senati),
+        total_aportes_empleador: redondear(essalud + sctr + senati + seguroVida),
       },
     },
   };

@@ -56,7 +56,6 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles }:
           { etiqueta: `AFP ${detalle.afp_nombre ?? ""} - Prima de seguro`, valor: aporteDetalle?.primaSeguro ?? 0 },
         ]),
     { etiqueta: "Cuota sindical", valor: detalle.descuento_sindicato },
-    { etiqueta: "Seguro de vida ley", valor: detalle.seguro_vida },
     { etiqueta: "CONAFOVICER", valor: detalle.conafovicer },
     { etiqueta: "Renta de 5ta categoría", valor: detalle.renta_5ta },
     { etiqueta: "Otros descuentos", valor: detalle.otros_descuentos },
@@ -65,6 +64,9 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles }:
   const aportesEmpleador = filasSinCero([
     { etiqueta: "ESSALUD", valor: detalle.essalud },
     { etiqueta: "SCTR salud", valor: detalle.sctr },
+    // Poliza de vida Ley (D.Leg 688): aporte integro del empleador, nunca un
+    // descuento al trabajador.
+    { etiqueta: "Póliza de vida ley", valor: detalle.seguro_vida },
     { etiqueta: "Fondo de Capacitación", valor: detalle.senati },
   ]);
 

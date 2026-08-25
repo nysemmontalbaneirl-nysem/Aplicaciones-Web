@@ -153,8 +153,8 @@ async function construirFilasReporte(periodoId: string, usuario: NonNullable<Req
         Number(d.neto_pagar),
         Number(d.essalud),
         Number(d.sctr),
-        "", // Essalud + Vida (aporte empleador) - en este sistema el seguro de vida es un descuento del trabajador, no un aporte del empleador; revisar con el usuario
-        "", // POL.SEG - no calculado
+        "", // Essalud + Vida (poliza adicional por obra > 250 UIT, aporte empleador) - no calculado, distinto de la Poliza de Vida Ley de la columna POL.SEG
+        Number(d.seguro_vida), // POL.SEG = Poliza de Vida Ley (D.Leg 688), aporte integro del empleador
         Number(d.senati),
         Number(detalleJson.total_aportes_empleador ?? 0),
       ];
