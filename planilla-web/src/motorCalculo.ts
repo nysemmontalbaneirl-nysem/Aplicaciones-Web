@@ -253,7 +253,7 @@ export function calcularMesesEnSemestre(
  * la gratificacion/CTS por los MESES de antiguedad en el semestre
  * (calcularMesesEnSemestre), no por la asistencia del mes de pago.
  */
-function calcularRemuneracionComputableRegular(
+export function calcularRemuneracionComputableRegular(
   contrato: Contrato,
   jornalDiario: number,
   numeroHijos: number,
@@ -553,6 +553,54 @@ export function calcularCuotaSindical(
   if (!contrato.sindicalizado || !cuotaSindicalSemanal) return 0;
   const cuotaDiaria = cuotaSindicalSemanal / 6;
   return redondear(cuotaDiaria * asistencia.dias_trabajados);
+}
+
+export interface DetalleBoletaVacaciones {
+  remuneracionVacacional: number;
+  aportePension: DetalleAportePension;
+  essalud: number;
+  sctr: number;
+  netoPagar: number;
+}
+
+/**
+ * Boleta de vacaciones - separada de la planilla mensual, solo para
+ * EMPLEADO (regimen general). La remuneracion vacacional es la misma
+ * "remuneracion computable regular" que se usa para CTS/gratificacion
+ * (Art. 15 D.Leg. 713 remite al calculo de la CTS del D.Leg. 650),
+ * prorrateada sobre 30 por los dias de goce. Se le aplican los mismos
+ * descuentos/aportes que a un sueldo normal (AFP/ONP, EsSalud, SCTR),
+ * calculados con las mismas funciones ya validadas contra boletas reales.
+ *
+ * NO incluye renta de 5ta aqui a proposito: la retencion de renta de 5ta
+ * ya se proyecta sobre la remuneracion mensual regular en la planilla del
+ * mes (calcularRenta5ta) y estos dias de vacaciones no son ingreso
+ * adicional sino el mismo sueldo mensual pagado por adelantado -
+ * calcularla tambien aqui duplicaria la retencion sobre el mismo ingreso.
+ */
+export function calcularBoletaVacaciones(
+  contrato: Contrato,
+  numeroHijos: number,
+  dias: number,
+  parametros: ParametrosNormativos,
+  afpTasas: TasasAFPMensuales
+): DetalleBoletaVacaciones {
+  if (contrato.categoria_ocupacional !== "EMPLEADO") {
+    throw new Error("La boleta de vacaciones solo aplica a la categoria EMPLEADO");
+  }
+  const remuneracionComputableRegular = calcularRemuneracionComputableRegular(
+    contrato,
+    0,
+    numeroHijos,
+    parametros,
+    {}
+  );
+  const remuneracionVacacional = redondear((remuneracionComputableRegular / 30) * dias);
+  const aportePension = calcularAportePension(contrato, remuneracionVacacional, parametros, afpTasas);
+  const essalud = calcularEssalud(remuneracionVacacional, parametros);
+  const sctr = calcularSCTR(contrato, remuneracionVacacional, parametros);
+  const netoPagar = redondear(remuneracionVacacional - aportePension.total);
+  return { remuneracionVacacional, aportePension, essalud, sctr, netoPagar };
 }
 
 export interface ResultadoCalculoLinea {

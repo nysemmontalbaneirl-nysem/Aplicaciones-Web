@@ -234,6 +234,42 @@ export interface GoceVacaciones {
   dias: number;
   observaciones: string | null;
   creado_en: string;
+  boleta_id: number | null;
+  remuneracion_vacacional: number | null;
+  boleta_neto_pagar: number | null;
+}
+
+export interface BoletaVacaciones {
+  id: number;
+  goce_id: number;
+  contrato_id: number;
+  fecha_inicio: string;
+  fecha_fin: string;
+  dias: number;
+  remuneracion_vacacional: number;
+  aporte_pension: number;
+  essalud: number;
+  sctr: number;
+  neto_pagar: number;
+  detalle_json: {
+    aporte_pension_detalle?: DetalleAportePension;
+  };
+  generado_en: string;
+}
+
+export interface BoletaVacacionesRespuesta {
+  boleta: BoletaVacaciones;
+  contrato: {
+    id: number;
+    numero_documento: string;
+    apellidos_nombres: string;
+    proyecto: string;
+    categoria_ocupacional: CategoriaOcupacional;
+    sistema_pension: "AFP" | "ONP";
+    afp_nombre: string | null;
+    cuspp: string | null;
+    numero_hijos: number;
+  };
 }
 
 export interface RecordVacacional {

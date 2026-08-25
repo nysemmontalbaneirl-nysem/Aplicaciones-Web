@@ -19,7 +19,7 @@ async function obtenerPeriodo(periodoId: string) {
   return r.rows[0] ?? null;
 }
 
-async function obtenerParametros(anio: number): Promise<ParametrosNormativos> {
+export async function obtenerParametros(anio: number): Promise<ParametrosNormativos> {
   const r = await pool.query("SELECT * FROM parametros_normativos WHERE anio = $1", [anio]);
   if (r.rowCount === 0) {
     throw new ErrorValidacion(`No hay parametros_normativos configurados para el anio ${anio}`);
@@ -50,7 +50,7 @@ async function obtenerTablaCategorias(anio: number, mes: number): Promise<TablaS
   return tabla;
 }
 
-async function obtenerAfpTasas(anio: number, mes: number): Promise<TasasAFPMensuales> {
+export async function obtenerAfpTasas(anio: number, mes: number): Promise<TasasAFPMensuales> {
   const r = await pool.query(
     "SELECT afp_nombre, comision_flujo, prima_seguro, aporte_obligatorio FROM tasas_afp_mensuales WHERE anio = $1 AND mes = $2",
     [anio, mes]

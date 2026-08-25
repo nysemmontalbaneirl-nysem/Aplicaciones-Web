@@ -4,6 +4,9 @@ import { requiereRol } from "../authMiddleware";
 import { tieneAccesoProyecto } from "../permisos";
 import { pool } from "../db";
 import { ErrorValidacion } from "../validaciones";
+import { calcularBoletaVacaciones } from "../motorCalculo";
+import { obtenerAfpTasas, obtenerParametros } from "./planilla";
+import { TasasAFPMensuales } from "../tipos";
 
 export const vacacionesRouter = Router();
 
@@ -36,7 +39,7 @@ function generarPeriodosVacacionales(fechaIngreso: Date, fechaCorte: Date): { in
 
 async function obtenerContratoOFallar(contratoId: string) {
   const r = await pool.query(
-    `SELECT c.*, e.apellidos_nombres, e.numero_documento
+    `SELECT c.*, e.apellidos_nombres, e.numero_documento, e.numero_hijos
      FROM contratos c JOIN empleados e ON e.id = c.empleado_id
      WHERE c.id = $1`,
     [contratoId]
@@ -100,7 +103,11 @@ vacacionesRouter.get(
     const totalGanado = redondear(periodos.reduce((suma, p) => suma + p.dias_ganados, 0));
 
     const goceResult = await pool.query(
-      `SELECT * FROM vacaciones_goce WHERE contrato_id = $1 ORDER BY fecha_inicio DESC`,
+      `SELECT g.*, b.id AS boleta_id, b.remuneracion_vacacional, b.neto_pagar AS boleta_neto_pagar
+       FROM vacaciones_goce g
+       LEFT JOIN boletas_vacaciones b ON b.goce_id = g.id
+       WHERE g.contrato_id = $1
+       ORDER BY g.fecha_inicio DESC`,
       [req.params.contratoId]
     );
     const totalGozado = goceResult.rows.reduce((suma, g) => suma + Number(g.dias), 0);
@@ -139,7 +146,14 @@ vacacionesRouter.post(
       return res.status(403).json({ error: "No tienes acceso a este proyecto" });
     }
 
+    if (contrato.categoria_ocupacional !== "EMPLEADO") {
+      return res.status(400).json({
+        error: "El registro de goce de vacaciones solo aplica a la categoria EMPLEADO (regimen general)",
+      });
+    }
+
     const b = req.body;
+    let goce;
     try {
       if (!b.fecha_inicio || !b.fecha_fin) {
         throw new ErrorValidacion("fecha_inicio y fecha_fin son obligatorios");
@@ -156,13 +170,89 @@ vacacionesRouter.post(
          VALUES ($1, $2, $3, $4, $5) RETURNING *`,
         [req.params.contratoId, b.fecha_inicio, b.fecha_fin, dias, b.observaciones ?? null]
       );
-      res.status(201).json(r.rows[0]);
+      goce = r.rows[0];
+
+      // Cada goce registrado genera de inmediato su propia boleta de
+      // vacaciones (separada de la planilla mensual, segun lo pedido).
+      const anio = inicio.getUTCFullYear();
+      const mes = inicio.getUTCMonth() + 1;
+      const parametros = await obtenerParametros(anio);
+      const afpTasas =
+        contrato.sistema_pension === "AFP" ? await obtenerAfpTasas(anio, mes) : ({} as TasasAFPMensuales);
+      const detalle = calcularBoletaVacaciones(contrato, contrato.numero_hijos ?? 0, dias, parametros, afpTasas);
+
+      const br = await pool.query(
+        `INSERT INTO boletas_vacaciones
+           (goce_id, contrato_id, fecha_inicio, fecha_fin, dias, remuneracion_vacacional, aporte_pension, essalud, sctr, neto_pagar, detalle_json)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+        [
+          goce.id,
+          req.params.contratoId,
+          b.fecha_inicio,
+          b.fecha_fin,
+          dias,
+          detalle.remuneracionVacacional,
+          detalle.aportePension.total,
+          detalle.essalud,
+          detalle.sctr,
+          detalle.netoPagar,
+          JSON.stringify({ aporte_pension_detalle: detalle.aportePension }),
+        ]
+      );
+
+      res.status(201).json({ ...goce, boleta: br.rows[0] });
     } catch (err) {
+      // Si la boleta no se pudo generar (ej. faltan parametros_normativos
+      // del anio), no dejamos un goce huerfano sin su boleta.
+      if (goce) {
+        await pool.query("DELETE FROM vacaciones_goce WHERE id = $1", [goce.id]);
+      }
       if (err instanceof ErrorValidacion) {
         return res.status(400).json({ error: err.message });
       }
       throw err;
     }
+  })
+);
+
+// GET /api/vacaciones/:contratoId/goce/:goceId/boleta -> boleta de
+// vacaciones ya generada, con el detalle necesario para imprimirla.
+vacacionesRouter.get(
+  "/:contratoId/goce/:goceId/boleta",
+  requiereRol("ADMIN", "RESPONSABLE_PLANILLA"),
+  asyncHandler(async (req: Request, res: Response) => {
+    let contrato;
+    try {
+      contrato = await obtenerContratoOFallar(req.params.contratoId);
+    } catch (err) {
+      return res.status(404).json({ error: "Contrato no encontrado" });
+    }
+    if (!tieneAccesoProyecto(req.usuario!, contrato.proyecto)) {
+      return res.status(403).json({ error: "No tienes acceso a este proyecto" });
+    }
+
+    const r = await pool.query(
+      `SELECT * FROM boletas_vacaciones WHERE goce_id = $1 AND contrato_id = $2`,
+      [req.params.goceId, req.params.contratoId]
+    );
+    if (r.rowCount === 0) {
+      return res.status(404).json({ error: "No hay boleta de vacaciones para ese registro" });
+    }
+
+    res.json({
+      boleta: r.rows[0],
+      contrato: {
+        id: contrato.id,
+        numero_documento: contrato.numero_documento,
+        apellidos_nombres: contrato.apellidos_nombres,
+        proyecto: contrato.proyecto,
+        categoria_ocupacional: contrato.categoria_ocupacional,
+        sistema_pension: contrato.sistema_pension,
+        afp_nombre: contrato.afp_nombre,
+        cuspp: contrato.cuspp,
+        numero_hijos: contrato.numero_hijos,
+      },
+    });
   })
 );
 

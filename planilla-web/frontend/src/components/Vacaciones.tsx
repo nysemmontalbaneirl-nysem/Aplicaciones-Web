@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiDelete, apiGet, apiPost } from "../api";
-import { Contrato, RecordVacacional } from "../types";
+import { BoletaVacacionesRespuesta, Contrato, RecordVacacional } from "../types";
+import BoletaVacaciones from "./BoletaVacaciones";
 
 export default function Vacaciones() {
   const [contratos, setContratos] = useState<Contrato[]>([]);
@@ -9,6 +10,7 @@ export default function Vacaciones() {
   const [record, setRecord] = useState<RecordVacacional | null>(null);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [boletaVista, setBoletaVista] = useState<BoletaVacacionesRespuesta | null>(null);
 
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
@@ -76,13 +78,26 @@ export default function Vacaciones() {
 
   async function eliminarGoce(goceId: number) {
     if (!contratoSeleccionado) return;
-    if (!confirm("¿Eliminar este registro de vacaciones tomadas?")) return;
+    if (!confirm("¿Eliminar este registro de vacaciones tomadas? También se eliminará su boleta.")) return;
     setError(null);
     try {
       await apiDelete(`/vacaciones/${contratoSeleccionado.id}/goce/${goceId}`);
       await cargarRecord(contratoSeleccionado);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al eliminar el registro");
+    }
+  }
+
+  async function verBoleta(goceId: number) {
+    if (!contratoSeleccionado) return;
+    setError(null);
+    try {
+      const datos = await apiGet<BoletaVacacionesRespuesta>(
+        `/vacaciones/${contratoSeleccionado.id}/goce/${goceId}/boleta`
+      );
+      setBoletaVista(datos);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al cargar la boleta de vacaciones");
     }
   }
 
@@ -197,12 +212,17 @@ export default function Vacaciones() {
           </button>
 
           <h3 className="seccion-titulo">Historial de vacaciones tomadas</h3>
+          <p style={{ color: "#5a6172", marginTop: -8 }}>
+            Cada registro genera automáticamente su propia boleta de vacaciones (documento separado de la
+            planilla mensual).
+          </p>
           <table>
             <thead>
               <tr>
                 <th>Desde</th>
                 <th>Hasta</th>
                 <th>Días</th>
+                <th>Neto pagado</th>
                 <th>Observaciones</th>
                 <th></th>
               </tr>
@@ -213,8 +233,14 @@ export default function Vacaciones() {
                   <td>{new Date(g.fecha_inicio).toLocaleDateString("es-PE")}</td>
                   <td>{new Date(g.fecha_fin).toLocaleDateString("es-PE")}</td>
                   <td>{g.dias}</td>
+                  <td>{g.boleta_neto_pagar != null ? `S/ ${Number(g.boleta_neto_pagar).toFixed(2)}` : "-"}</td>
                   <td>{g.observaciones ?? "-"}</td>
-                  <td>
+                  <td style={{ display: "flex", gap: 8 }}>
+                    {g.boleta_id != null && (
+                      <button type="button" onClick={() => verBoleta(g.id)}>
+                        Ver boleta
+                      </button>
+                    )}
                     <button type="button" onClick={() => eliminarGoce(g.id)}>
                       Eliminar
                     </button>
@@ -223,13 +249,15 @@ export default function Vacaciones() {
               ))}
               {record.goces.length === 0 && (
                 <tr>
-                  <td colSpan={5}>Sin registros de vacaciones tomadas.</td>
+                  <td colSpan={6}>Sin registros de vacaciones tomadas.</td>
                 </tr>
               )}
             </tbody>
           </table>
         </>
       )}
+
+      {boletaVista && <BoletaVacaciones datos={boletaVista} onCerrar={() => setBoletaVista(null)} />}
     </div>
   );
 }

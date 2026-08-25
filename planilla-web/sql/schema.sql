@@ -8,6 +8,7 @@
 -- las reemplaza por una versión más completa alineada al motor de cálculo real.
 -- =========================================================================
 
+DROP TABLE IF EXISTS boletas_vacaciones CASCADE;
 DROP TABLE IF EXISTS vacaciones_goce CASCADE;
 DROP TABLE IF EXISTS bitacora_planilla CASCADE;
 DROP TABLE IF EXISTS detalle_planilla CASCADE;
@@ -303,6 +304,29 @@ CREATE TABLE vacaciones_goce (
     creado_en      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_vacaciones_goce_contrato ON vacaciones_goce(contrato_id);
+
+-- -------------------------------------------------------------------------
+-- boletas_vacaciones: boleta de pago de la remuneracion vacacional,
+-- SEPARADA de la planilla mensual (decision del usuario: cada goce genera
+-- su propio documento, en vez de aparecer como una linea mas en la
+-- planilla del mes). Un goce genera exactamente una boleta (1 a 1).
+-- -------------------------------------------------------------------------
+CREATE TABLE boletas_vacaciones (
+    id                        SERIAL PRIMARY KEY,
+    goce_id                   INT NOT NULL UNIQUE REFERENCES vacaciones_goce(id) ON DELETE CASCADE,
+    contrato_id               INT NOT NULL REFERENCES contratos(id) ON DELETE CASCADE,
+    fecha_inicio              DATE NOT NULL,
+    fecha_fin                 DATE NOT NULL,
+    dias                      INT NOT NULL,
+    remuneracion_vacacional   NUMERIC(10,2) NOT NULL,
+    aporte_pension            NUMERIC(10,2) NOT NULL,
+    essalud                   NUMERIC(10,2) NOT NULL,
+    sctr                      NUMERIC(10,2) NOT NULL,
+    neto_pagar                NUMERIC(10,2) NOT NULL,
+    detalle_json              JSONB NOT NULL DEFAULT '{}',
+    generado_en               TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_boletas_vacaciones_contrato ON boletas_vacaciones(contrato_id);
 
 -- -------------------------------------------------------------------------
 -- bitacora_planilla: auditoría de acciones sensibles
