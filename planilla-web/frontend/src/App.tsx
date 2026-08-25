@@ -11,6 +11,7 @@ import Calculo from "./components/Calculo";
 import Boletas from "./components/Boletas";
 import Reportes from "./components/Reportes";
 import Vacaciones from "./components/Vacaciones";
+import Configuracion from "./components/Configuracion";
 import Parametros from "./components/Parametros";
 import Importar from "./components/Importar";
 import Usuarios from "./components/Usuarios";
@@ -81,6 +82,7 @@ export default function App() {
           {pestana === "reportes" && puedeCalcular && <Reportes />}
           {pestana === "vacaciones" && puedeCalcular && <Vacaciones />}
           {pestana === "parametros" && esAdmin && <Parametros />}
+          {pestana === "configuracion" && esAdmin && <Configuracion />}
           {pestana === "proyectos" && esAdmin && <Proyectos />}
           {pestana === "usuarios" && esAdmin && <Usuarios />}
           {pestana === "empresa" && esAdmin && <Empresa />}

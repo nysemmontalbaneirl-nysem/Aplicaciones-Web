@@ -218,6 +218,32 @@ export interface DatosEmpresa {
   correo: string | null;
 }
 
+// Catalogo configurable de conceptos de planilla (pestana Configuracion),
+// siguiendo el modelo de la Tabla 22 de SUNAT. afecto_renta5ta en null
+// significa "no aplica" (ver GRATIFICACION/BONIFICACION_EXTRAORDINARIA):
+// su efecto en Renta de 5ta ya esta incorporado en la formula anual de
+// Empleado, sumarlos aqui tambien duplicaria la retencion.
+export interface ConceptoPlanilla {
+  id: number;
+  codigo: string;
+  nombre: string;
+  descripcion: string | null;
+  orden: number;
+  factor1: number | null;
+  factor1_etiqueta: string | null;
+  factor2: number | null;
+  factor2_etiqueta: string | null;
+  factor3: number | null;
+  factor3_etiqueta: string | null;
+  afecto_essalud: boolean;
+  afecto_sctr: boolean;
+  afecto_senati: boolean;
+  afecto_onp: boolean;
+  afecto_afp: boolean;
+  afecto_renta5ta: boolean | null;
+  afecto_conafovicer: boolean;
+}
+
 export interface PeriodoVacacional {
   fecha_inicio: string;
   fecha_fin: string;

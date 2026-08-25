@@ -6,6 +6,7 @@ import { pool } from "../db";
 import { ErrorValidacion } from "../validaciones";
 import { calcularBoletaVacaciones } from "../motorCalculo";
 import { obtenerAfpTasas, obtenerParametros } from "./planilla";
+import { obtenerConceptos } from "./conceptos";
 import { TasasAFPMensuales } from "../tipos";
 
 export const vacacionesRouter = Router();
@@ -179,7 +180,8 @@ vacacionesRouter.post(
       const parametros = await obtenerParametros(anio);
       const afpTasas =
         contrato.sistema_pension === "AFP" ? await obtenerAfpTasas(anio, mes) : ({} as TasasAFPMensuales);
-      const detalle = calcularBoletaVacaciones(contrato, contrato.numero_hijos ?? 0, dias, parametros, afpTasas);
+      const conceptos = await obtenerConceptos();
+      const detalle = calcularBoletaVacaciones(contrato, contrato.numero_hijos ?? 0, dias, parametros, afpTasas, conceptos);
 
       const br = await pool.query(
         `INSERT INTO boletas_vacaciones

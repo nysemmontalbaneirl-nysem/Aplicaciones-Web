@@ -6,6 +6,7 @@ import { asyncHandler } from "../asyncHandler";
 import { requiereRol } from "../authMiddleware";
 import { pool } from "../db";
 import { calcularLineaPlanilla } from "../motorCalculo";
+import { obtenerConceptos } from "./conceptos";
 import { tieneAccesoProyecto } from "../permisos";
 import { Contrato, ParametrosNormativos, TablaSalarialMensual, TasasAFPMensuales } from "../tipos";
 import { ErrorValidacion } from "../validaciones";
@@ -467,6 +468,7 @@ planillaRouter.post(
     const parametros = await obtenerParametros(periodo.anio);
     const tablaCategorias = await obtenerTablaCategorias(periodo.anio, periodo.mes);
     const afpTasas = await obtenerAfpTasas(periodo.anio, periodo.mes);
+    const conceptos = await obtenerConceptos();
 
     await cliente.query("BEGIN");
 
@@ -515,7 +517,8 @@ planillaRouter.post(
           periodo.dias_periodo,
           periodo.mes,
           periodo.anio,
-          Number(fila.cuota_sindical_semanal)
+          Number(fila.cuota_sindical_semanal),
+          conceptos
         );
 
         const r = await cliente.query(

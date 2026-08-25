@@ -14,6 +14,8 @@
 import {
   AsistenciaEntrada,
   CategoriaOcupacional,
+  ConceptoPlanilla,
+  ConceptosPlanilla,
   Contrato,
   DetallePlanilla,
   ParametrosNormativos,
@@ -36,6 +38,35 @@ export function esConstruccionCivil(categoria: CategoriaOcupacional): boolean {
 
 function redondear(valor: number): number {
   return Math.round(valor * 100) / 100;
+}
+
+/**
+ * Lee un factor editable desde conceptos_planilla (pestana Configuracion).
+ * Lanza un error claro si el concepto o el factor no existen, en vez de
+ * calcular en silencio con un valor incorrecto - misma filosofia que los
+ * "No hay X configurado" ya existentes para tabla_categorias/afpTasas.
+ * Number(...) es necesario porque las columnas NUMERIC de Postgres llegan
+ * como string por el driver "pg" (mismo patron de bug ya corregido antes
+ * en asignacion_familiar/seguro_vida_ley).
+ */
+function obtenerFactor(
+  conceptos: ConceptosPlanilla,
+  codigo: string,
+  campo: "factor1" | "factor2" | "factor3"
+): number {
+  const concepto = conceptos[codigo];
+  if (!concepto) {
+    throw new Error(
+      `No existe el concepto '${codigo}' en conceptos_planilla. Revisa la pestana Configuracion.`
+    );
+  }
+  const valor = concepto[campo];
+  if (valor === null || valor === undefined) {
+    throw new Error(
+      `El concepto '${codigo}' no tiene configurado su ${campo} en la pestana Configuracion.`
+    );
+  }
+  return Number(valor);
 }
 
 /** Jornal/sueldo diario del trabajador (equivalente a la columna CG de PLANTILLA). */
@@ -101,16 +132,21 @@ export function calcularRemuneracionFeriado(
  *   25% las 2 primeras horas, 35% el excedente (recargo legal estandar).
  * Los campos horas_extra_25/horas_extra_35/horas_extra_100 son los mismos
  * 3 "tramos" de horas para ambos regimenes; solo cambia el % aplicado.
+ * Los recargos [tramo1, tramo2, tramo3] vienen de conceptos_planilla
+ * (HORAS_EXTRA_CONSTRUCCION / HORAS_EXTRA_GENERAL), editables desde la
+ * pestana Configuracion.
  */
 export function calcularHorasExtra(
   jornalDiario: number,
   asistencia: AsistenciaEntrada,
-  categoria: CategoriaOcupacional
+  categoria: CategoriaOcupacional,
+  recargosConstruccion: [number, number, number],
+  recargosGeneral: [number, number, number]
 ): number {
   const jornalHora = jornalDiario / 8;
   const [recargoTramo1, recargoTramo2, recargoTramo3] = esConstruccionCivil(categoria)
-    ? [1.6, 2.0, 2.0]
-    : [1.25, 1.35, 2.0];
+    ? recargosConstruccion
+    : recargosGeneral;
   const importeTramo1 = jornalHora * recargoTramo1 * asistencia.horas_extra_25;
   const importeTramo2 = jornalHora * recargoTramo2 * asistencia.horas_extra_35;
   const importeTramo3 = jornalHora * recargoTramo3 * asistencia.horas_extra_100;
@@ -124,17 +160,18 @@ export function calcularHorasExtra(
  * (ver calcularAsignacionEscolar). Verificado contra boletas reales: el
  * total de ingresos de obreros con hijos cuadra exacto sin esta linea.
  *
- * Se calcula SIEMPRE como 10% de parametros.remuneracion_minima_vital, no
- * se lee de un campo aparte (asignacion_familiar) que haya que editar a
- * mano cada vez que sube la RMV - mismo motivo que el factor de
- * gratificacion de construccion civil.
+ * Se calcula SIEMPRE como un porcentaje de parametros.remuneracion_minima_vital
+ * (10% por defecto, editable en conceptos_planilla -> ASIGNACION_FAMILIAR
+ * -> pestana Configuracion), no se lee de un campo aparte (asignacion_familiar)
+ * que haya que editar a mano cada vez que sube la RMV.
  */
 export function calcularAsignacionFamiliar(
   contrato: Contrato,
   numeroHijos: number,
   asistencia: AsistenciaEntrada,
   parametros: ParametrosNormativos,
-  diasPeriodo: number
+  diasPeriodo: number,
+  factorPorcentajeRMV: number
 ): number {
   if (esConstruccionCivil(contrato.categoria_ocupacional)) return 0;
   if (numeroHijos < 1) return 0;
@@ -142,7 +179,7 @@ export function calcularAsignacionFamiliar(
   // parametros.remuneracion_minima_vital viene de una columna NUMERIC de
   // Postgres (el driver "pg" la entrega como string) - Number() evita el
   // mismo bug de concatenacion de texto ya corregido antes en otros campos.
-  const asignacionFamiliarCompleta = Number(parametros.remuneracion_minima_vital) * 0.1;
+  const asignacionFamiliarCompleta = Number(parametros.remuneracion_minima_vital) * factorPorcentajeRMV;
   return redondear(asignacionFamiliarCompleta * proporcion);
 }
 
@@ -156,13 +193,14 @@ export function calcularAsignacionEscolar(
   jornalDiario: number,
   numeroHijos: number,
   asistencia: AsistenciaEntrada,
-  categoria: CategoriaOcupacional
+  categoria: CategoriaOcupacional,
+  factorDivisor: number
 ): number {
   if (!esConstruccionCivil(categoria) || numeroHijos < 1) return 0;
   // A diferencia de vacaciones/CTS/movilidad, la tasa diaria NO se redondea
   // antes de multiplicar - verificado contra boletas reales (redondear aqui
   // producia una diferencia sistematica de unos centimos).
-  const escolaridadDiaria = jornalDiario / 12;
+  const escolaridadDiaria = jornalDiario / factorDivisor;
   return redondear(escolaridadDiaria * asistencia.dias_trabajados * numeroHijos);
 }
 
@@ -258,7 +296,8 @@ export function calcularRemuneracionComputableRegular(
   jornalDiario: number,
   numeroHijos: number,
   parametros: ParametrosNormativos,
-  tablaCategorias: TablaSalarialMensual
+  tablaCategorias: TablaSalarialMensual,
+  factorAsignacionFamiliar: number
 ): number {
   // Para EMPLEADO, jornalDiario ahora se calcula sobre los dias reales del
   // periodo (ver calcularJornalDiario), no sobre 30 fijo - por eso aqui se
@@ -280,7 +319,8 @@ export function calcularRemuneracionComputableRegular(
   // la suma de abajo hace concatenacion de texto en vez de suma (bug real
   // ya visto antes: producia gratificacion/CTS = NaN para cualquier
   // trabajador con hijos).
-  const asignacionFamiliarRegular = numeroHijos >= 1 ? Number(parametros.remuneracion_minima_vital) * 0.1 : 0;
+  const asignacionFamiliarRegular =
+    numeroHijos >= 1 ? Number(parametros.remuneracion_minima_vital) * factorAsignacionFamiliar : 0;
   return sueldoBasicoRegular + bucRegular + asignacionFamiliarRegular;
 }
 
@@ -314,10 +354,12 @@ export function calcularGratificacion(
   remuneracionComputable: number,
   mes: number,
   anio: number,
-  fechaIngreso: string
+  fechaIngreso: string,
+  factorNumerador: number,
+  factorDenominador: number
 ): number {
   if (esConstruccionCivil(contrato.categoria_ocupacional)) {
-    const gratificacionDiaria = redondear(jornalDiario * (40 / 210));
+    const gratificacionDiaria = redondear(jornalDiario * (factorNumerador / factorDenominador));
     const diasComputables = asistencia.dias_trabajados + asistencia.dias_dominical + asistencia.dias_feriado;
     return redondear(gratificacionDiaria * diasComputables);
   }
@@ -338,9 +380,9 @@ export function calcularGratificacion(
  * que reciba gratificacion. Verificado exacto (9.00%) contra las 5 boletas
  * reales, incluyendo la de un Empleado (regimen general).
  */
-export function calcularBonificacionExtraordinaria(gratificacion: number): number {
+export function calcularBonificacionExtraordinaria(gratificacion: number, factorPorcentaje: number): number {
   if (gratificacion <= 0) return 0;
-  return redondear(gratificacion * 0.09);
+  return redondear(gratificacion * factorPorcentaje);
 }
 
 /**
@@ -366,10 +408,11 @@ export function calcularCTS(
   gratificacionSemestre: number,
   mes: number,
   anio: number,
-  fechaIngreso: string
+  fechaIngreso: string,
+  factorPorcentaje: number
 ): number {
   if (esConstruccionCivil(contrato.categoria_ocupacional)) {
-    const ctsDiaria = redondear(jornalDiario * 0.15);
+    const ctsDiaria = redondear(jornalDiario * factorPorcentaje);
     return redondear(ctsDiaria * asistencia.dias_trabajados);
   }
 
@@ -396,10 +439,11 @@ export function calcularCTS(
 export function calcularVacaciones(
   contrato: Contrato,
   jornalDiario: number,
-  asistencia: AsistenciaEntrada
+  asistencia: AsistenciaEntrada,
+  factorPorcentaje: number
 ): number {
   if (!esConstruccionCivil(contrato.categoria_ocupacional)) return 0;
-  const vacacionesDiaria = redondear(jornalDiario * 0.10);
+  const vacacionesDiaria = redondear(jornalDiario * factorPorcentaje);
   return redondear(vacacionesDiaria * asistencia.dias_trabajados);
 }
 
@@ -464,43 +508,29 @@ export function calcularSCTR(
 
 /**
  * "Fondo Capacitacion" (campo senati) - aporte del empleador sobre
- * construccion civil. Base = jornal + dominical + feriado + BUC (SIN horas
- * extra, BAE ni vacaciones) - distinta a la base amplia (remuneracionAfecta)
- * que se usa para pension/EsSalud.
+ * construccion civil. La base ya viene sumada por el llamador a partir de
+ * conceptos_planilla (afecto_senati de cada concepto, pestana
+ * Configuracion) - por defecto jornal + dominical + feriado + BUC.
  *
- * El BUC SI se incluye: verificado contra la Tabla 22 de SUNAT (PDT PLAME,
- * catalogo oficial "Ingresos, Tributos y Descuentos"), donde el codigo 311
- * "BONIFICACION UNIFICADA DE CONSTRUCCION" figura afecto a SENATI. Antes se
- * excluia por error (se habia verificado contra boletas reales que
- * resultaron tener el BUC en 0 en los periodos revisados, lo que oculto la
- * diferencia).
+ * El BUC esta afecto por defecto: verificado contra la Tabla 22 de SUNAT
+ * (PDT PLAME, catalogo oficial "Ingresos, Tributos y Descuentos"), donde el
+ * codigo 311 "BONIFICACION UNIFICADA DE CONSTRUCCION" figura afecto a
+ * SENATI.
  */
-export function calcularSenati(
-  contrato: Contrato,
-  sueldoBasico: number,
-  remuneracionDominical: number,
-  remuneracionFeriado: number,
-  bonificacionBUC: number,
-  parametros: ParametrosNormativos
-): number {
+export function calcularSenati(contrato: Contrato, base: number, parametros: ParametrosNormativos): number {
   if (!esConstruccionCivil(contrato.categoria_ocupacional)) return 0;
-  const base = sueldoBasico + remuneracionDominical + remuneracionFeriado + bonificacionBUC;
   return redondear(base * parametros.tasa_senati);
 }
 
 /**
  * CONAFOVICER - descuento al trabajador de construccion civil (no EMPLEADO).
- * Base verificada contra boletas reales = jornal + dominical (SIN feriado,
- * horas extra, BUC, BAE ni vacaciones).
+ * La base ya viene sumada por el llamador a partir de conceptos_planilla
+ * (afecto_conafovicer de cada concepto, pestana Configuracion) - por
+ * defecto jornal + dominical (SIN feriado, horas extra, BUC, BAE ni
+ * vacaciones), verificado contra boletas reales.
  */
-export function calcularConafovicer(
-  contrato: Contrato,
-  sueldoBasico: number,
-  remuneracionDominical: number,
-  parametros: ParametrosNormativos
-): number {
+export function calcularConafovicer(contrato: Contrato, base: number, parametros: ParametrosNormativos): number {
   if (!esConstruccionCivil(contrato.categoria_ocupacional)) return 0;
-  const base = sueldoBasico + remuneracionDominical;
   return redondear(base * parametros.tasa_conafovicer);
 }
 
@@ -595,17 +625,20 @@ export function calcularBoletaVacaciones(
   numeroHijos: number,
   dias: number,
   parametros: ParametrosNormativos,
-  afpTasas: TasasAFPMensuales
+  afpTasas: TasasAFPMensuales,
+  conceptos: ConceptosPlanilla
 ): DetalleBoletaVacaciones {
   if (contrato.categoria_ocupacional !== "EMPLEADO") {
     throw new Error("La boleta de vacaciones solo aplica a la categoria EMPLEADO");
   }
+  const factorAsignacionFamiliar = obtenerFactor(conceptos, "ASIGNACION_FAMILIAR", "factor1");
   const remuneracionComputableRegular = calcularRemuneracionComputableRegular(
     contrato,
     0,
     numeroHijos,
     parametros,
-    {}
+    {},
+    factorAsignacionFamiliar
   );
   const remuneracionVacacional = redondear((remuneracionComputableRegular / 30) * dias);
   const aportePension = calcularAportePension(contrato, remuneracionVacacional, parametros, afpTasas);
@@ -621,6 +654,32 @@ export interface ResultadoCalculoLinea {
   };
 }
 
+/**
+ * Suma los montos de los conceptos que esten marcados afectos a "campo"
+ * (afecto_essalud, afecto_afp, afecto_renta5ta, etc.) en conceptos_planilla.
+ * Esta es la pieza central de la pestana Configuracion: reemplaza las
+ * sumas "a mano" que antes decidian remuneracionAfecta/base de SENATI/base
+ * de CONAFOVICER/base de Renta 5ta directamente en codigo. Un concepto con
+ * el flag en NULL (no aplica, ej. GRATIFICACION.afecto_renta5ta) queda
+ * excluido igual que uno en false.
+ */
+function sumarBase(
+  montosPorConcepto: Record<string, number>,
+  conceptos: ConceptosPlanilla,
+  campo: keyof Pick<
+    ConceptoPlanilla,
+    "afecto_essalud" | "afecto_sctr" | "afecto_senati" | "afecto_onp" | "afecto_afp" | "afecto_renta5ta" | "afecto_conafovicer"
+  >
+): number {
+  let suma = 0;
+  for (const [codigo, monto] of Object.entries(montosPorConcepto)) {
+    if (monto && conceptos[codigo]?.[campo]) {
+      suma += monto;
+    }
+  }
+  return redondear(suma);
+}
+
 /** Calcula la linea completa de planilla de un trabajador para un periodo. */
 export function calcularLineaPlanilla(
   contrato: Contrato,
@@ -632,22 +691,45 @@ export function calcularLineaPlanilla(
   diasPeriodo: number,
   mes: number,
   anio: number,
-  cuotaSindicalSemanal: number
+  cuotaSindicalSemanal: number,
+  conceptos: ConceptosPlanilla
 ): ResultadoCalculoLinea {
   const jornalDiario = calcularJornalDiario(contrato, tablaCategorias, diasPeriodo);
   const sueldoBasico = calcularSueldoBasico(jornalDiario, asistencia, contrato.categoria_ocupacional);
   const remDominical = calcularRemuneracionDominical(jornalDiario, asistencia);
   const remFeriado = calcularRemuneracionFeriado(jornalDiario, asistencia);
-  const importeHorasExtra = calcularHorasExtra(jornalDiario, asistencia, contrato.categoria_ocupacional);
+  const importeHorasExtra = calcularHorasExtra(
+    jornalDiario,
+    asistencia,
+    contrato.categoria_ocupacional,
+    [
+      obtenerFactor(conceptos, "HORAS_EXTRA_CONSTRUCCION", "factor1"),
+      obtenerFactor(conceptos, "HORAS_EXTRA_CONSTRUCCION", "factor2"),
+      obtenerFactor(conceptos, "HORAS_EXTRA_CONSTRUCCION", "factor3"),
+    ],
+    [
+      obtenerFactor(conceptos, "HORAS_EXTRA_GENERAL", "factor1"),
+      obtenerFactor(conceptos, "HORAS_EXTRA_GENERAL", "factor2"),
+      obtenerFactor(conceptos, "HORAS_EXTRA_GENERAL", "factor3"),
+    ]
+  );
+  const factorAsignacionFamiliar = obtenerFactor(conceptos, "ASIGNACION_FAMILIAR", "factor1");
   const asignacionFamiliar = calcularAsignacionFamiliar(
     contrato,
     numeroHijos,
     asistencia,
     parametros,
-    diasPeriodo
+    diasPeriodo,
+    factorAsignacionFamiliar
   );
   const bonificacionBUC = calcularBonificacionBUC(contrato, jornalDiario, asistencia, tablaCategorias);
-  const asignacionEscolaridad = calcularAsignacionEscolar(jornalDiario, numeroHijos, asistencia, contrato.categoria_ocupacional);
+  const asignacionEscolaridad = calcularAsignacionEscolar(
+    jornalDiario,
+    numeroHijos,
+    asistencia,
+    contrato.categoria_ocupacional,
+    obtenerFactor(conceptos, "ASIGNACION_ESCOLARIDAD", "factor1")
+  );
   const bonificacionBAE = calcularBonificacionBAE(contrato, jornalDiario, asistencia, tablaCategorias);
   const bonificacionMovilidad = calcularBonificacionMovilidad(contrato, asistencia, tablaCategorias);
 
@@ -662,7 +744,8 @@ export function calcularLineaPlanilla(
     jornalDiario,
     numeroHijos,
     parametros,
-    tablaCategorias
+    tablaCategorias,
+    factorAsignacionFamiliar
   );
   const gratificacion = calcularGratificacion(
     contrato,
@@ -671,9 +754,14 @@ export function calcularLineaPlanilla(
     remuneracionComputableRegular,
     mes,
     anio,
-    contrato.fecha_ingreso
+    contrato.fecha_ingreso,
+    obtenerFactor(conceptos, "GRATIFICACION", "factor1"),
+    obtenerFactor(conceptos, "GRATIFICACION", "factor2")
   );
-  const bonificacionExtraordinaria = calcularBonificacionExtraordinaria(gratificacion);
+  const bonificacionExtraordinaria = calcularBonificacionExtraordinaria(
+    gratificacion,
+    obtenerFactor(conceptos, "BONIFICACION_EXTRAORDINARIA", "factor1")
+  );
   const cts = calcularCTS(
     contrato,
     jornalDiario,
@@ -682,9 +770,15 @@ export function calcularLineaPlanilla(
     gratificacion,
     mes,
     anio,
-    contrato.fecha_ingreso
+    contrato.fecha_ingreso,
+    obtenerFactor(conceptos, "CTS", "factor1")
   );
-  const vacaciones = calcularVacaciones(contrato, jornalDiario, asistencia);
+  const vacaciones = calcularVacaciones(
+    contrato,
+    jornalDiario,
+    asistencia,
+    obtenerFactor(conceptos, "VACACIONES", "factor1")
+  );
 
   const totalIngresos = redondear(
     sueldoBasico +
@@ -702,42 +796,49 @@ export function calcularLineaPlanilla(
       vacaciones
   );
 
-  // Base afecta a aportes/descuentos = ingresos regulares, sin CTS,
-  // gratificacion, movilidad, escolaridad ni bonif. extraordinaria
-  // (inafectas). Vacaciones y BAE SI son computables - verificado contra
-  // el descuento AFP/ONP real de las boletas.
-  const remuneracionAfecta = redondear(
-    sueldoBasico +
-      remDominical +
-      remFeriado +
-      importeHorasExtra +
-      asignacionFamiliar +
-      bonificacionBUC +
-      bonificacionBAE +
-      vacaciones
-  );
+  // Monto de cada concepto de este periodo, para sumar dinamicamente las
+  // bases de aportes/descuentos segun conceptos_planilla (pestana
+  // Configuracion). Horas extra usa una sola de las 2 filas segun el
+  // regimen del trabajador (misma logica que calcularHorasExtra).
+  const montosPorConcepto: Record<string, number> = {
+    SUELDO_BASICO: sueldoBasico,
+    REM_DOMINICAL: remDominical,
+    REM_FERIADO: remFeriado,
+    [esConstruccionCivil(contrato.categoria_ocupacional) ? "HORAS_EXTRA_CONSTRUCCION" : "HORAS_EXTRA_GENERAL"]:
+      importeHorasExtra,
+    ASIGNACION_FAMILIAR: asignacionFamiliar,
+    ASIGNACION_ESCOLARIDAD: asignacionEscolaridad,
+    BUC: bonificacionBUC,
+    BAE: bonificacionBAE,
+    MOVILIDAD: bonificacionMovilidad,
+    GRATIFICACION: gratificacion,
+    BONIFICACION_EXTRAORDINARIA: bonificacionExtraordinaria,
+    CTS: cts,
+    VACACIONES: vacaciones,
+  };
 
-  const aportePension = calcularAportePension(contrato, remuneracionAfecta, parametros, afpTasas);
+  const baseEssalud = sumarBase(montosPorConcepto, conceptos, "afecto_essalud");
+  const baseSctr = sumarBase(montosPorConcepto, conceptos, "afecto_sctr");
+  const baseSenati = sumarBase(montosPorConcepto, conceptos, "afecto_senati");
+  const baseOnp = sumarBase(montosPorConcepto, conceptos, "afecto_onp");
+  const baseAfp = sumarBase(montosPorConcepto, conceptos, "afecto_afp");
+  const baseRenta5ta = sumarBase(montosPorConcepto, conceptos, "afecto_renta5ta");
+  const baseConafovicer = sumarBase(montosPorConcepto, conceptos, "afecto_conafovicer");
+
+  const basePension = contrato.sistema_pension === "ONP" ? baseOnp : baseAfp;
+  const aportePension = calcularAportePension(contrato, basePension, parametros, afpTasas);
   const descuentoSindicato = calcularCuotaSindical(contrato, asistencia, cuotaSindicalSemanal);
-  const conafovicer = calcularConafovicer(contrato, sueldoBasico, remDominical, parametros);
-  // La asignacion por escolaridad SI esta afecta a Renta de 5ta segun la
-  // Tabla 22 de SUNAT (codigo 211), a diferencia de EsSalud/SCTR/AFP-ONP
-  // (esos si la excluyen, ver remuneracionAfecta arriba). Por eso Renta 5ta
-  // usa una base propia en vez de remuneracionAfecta. Hoy esto no cambia
-  // ningun monto real: la escolaridad solo se calcula para construccion
-  // civil y Renta 5ta solo para EMPLEADO (categorias mutuamente
-  // excluyentes en este sistema), pero se deja correcto por si eso cambia.
-  const remuneracionAfectaRenta5ta = redondear(remuneracionAfecta + asignacionEscolaridad);
-  const renta5ta = calcularRenta5ta(contrato, remuneracionAfectaRenta5ta, parametros);
+  const conafovicer = calcularConafovicer(contrato, baseConafovicer, parametros);
+  const renta5ta = calcularRenta5ta(contrato, baseRenta5ta, parametros);
   const otrosDescuentos = 0;
 
   const totalDescuentos = redondear(
     aportePension.total + descuentoSindicato + conafovicer + renta5ta + otrosDescuentos
   );
 
-  const essalud = calcularEssalud(remuneracionAfecta, parametros);
-  const sctr = calcularSCTR(contrato, remuneracionAfecta, parametros);
-  const senati = calcularSenati(contrato, sueldoBasico, remDominical, remFeriado, bonificacionBUC, parametros);
+  const essalud = calcularEssalud(baseEssalud, parametros);
+  const sctr = calcularSCTR(contrato, baseSctr, parametros);
+  const senati = calcularSenati(contrato, baseSenati, parametros);
   // Poliza de vida (D.Leg. N°688 / convenio EsSalud+Vida): es un aporte
   // INTEGRO del empleador - esta prohibido descontarselo al trabajador. Se
   // reclasifico aqui (antes se restaba de total_descuentos por error).
@@ -788,7 +889,15 @@ export function calcularLineaPlanilla(
       neto_pagar: netoPagar,
       detalle_json: {
         remuneracion_computable: remuneracionComputable,
-        remuneracion_afecta: remuneracionAfecta,
+        bases: {
+          essalud: baseEssalud,
+          sctr: baseSctr,
+          senati: baseSenati,
+          onp: baseOnp,
+          afp: baseAfp,
+          renta5ta: baseRenta5ta,
+          conafovicer: baseConafovicer,
+        },
         aporte_pension_detalle: aportePension,
         total_aportes_empleador: redondear(essalud + sctr + senati + seguroVida),
       },

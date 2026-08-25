@@ -101,6 +101,34 @@ export interface ParametrosNormativos {
 export type TasasAFPMensuales = Record<NombreAFP, TasasAFPFondo>;
 export type TablaSalarialMensual = Record<string, CategoriaConfig>;
 
+// Catalogo configurable de conceptos de planilla y su afectacion a
+// aportes/descuentos (ver sql/migracion_014_conceptos_planilla.sql).
+// afecto_renta5ta es NULL en GRATIFICACION y BONIFICACION_EXTRAORDINARIA
+// (no aplica: su efecto en Renta 5ta ya esta incorporado en la formula
+// anual de Empleado, sumarlos aqui tambien duplicaria la retencion).
+export interface ConceptoPlanilla {
+  id: number;
+  codigo: string;
+  nombre: string;
+  descripcion: string | null;
+  orden: number;
+  factor1: number | null;
+  factor1_etiqueta: string | null;
+  factor2: number | null;
+  factor2_etiqueta: string | null;
+  factor3: number | null;
+  factor3_etiqueta: string | null;
+  afecto_essalud: boolean;
+  afecto_sctr: boolean;
+  afecto_senati: boolean;
+  afecto_onp: boolean;
+  afecto_afp: boolean;
+  afecto_renta5ta: boolean | null;
+  afecto_conafovicer: boolean;
+}
+
+export type ConceptosPlanilla = Record<string, ConceptoPlanilla>;
+
 // Entrada de asistencia que llega desde el frontend (tareo del mes) para un contrato
 export interface AsistenciaEntrada {
   contrato_id: number;

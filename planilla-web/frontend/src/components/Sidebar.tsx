@@ -12,7 +12,8 @@ export type Pestana =
   | "parametros"
   | "usuarios"
   | "empresa"
-  | "proyectos";
+  | "proyectos"
+  | "configuracion";
 
 interface ItemMenu {
   id: Pestana;
@@ -73,6 +74,7 @@ export default function Sidebar({
             etiqueta: "Administración",
             items: [
               { id: "parametros" as const, etiqueta: "Parametros" },
+              { id: "configuracion" as const, etiqueta: "Configuración" },
               { id: "proyectos" as const, etiqueta: "Proyectos" },
               { id: "usuarios" as const, etiqueta: "Usuarios" },
               { id: "empresa" as const, etiqueta: "Empresa" },
