@@ -8,6 +8,7 @@ export type Pestana =
   | "calculo"
   | "boletas"
   | "reportes"
+  | "vacaciones"
   | "parametros"
   | "usuarios"
   | "empresa"
@@ -60,6 +61,7 @@ export default function Sidebar({
               { id: "calculo" as const, etiqueta: "Calcular", disabled: !periodoSeleccionado },
               { id: "boletas" as const, etiqueta: "Boletas" },
               { id: "reportes" as const, etiqueta: "Reportes" },
+              { id: "vacaciones" as const, etiqueta: "Vacaciones" },
             ]
           : []),
       ],

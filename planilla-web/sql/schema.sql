@@ -8,6 +8,7 @@
 -- las reemplaza por una versión más completa alineada al motor de cálculo real.
 -- =========================================================================
 
+DROP TABLE IF EXISTS vacaciones_goce CASCADE;
 DROP TABLE IF EXISTS bitacora_planilla CASCADE;
 DROP TABLE IF EXISTS detalle_planilla CASCADE;
 DROP TABLE IF EXISTS periodos_planilla CASCADE;
@@ -283,6 +284,25 @@ CREATE TABLE detalle_planilla (
     UNIQUE (periodo_id, contrato_id)
 );
 CREATE INDEX idx_detalle_periodo ON detalle_planilla(periodo_id);
+
+-- -------------------------------------------------------------------------
+-- vacaciones_goce: registro de vacaciones YA TOMADAS por un trabajador
+-- (solo se usa para Empleados, regimen general). Los "dias ganados" no se
+-- guardan aqui - se calculan en el momento a partir de fecha_ingreso del
+-- contrato + el record de dias trabajados/dominicales/feriados del tareo
+-- de cada periodo (ver routes/vacaciones.ts), para que nunca queden
+-- desactualizados si se corrige un tareo antiguo.
+-- -------------------------------------------------------------------------
+CREATE TABLE vacaciones_goce (
+    id             SERIAL PRIMARY KEY,
+    contrato_id    INT NOT NULL REFERENCES contratos(id) ON DELETE CASCADE,
+    fecha_inicio   DATE NOT NULL,
+    fecha_fin      DATE NOT NULL,
+    dias           INT NOT NULL,
+    observaciones  TEXT,
+    creado_en      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_vacaciones_goce_contrato ON vacaciones_goce(contrato_id);
 
 -- -------------------------------------------------------------------------
 -- bitacora_planilla: auditoría de acciones sensibles

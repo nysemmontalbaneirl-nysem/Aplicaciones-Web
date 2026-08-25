@@ -10,6 +10,7 @@ import Tareo from "./components/Tareo";
 import Calculo from "./components/Calculo";
 import Boletas from "./components/Boletas";
 import Reportes from "./components/Reportes";
+import Vacaciones from "./components/Vacaciones";
 import Parametros from "./components/Parametros";
 import Importar from "./components/Importar";
 import Usuarios from "./components/Usuarios";
@@ -78,6 +79,7 @@ export default function App() {
           )}
           {pestana === "boletas" && puedeCalcular && <Boletas periodoInicial={periodoSeleccionado} />}
           {pestana === "reportes" && puedeCalcular && <Reportes />}
+          {pestana === "vacaciones" && puedeCalcular && <Vacaciones />}
           {pestana === "parametros" && esAdmin && <Parametros />}
           {pestana === "proyectos" && esAdmin && <Proyectos />}
           {pestana === "usuarios" && esAdmin && <Usuarios />}

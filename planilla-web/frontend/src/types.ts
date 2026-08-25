@@ -217,3 +217,38 @@ export interface DatosEmpresa {
   telefono: string | null;
   correo: string | null;
 }
+
+export interface PeriodoVacacional {
+  fecha_inicio: string;
+  fecha_fin: string;
+  dias_computables: number;
+  dias_ganados: number;
+  cumplio_record: boolean;
+}
+
+export interface GoceVacaciones {
+  id: number;
+  contrato_id: number;
+  fecha_inicio: string;
+  fecha_fin: string;
+  dias: number;
+  observaciones: string | null;
+  creado_en: string;
+}
+
+export interface RecordVacacional {
+  contrato: {
+    id: number;
+    numero_documento: string;
+    apellidos_nombres: string;
+    proyecto: string;
+    fecha_ingreso: string;
+    fecha_cese: string | null;
+  };
+  umbral_dias_record: number;
+  periodos: PeriodoVacacional[];
+  total_ganado: number;
+  total_gozado: number;
+  saldo_pendiente: number;
+  goces: GoceVacaciones[];
+}
