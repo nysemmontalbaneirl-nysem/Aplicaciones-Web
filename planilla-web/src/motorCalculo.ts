@@ -41,11 +41,16 @@ function redondear(valor: number): number {
 /** Jornal/sueldo diario del trabajador (equivalente a la columna CG de PLANTILLA). */
 export function calcularJornalDiario(
   contrato: Contrato,
-  tablaCategorias: TablaSalarialMensual
+  tablaCategorias: TablaSalarialMensual,
+  diasPeriodo: number
 ): number {
   if (contrato.categoria_ocupacional === "EMPLEADO") {
-    // Sueldo mensual fijo prorrateado sobre 30 dias
-    return (contrato.sueldo_base ?? 0) / 30;
+    // Sueldo mensual fijo prorrateado sobre los dias REALES del periodo (28,
+    // 29, 30 o 31), no sobre 30 fijo. Verificado contra boleta real de
+    // Empleado de julio (31 dias): Sueldo Basico 80.65 = 2500/31, no
+    // 2500/30=83.33. Asi, un mes trabajado completo siempre paga el sueldo
+    // exacto sin importar cuantos dias tenga ese mes calendario.
+    return (contrato.sueldo_base ?? 0) / diasPeriodo;
   }
   const config = tablaCategorias[contrato.categoria_ocupacional];
   if (!config) {
@@ -246,7 +251,15 @@ function calcularRemuneracionComputableRegular(
   parametros: ParametrosNormativos,
   tablaCategorias: TablaSalarialMensual
 ): number {
-  const sueldoBasicoRegular = redondear(jornalDiario * 30);
+  // Para EMPLEADO, jornalDiario ahora se calcula sobre los dias reales del
+  // periodo (ver calcularJornalDiario), no sobre 30 fijo - por eso aqui se
+  // usa el sueldo_base directo en vez de jornalDiario*30 (que daria un
+  // monto distinto segun el mes tenga 28, 30 o 31 dias, cuando la "remuneracion
+  // regular" para gratificacion/CTS debe ser siempre el sueldo mensual completo).
+  const sueldoBasicoRegular =
+    contrato.categoria_ocupacional === "EMPLEADO"
+      ? Number(contrato.sueldo_base ?? 0)
+      : redondear(jornalDiario * 30);
   const config = tablaCategorias[contrato.categoria_ocupacional];
   const bucRegular =
     esConstruccionCivil(contrato.categoria_ocupacional) && config
@@ -550,7 +563,7 @@ export function calcularLineaPlanilla(
   anio: number,
   cuotaSindicalSemanal: number
 ): ResultadoCalculoLinea {
-  const jornalDiario = calcularJornalDiario(contrato, tablaCategorias);
+  const jornalDiario = calcularJornalDiario(contrato, tablaCategorias, diasPeriodo);
   const sueldoBasico = calcularSueldoBasico(jornalDiario, asistencia, contrato.categoria_ocupacional);
   const remDominical = calcularRemuneracionDominical(jornalDiario, asistencia);
   const remFeriado = calcularRemuneracionFeriado(jornalDiario, asistencia);

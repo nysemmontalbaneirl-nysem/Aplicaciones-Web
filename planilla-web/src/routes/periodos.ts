@@ -18,9 +18,15 @@ periodosRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
     if (!b.anio || !b.mes || !b.fecha_inicio || !b.fecha_fin) {
       throw new ErrorValidacion("anio, mes, fecha_inicio y fecha_fin son obligatorios");
     }
+    // dias_periodo se calcula SIEMPRE en el servidor a partir de las fechas
+    // reales (fecha_fin - fecha_inicio + 1, dias calendario inclusive), sin
+    // importar lo que mande el cliente. Bug real corregido: antes se
+    // guardaba fijo en 30 (tanto en el frontend como el default del
+    // backend), lo que hacia mal el prorrateo de sueldo de Empleados y la
+    // asignacion familiar en cualquier mes de 28, 29 o 31 dias.
     const resultado = await pool.query(
       `INSERT INTO periodos_planilla (anio, mes, quincena, tipo, fecha_inicio, fecha_fin, dias_periodo)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       VALUES ($1,$2,$3,$4,$5,$6, ($6::date - $5::date + 1))
        RETURNING *`,
       [
         b.anio,
@@ -29,7 +35,6 @@ periodosRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
         b.tipo ?? "MENSUAL",
         b.fecha_inicio,
         b.fecha_fin,
-        b.dias_periodo ?? 30,
       ]
     );
     res.status(201).json(resultado.rows[0]);

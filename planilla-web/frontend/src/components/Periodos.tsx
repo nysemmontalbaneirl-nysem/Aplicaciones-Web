@@ -59,13 +59,14 @@ export default function Periodos({ onCargarTareo, onCalcular }: Props) {
     setError(null);
     setCreando(true);
     try {
+      // dias_periodo lo calcula el backend a partir de fecha_inicio/fecha_fin
+      // (dias calendario reales del mes: 28, 29, 30 o 31).
       await apiPost<PeriodoPlanilla>("/periodos", {
         anio,
         mes,
         tipo: "MENSUAL",
         fecha_inicio: primerDia(anio, mes),
         fecha_fin: ultimoDia(anio, mes),
-        dias_periodo: 30,
       });
       await cargar();
     } catch (e) {
