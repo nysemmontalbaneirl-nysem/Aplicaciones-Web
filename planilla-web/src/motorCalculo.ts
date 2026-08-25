@@ -647,12 +647,6 @@ export function calcularLineaPlanilla(
   );
 
   const aportePension = calcularAportePension(contrato, remuneracionAfecta, parametros, afpTasas);
-  // PENDIENTE: en el Excel real (hoja AFPS-SALARIOS, columnas Z:AB "CUOTA SINDICATO")
-  // la cuota sindical NO es un porcentaje del sueldo - es un monto FIJO semanal
-  // que ademas varia por proyecto (ej. P006=S/.10/semana, P010=S/.20/semana,
-  // dividido entre 6 dias -> tarifa diaria). El 2% de aqui es un placeholder
-  // temporal, no confiable. Falta que el usuario defina la tarifa por proyecto
-  // antes de usar este descuento en un calculo real.
   const descuentoSindicato = calcularCuotaSindical(contrato, asistencia, cuotaSindicalSemanal);
   const conafovicer = calcularConafovicer(contrato, sueldoBasico, remDominical, parametros);
   const renta5ta = calcularRenta5ta(contrato, remuneracionAfecta, parametros);
