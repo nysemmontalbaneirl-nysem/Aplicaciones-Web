@@ -219,7 +219,7 @@ export default function Trabajadores() {
         {error && <div className="mensaje-error">{error}</div>}
         {ok && <div className="mensaje-ok">{ok}</div>}
         <form onSubmit={guardarTrabajador}>
-          <h3 style={{ fontSize: "0.9rem", color: "#5a6172", marginBottom: 6 }}>Datos personales</h3>
+          <h3 className="seccion-titulo">Datos personales</h3>
           <div className="form-grid">
             <label>
               DNI
@@ -284,7 +284,7 @@ export default function Trabajadores() {
             </label>
           </div>
 
-          <h3 style={{ fontSize: "0.9rem", color: "#5a6172", marginBottom: 6 }}>Datos bancarios</h3>
+          <h3 className="seccion-titulo">Datos bancarios</h3>
           <div className="form-grid">
             <label>
               Entidad bancaria
@@ -302,7 +302,7 @@ export default function Trabajadores() {
             </label>
           </div>
 
-          <h3 style={{ fontSize: "0.9rem", color: "#5a6172", marginBottom: 6 }}>Datos laborales</h3>
+          <h3 className="seccion-titulo">Datos laborales</h3>
           <div className="form-grid">
             <label>
               Proyecto / obra

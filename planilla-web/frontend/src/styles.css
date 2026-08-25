@@ -7,11 +7,83 @@ body {
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: #f4f5f7;
   color: #1f2430;
+  font-size: 15.5px;
+  line-height: 1.5;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.topbar {
+  flex-shrink: 0;
+  height: 66px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 28px;
+  background: #fff;
+  border-bottom: 1px solid #e3e5ea;
+  box-shadow: 0 1px 2px rgba(20, 24, 33, 0.04);
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
+.topbar-empresa {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.topbar-empresa-nombre {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #1f2430;
+}
+
+.topbar-empresa-ruc {
+  font-size: 0.82rem;
+  color: #5a6172;
+}
+
+.topbar-usuario {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.topbar-usuario-info {
+  text-align: right;
+}
+
+.topbar-usuario-nombre {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #1f2430;
+}
+
+.topbar-usuario-rol {
+  font-size: 0.78rem;
+  color: #5a6172;
+}
+
+.topbar-usuario-acciones {
+  display: flex;
+  gap: 10px;
+}
+
+.topbar-usuario-acciones button {
+  font-size: 0.85rem;
+  padding: 8px 14px;
 }
 
 .app-layout {
   display: flex;
-  min-height: 100vh;
+  flex: 1;
+  min-height: 0;
   align-items: stretch;
 }
 
@@ -26,17 +98,13 @@ body {
 }
 
 .sidebar-titulo {
-  font-size: 1.1rem;
-  font-weight: 700;
-  padding: 0 20px;
-  color: #fff;
-}
-
-.sidebar-subtitulo {
   font-size: 0.8rem;
-  color: #9aa1b0;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   padding: 0 20px;
-  margin-bottom: 24px;
+  color: #9aa1b0;
+  margin-bottom: 16px;
 }
 
 .sidebar-nav {
@@ -107,61 +175,51 @@ body {
   cursor: not-allowed;
 }
 
-.sidebar-usuario {
-  padding: 16px 20px 0;
-  border-top: 1px solid #333949;
-  margin-top: 12px;
-}
-
-.sidebar-usuario-nombre {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: #fff;
-}
-
-.sidebar-usuario-rol {
-  font-size: 0.78rem;
-  color: #9aa1b0;
-  margin-bottom: 10px;
-}
-
-.sidebar-usuario button {
-  width: 100%;
-  margin-bottom: 8px;
-  background: #2a303e;
-  color: #e7e9ee;
-  border: 1px solid #3a4152;
-}
-
 .main-content {
   flex: 1;
   min-width: 0;
-  padding: 24px;
+  padding: 28px;
   max-width: 1200px;
 }
 
 .card {
   background: white;
   border-radius: 10px;
-  padding: 20px;
+  padding: 26px;
   box-shadow: 0 1px 2px rgba(20, 24, 33, 0.06);
-  margin-bottom: 20px;
+  margin-bottom: 24px;
 }
 
 .card h2 {
   margin-top: 0;
-  font-size: 1.1rem;
+  margin-bottom: 18px;
+  font-size: 1.3rem;
+}
+
+.seccion-titulo {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #2f3746;
+  margin: 24px 0 14px;
+  padding-top: 16px;
+  border-top: 1px solid #eef0f3;
+}
+
+.seccion-titulo:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
 }
 
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.88rem;
+  font-size: 0.94rem;
 }
 
 th, td {
   text-align: left;
-  padding: 8px 10px;
+  padding: 11px 13px;
   border-bottom: 1px solid #eef0f3;
 }
 
@@ -177,23 +235,29 @@ tr:hover td {
 
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 12px;
-  margin-bottom: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 18px 22px;
+  margin-bottom: 18px;
 }
 
 label {
   display: flex;
   flex-direction: column;
-  font-size: 0.82rem;
-  color: #5a6172;
-  gap: 4px;
+  font-size: 0.86rem;
+  font-weight: 500;
+  color: #454c5c;
+  gap: 6px;
 }
 
 input, select {
-  padding: 7px 9px;
+  padding: 9px 11px;
   border: 1px solid #d5d9e0;
   border-radius: 6px;
+  font-size: 0.95rem;
+  color: #1f2430;
+}
+
+button {
   font-size: 0.9rem;
 }
 
@@ -201,10 +265,10 @@ button.primario {
   background: #2f6fed;
   color: white;
   border: none;
-  padding: 9px 18px;
+  padding: 10px 20px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 0.9rem;
+  font-size: 0.92rem;
   font-weight: 600;
 }
 

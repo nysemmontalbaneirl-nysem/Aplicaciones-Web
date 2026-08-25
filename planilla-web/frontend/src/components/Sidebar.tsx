@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Usuario } from "../types";
 
 export type Pestana =
   | "trabajadores"
@@ -27,25 +26,19 @@ interface GrupoMenu {
 }
 
 interface Props {
-  usuario: Usuario;
   pestana: Pestana;
   setPestana: (p: Pestana) => void;
   periodoSeleccionado: boolean;
   esAdmin: boolean;
   puedeCalcular: boolean;
-  onCambiarPassword: () => void;
-  onCerrarSesion: () => void;
 }
 
 export default function Sidebar({
-  usuario,
   pestana,
   setPestana,
   periodoSeleccionado,
   esAdmin,
   puedeCalcular,
-  onCambiarPassword,
-  onCerrarSesion,
 }: Props) {
   const grupos: GrupoMenu[] = [
     {
@@ -92,8 +85,7 @@ export default function Sidebar({
 
   return (
     <div className="sidebar">
-      <div className="sidebar-titulo">Sistema de Planillas</div>
-      <div className="sidebar-subtitulo">JHCR</div>
+      <div className="sidebar-titulo">Menú</div>
 
       <nav className="sidebar-nav">
         {grupos.map((grupo) => {
@@ -127,17 +119,6 @@ export default function Sidebar({
           );
         })}
       </nav>
-
-      <div className="sidebar-usuario">
-        <div className="sidebar-usuario-nombre">{usuario.nombre}</div>
-        <div className="sidebar-usuario-rol">{usuario.rol}</div>
-        <button type="button" onClick={onCambiarPassword}>
-          Cambiar contraseña
-        </button>
-        <button type="button" onClick={onCerrarSesion}>
-          Cerrar sesión
-        </button>
-      </div>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useAuth } from "./AuthContext";
 import Login from "./components/Login";
 import CambiarPassword from "./components/CambiarPassword";
+import Topbar from "./components/Topbar";
 import Sidebar, { Pestana } from "./components/Sidebar";
 import Trabajadores from "./components/Trabajadores";
 import Periodos from "./components/Periodos";
@@ -45,38 +46,43 @@ export default function App() {
   const puedeCalcular = esAdmin || usuario.rol === "RESPONSABLE_PLANILLA";
 
   return (
-    <div className="app-layout">
-      <Sidebar
+    <div className="app-shell">
+      <Topbar
         usuario={usuario}
-        pestana={pestana}
-        setPestana={setPestana}
-        periodoSeleccionado={!!periodoSeleccionado}
-        esAdmin={esAdmin}
-        puedeCalcular={puedeCalcular}
         onCambiarPassword={() => setCambiandoPassword((v) => !v)}
         onCerrarSesion={cerrarSesion}
       />
 
-      <div className="main-content">
-        {cambiandoPassword && <CambiarPassword onListo={() => setCambiandoPassword(false)} />}
+      <div className="app-layout">
+        <Sidebar
+          pestana={pestana}
+          setPestana={setPestana}
+          periodoSeleccionado={!!periodoSeleccionado}
+          esAdmin={esAdmin}
+          puedeCalcular={puedeCalcular}
+        />
 
-        {pestana === "trabajadores" && <Trabajadores />}
-        {pestana === "importar" && esAdmin && <Importar />}
-        {pestana === "periodos" && (
-          <Periodos onCargarTareo={irATareo} onCalcular={puedeCalcular ? irACalculo : undefined} />
-        )}
-        {pestana === "tareo" && periodoSeleccionado && (
-          <Tareo periodo={periodoSeleccionado} onIrACalcular={() => setPestana("calculo")} />
-        )}
-        {pestana === "calculo" && periodoSeleccionado && puedeCalcular && (
-          <Calculo periodo={periodoSeleccionado} onVerBoletas={() => setPestana("boletas")} />
-        )}
-        {pestana === "boletas" && puedeCalcular && <Boletas periodoInicial={periodoSeleccionado} />}
-        {pestana === "reportes" && puedeCalcular && <Reportes />}
-        {pestana === "parametros" && esAdmin && <Parametros />}
-        {pestana === "proyectos" && esAdmin && <Proyectos />}
-        {pestana === "usuarios" && esAdmin && <Usuarios />}
-        {pestana === "empresa" && esAdmin && <Empresa />}
+        <div className="main-content">
+          {cambiandoPassword && <CambiarPassword onListo={() => setCambiandoPassword(false)} />}
+
+          {pestana === "trabajadores" && <Trabajadores />}
+          {pestana === "importar" && esAdmin && <Importar />}
+          {pestana === "periodos" && (
+            <Periodos onCargarTareo={irATareo} onCalcular={puedeCalcular ? irACalculo : undefined} />
+          )}
+          {pestana === "tareo" && periodoSeleccionado && (
+            <Tareo periodo={periodoSeleccionado} onIrACalcular={() => setPestana("calculo")} />
+          )}
+          {pestana === "calculo" && periodoSeleccionado && puedeCalcular && (
+            <Calculo periodo={periodoSeleccionado} onVerBoletas={() => setPestana("boletas")} />
+          )}
+          {pestana === "boletas" && puedeCalcular && <Boletas periodoInicial={periodoSeleccionado} />}
+          {pestana === "reportes" && puedeCalcular && <Reportes />}
+          {pestana === "parametros" && esAdmin && <Parametros />}
+          {pestana === "proyectos" && esAdmin && <Proyectos />}
+          {pestana === "usuarios" && esAdmin && <Usuarios />}
+          {pestana === "empresa" && esAdmin && <Empresa />}
+        </div>
       </div>
     </div>
   );
