@@ -398,7 +398,15 @@ export function calcularAportePension(
     throw new Error(`No hay tasas AFP configuradas para '${contrato.afp_nombre}' en tasas_afp_mensuales para este periodo`);
   }
   const aporteObligatorio = redondear(remuneracionAfecta * tasas.aporte_obligatorio);
-  const comisionFlujo = redondear(remuneracionAfecta * tasas.comision_flujo);
+  // La comision de flujo (% sobre la remuneracion del periodo) SOLO aplica
+  // a afiliados en modalidad Flujo puro (sistema_comision = "F"). En Saldo
+  // la AFP cobra directo del fondo acumulado (no es un descuento de
+  // planilla, y este sistema no tiene ese saldo); en Mixta la tasa de
+  // flujo va bajando por cronograma hasta llegar a 0% - sin esa tabla no se
+  // puede calcular con certeza, asi que tambien se deja en 0. Verificado
+  // contra boletas reales: "Comisión Mixta/Flujo" sale en blanco.
+  const comisionFlujo =
+    contrato.sistema_comision === "F" ? redondear(remuneracionAfecta * tasas.comision_flujo) : 0;
   const primaSeguro = redondear(remuneracionAfecta * tasas.prima_seguro);
   const total = redondear(aporteObligatorio + comisionFlujo + primaSeguro);
   return { total, onp: 0, aporteObligatorio, comisionFlujo, primaSeguro };
