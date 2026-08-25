@@ -21,6 +21,12 @@ function calcVacaciones(jornal: number): number {
 function calcCTS(jornal: number): number {
   return jornal * 0.15;
 }
+// Gratificacion diaria = 40 jornales basicos / 210 dias (RD N°777-87-DR-LIM),
+// verificada contra boletas reales - ya no se guarda como campo editable
+// aparte porque quedaba en 0 por olvido en categorias/periodos nuevos.
+function calcGratificacion(jornal: number): number {
+  return jornal * (40 / 210);
+}
 function calcHoraExtra(jornal: number, categoria: string): { tramo1: number; tramo2: number; etiqueta: string } {
   const cc = esConstruccionCivil(categoria);
   const jornalHora = jornal / 8;
@@ -392,7 +398,7 @@ function SeccionMensual() {
                   <th style={{ background: "#f0f1f4" }}>Dominical (S/.)</th>
                   <th style={{ background: "#f0f1f4" }}>Vacaciones 10% (S/.)</th>
                   <th style={{ background: "#f0f1f4" }}>CTS 15% (S/.)</th>
-                  <th>Gratificación (S/.)</th>
+                  <th style={{ background: "#f0f1f4" }}>Gratificación (S/.)</th>
                   <th style={{ background: "#f0f1f4" }}>H.E. tramo 1 (S/.)</th>
                   <th style={{ background: "#f0f1f4" }}>H.E. tramo 2 (S/.)</th>
                   <th style={{ background: "#f0f1f4" }}>Recargo H.E.</th>
@@ -430,10 +436,7 @@ function SeccionMensual() {
                       <td style={{ background: "#f7f8fa", color: "#5a6172" }}>{calcDominical(c.jornal_basico).toFixed(2)}</td>
                       <td style={{ background: "#f7f8fa", color: "#5a6172" }}>{calcVacaciones(c.jornal_basico).toFixed(2)}</td>
                       <td style={{ background: "#f7f8fa", color: "#5a6172" }}>{calcCTS(c.jornal_basico).toFixed(2)}</td>
-                      <td>
-                        <input type="number" step="0.01" value={c.gratificacion_diaria}
-                          onChange={(e) => actualizarCategoria(cat, "gratificacion_diaria", e.target.value)} />
-                      </td>
+                      <td style={{ background: "#f7f8fa", color: "#5a6172" }}>{calcGratificacion(c.jornal_basico).toFixed(2)}</td>
                       <td style={{ background: "#f7f8fa", color: "#5a6172" }}>{horaExtra.tramo1.toFixed(2)}</td>
                       <td style={{ background: "#f7f8fa", color: "#5a6172" }}>{horaExtra.tramo2.toFixed(2)}</td>
                       <td style={{ background: "#f7f8fa", color: "#5a6172" }}>{horaExtra.etiqueta}</td>

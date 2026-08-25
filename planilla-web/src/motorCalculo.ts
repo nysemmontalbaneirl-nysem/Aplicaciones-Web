@@ -265,10 +265,19 @@ function calcularRemuneracionComputableRegular(
  *
  * Construccion civil (RD N°777-87-DR-LIM): NO es un pago unico en julio o
  * diciembre. Se devenga y paga EN CADA PERIODO, en proporcion a los dias
- * trabajados + dominicales + feriados de ese periodo, usando la tasa diaria
- * de la tabla salarial (jornal x 40/210 = tabla_categorias.gratificacion_diaria).
- * Verificado exacto (o casi exacto, por redondeo de la tasa diaria) contra
- * las boletas reales de Operario, Oficial, Peon y Operario Equipo Pesado.
+ * trabajados + dominicales + feriados de ese periodo, usando una tasa
+ * diaria = jornal basico x 40/210 (40 jornales basicos repartidos entre 210
+ * dias = 30 dias x 7 meses). Verificado exacto contra la tabla salarial de
+ * la Federacion de Trabajadores (Operario 89.30 -> 17.01/dia, Oficial
+ * 69.75 -> 13.29/dia, Peon 62.80 -> 11.96/dia) y contra boletas reales de
+ * las 4 categorias de obrero.
+ *
+ * IMPORTANTE: el factor se CALCULA a partir del jornal basico de la tabla
+ * salarial del periodo, no se lee de un campo aparte que haya que editar a
+ * mano - asi no se puede quedar desactualizado ni en 0 por olvido al cargar
+ * una tabla salarial nueva (bug real encontrado: el campo
+ * tabla_categorias.gratificacion_diaria por defecto queda en 0 en
+ * categorias/periodos nuevos si el administrador no lo llena aparte).
  *
  * EMPLEADO (regimen general): se mantiene la formula anterior, pago unico
  * en julio/diciembre = (remuneracion computable / 6) x meses completos
@@ -277,17 +286,16 @@ function calcularRemuneracionComputableRegular(
 export function calcularGratificacion(
   contrato: Contrato,
   asistencia: AsistenciaEntrada,
-  tablaCategorias: TablaSalarialMensual,
+  jornalDiario: number,
   remuneracionComputable: number,
   mes: number,
   anio: number,
   fechaIngreso: string
 ): number {
   if (esConstruccionCivil(contrato.categoria_ocupacional)) {
-    const config = tablaCategorias[contrato.categoria_ocupacional];
-    if (!config || !config.gratificacion_diaria) return 0;
+    const gratificacionDiaria = redondear(jornalDiario * (40 / 210));
     const diasComputables = asistencia.dias_trabajados + asistencia.dias_dominical + asistencia.dias_feriado;
-    return redondear(config.gratificacion_diaria * diasComputables);
+    return redondear(gratificacionDiaria * diasComputables);
   }
 
   if (mes !== 7 && mes !== 12) return 0;
@@ -575,7 +583,7 @@ export function calcularLineaPlanilla(
   const gratificacion = calcularGratificacion(
     contrato,
     asistencia,
-    tablaCategorias,
+    jornalDiario,
     remuneracionComputableRegular,
     mes,
     anio,
