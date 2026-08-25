@@ -447,10 +447,12 @@ planillaRouter.post(
     const asistenciaResult = await pool.query(
       `SELECT a.contrato_id, a.dias_trabajados, a.dias_dominical, a.dias_feriado, a.dias_falta,
               a.horas_extra_25, a.horas_extra_35, a.horas_extra_100,
-              c.*, e.numero_hijos, e.numero_documento, e.apellidos_nombres
+              c.*, e.numero_hijos, e.numero_documento, e.apellidos_nombres,
+              COALESCE(p.cuota_sindical_semanal, 0) AS cuota_sindical_semanal
        FROM asistencia_periodo a
        JOIN contratos c ON c.id = a.contrato_id
        JOIN empleados e ON e.id = c.empleado_id
+       LEFT JOIN proyectos p ON p.nombre = c.proyecto
        WHERE a.periodo_id = $1 ${esAdminCalculo ? "" : "AND c.proyecto = ANY($2::text[])"}`,
       esAdminCalculo ? [req.params.id] : [req.params.id, req.usuario!.proyectos]
     );
@@ -512,7 +514,8 @@ planillaRouter.post(
           afpTasas,
           periodo.dias_periodo,
           periodo.mes,
-          periodo.anio
+          periodo.anio,
+          Number(fila.cuota_sindical_semanal)
         );
 
         const r = await cliente.query(

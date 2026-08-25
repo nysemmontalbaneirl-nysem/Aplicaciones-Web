@@ -43,11 +43,16 @@ CREATE TABLE usuarios (
 -- contratos ya migrados), pero debe coincidir con proyectos.nombre.
 -- -------------------------------------------------------------------------
 CREATE TABLE proyectos (
-    id          SERIAL PRIMARY KEY,
-    nombre      VARCHAR(200) NOT NULL UNIQUE, -- debe coincidir con contratos.proyecto
-    ubicacion   VARCHAR(200),
-    estado      VARCHAR(20) NOT NULL DEFAULT 'ACTIVO', -- ACTIVO | CERRADO
-    creado_en   TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                      SERIAL PRIMARY KEY,
+    nombre                  VARCHAR(200) NOT NULL UNIQUE, -- debe coincidir con contratos.proyecto
+    ubicacion               VARCHAR(200),
+    estado                  VARCHAR(20) NOT NULL DEFAULT 'ACTIVO', -- ACTIVO | CERRADO
+    -- Cuota sindical: NO es un porcentaje del sueldo, es una tarifa FIJA
+    -- semanal que varia por proyecto (verificado contra boletas reales:
+    -- P012=S/15/semana, P009=S/10/semana, P013=S/20/semana). Se divide entre
+    -- 6 dias para la tarifa diaria, y se multiplica por los dias trabajados.
+    cuota_sindical_semanal  NUMERIC(10,2) NOT NULL DEFAULT 0,
+    creado_en               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- -------------------------------------------------------------------------

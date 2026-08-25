@@ -64,9 +64,11 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles }:
   const aportesEmpleador = filasSinCero([
     { etiqueta: "ESSALUD", valor: detalle.essalud },
     { etiqueta: "SCTR salud", valor: detalle.sctr },
-    // Poliza de vida Ley (D.Leg 688): aporte integro del empleador, nunca un
-    // descuento al trabajador.
-    { etiqueta: "Póliza de vida ley", valor: detalle.seguro_vida },
+    // Poliza de vida (D.Leg 688 / convenio EsSalud+Vida): aporte integro del
+    // empleador, nunca un descuento al trabajador. Etiqueta "Essalud + Vida"
+    // verificada contra boletas reales (linea poblada; "Poliza Vida Ley"
+    // sale en blanco en las 5 boletas revisadas).
+    { etiqueta: "Essalud + Vida", valor: detalle.seguro_vida },
     { etiqueta: "Fondo de Capacitación", valor: detalle.senati },
   ]);
 

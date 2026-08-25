@@ -504,6 +504,25 @@ export function calcularRenta5ta(
   return redondear(impuestoAnual / 14); // se prorratea entre 12 sueldos + 2 gratificaciones
 }
 
+/**
+ * Cuota sindical: NO es un porcentaje del sueldo - es una tarifa FIJA
+ * semanal que se define por proyecto/obra (ver proyectos.cuota_sindical_semanal
+ * en el catalogo de Proyectos). Se divide entre 6 dias para la tarifa
+ * diaria y se multiplica por los dias trabajados del periodo. Solo se
+ * descuenta a los trabajadores marcados como sindicalizados. Verificado
+ * exacto contra boletas reales de 3 proyectos distintos (P012=S/15/semana,
+ * P009=S/10/semana, P013=S/20/semana).
+ */
+export function calcularCuotaSindical(
+  contrato: Contrato,
+  asistencia: AsistenciaEntrada,
+  cuotaSindicalSemanal: number
+): number {
+  if (!contrato.sindicalizado || !cuotaSindicalSemanal) return 0;
+  const cuotaDiaria = cuotaSindicalSemanal / 6;
+  return redondear(cuotaDiaria * asistencia.dias_trabajados);
+}
+
 export interface ResultadoCalculoLinea {
   detalle: Omit<DetallePlanilla, "id" | "periodo_id" | "detalle_json"> & {
     detalle_json: Record<string, unknown>;
@@ -520,7 +539,8 @@ export function calcularLineaPlanilla(
   afpTasas: TasasAFPMensuales,
   diasPeriodo: number,
   mes: number,
-  anio: number
+  anio: number,
+  cuotaSindicalSemanal: number
 ): ResultadoCalculoLinea {
   const jornalDiario = calcularJornalDiario(contrato, tablaCategorias);
   const sueldoBasico = calcularSueldoBasico(jornalDiario, asistencia, contrato.categoria_ocupacional);
@@ -612,7 +632,7 @@ export function calcularLineaPlanilla(
   // dividido entre 6 dias -> tarifa diaria). El 2% de aqui es un placeholder
   // temporal, no confiable. Falta que el usuario defina la tarifa por proyecto
   // antes de usar este descuento en un calculo real.
-  const descuentoSindicato = contrato.sindicalizado ? redondear(remuneracionAfecta * 0.02) : 0; // VALIDAR tasa real
+  const descuentoSindicato = calcularCuotaSindical(contrato, asistencia, cuotaSindicalSemanal);
   const conafovicer = calcularConafovicer(contrato, sueldoBasico, remDominical, parametros);
   const renta5ta = calcularRenta5ta(contrato, remuneracionAfecta, parametros);
   const otrosDescuentos = 0;

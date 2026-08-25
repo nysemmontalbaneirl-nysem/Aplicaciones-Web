@@ -200,6 +200,7 @@ export interface Proyecto {
   nombre: string;
   ubicacion: string | null;
   estado: "ACTIVO" | "CERRADO";
+  cuota_sindical_semanal: number;
 }
 
 export interface DatosEmpresa {

@@ -22,8 +22,8 @@ proyectosRouter.post(
       const b = req.body;
       if (!b.nombre?.trim()) throw new ErrorValidacion("nombre es obligatorio");
       const r = await pool.query(
-        "INSERT INTO proyectos (nombre, ubicacion) VALUES ($1, $2) RETURNING *",
-        [b.nombre.trim(), b.ubicacion ?? null]
+        "INSERT INTO proyectos (nombre, ubicacion, cuota_sindical_semanal) VALUES ($1, $2, $3) RETURNING *",
+        [b.nombre.trim(), b.ubicacion ?? null, b.cuota_sindical_semanal ?? 0]
       );
       res.status(201).json(r.rows[0]);
     } catch (err) {
@@ -44,8 +44,8 @@ proyectosRouter.put(
   asyncHandler(async (req: Request, res: Response) => {
     const b = req.body;
     const r = await pool.query(
-      "UPDATE proyectos SET nombre = $1, ubicacion = $2, estado = $3 WHERE id = $4 RETURNING *",
-      [b.nombre, b.ubicacion ?? null, b.estado ?? "ACTIVO", req.params.id]
+      "UPDATE proyectos SET nombre = $1, ubicacion = $2, estado = $3, cuota_sindical_semanal = $4 WHERE id = $5 RETURNING *",
+      [b.nombre, b.ubicacion ?? null, b.estado ?? "ACTIVO", b.cuota_sindical_semanal ?? 0, req.params.id]
     );
     if (r.rowCount === 0) {
       return res.status(404).json({ error: "Proyecto no encontrado" });

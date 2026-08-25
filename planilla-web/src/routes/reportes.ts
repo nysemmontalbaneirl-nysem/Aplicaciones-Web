@@ -153,8 +153,11 @@ async function construirFilasReporte(periodoId: string, usuario: NonNullable<Req
         Number(d.neto_pagar),
         Number(d.essalud),
         Number(d.sctr),
-        "", // Essalud + Vida (poliza adicional por obra > 250 UIT, aporte empleador) - no calculado, distinto de la Poliza de Vida Ley de la columna POL.SEG
-        Number(d.seguro_vida), // POL.SEG = Poliza de Vida Ley (D.Leg 688), aporte integro del empleador
+        // Verificado contra boletas reales: la linea poblada (S/5 fijo) es
+        // "Essalud + Vida", no "Poliza Vida Ley" (esa sale en blanco en las
+        // 5 boletas revisadas) - por eso va en esta columna y no en POL.SEG.
+        Number(d.seguro_vida),
+        "", // POL.SEG (Poliza Vida Ley) - no calculado, sale en blanco tambien en las boletas reales
         Number(d.senati),
         Number(detalleJson.total_aportes_empleador ?? 0),
       ];
