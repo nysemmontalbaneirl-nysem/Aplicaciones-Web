@@ -112,7 +112,13 @@ export function calcularHorasExtra(
   return redondear(importeTramo1 + importeTramo2 + importeTramo3);
 }
 
-/** Asignacion familiar: monto fijo mensual si tiene >=1 hijo, prorrateado por dias trabajados. */
+/**
+ * Asignacion familiar (RMV): solo aplica a EMPLEADO (regimen general). Los
+ * trabajadores de construccion civil NO la reciben - en su lugar tienen la
+ * asignacion por escolaridad (ver calcularAsignacionEscolar). Verificado
+ * contra boletas reales: el total de ingresos de obreros con hijos cuadra
+ * exacto sin esta linea.
+ */
 export function calcularAsignacionFamiliar(
   contrato: Contrato,
   numeroHijos: number,
@@ -120,9 +126,67 @@ export function calcularAsignacionFamiliar(
   parametros: ParametrosNormativos,
   diasPeriodo: number
 ): number {
+  if (esConstruccionCivil(contrato.categoria_ocupacional)) return 0;
   if (numeroHijos < 1) return 0;
   const proporcion = Math.min(asistencia.dias_trabajados / diasPeriodo, 1);
   return redondear(parametros.asignacion_familiar * proporcion);
+}
+
+/**
+ * Asignacion por escolaridad (solo construccion civil): 30 jornales basicos
+ * al ano por cada hijo (Resolucion Directoral N°100-72-DPRTESS), es decir
+ * jornal/12 por dia trabajado y por hijo. Verificado exacto contra boletas
+ * reales (Oficial 1 hijo, Operario Equipo Pesado 3 hijos).
+ */
+export function calcularAsignacionEscolar(
+  jornalDiario: number,
+  numeroHijos: number,
+  asistencia: AsistenciaEntrada,
+  categoria: CategoriaOcupacional
+): number {
+  if (!esConstruccionCivil(categoria) || numeroHijos < 1) return 0;
+  // A diferencia de vacaciones/CTS/movilidad, la tasa diaria NO se redondea
+  // antes de multiplicar - verificado contra boletas reales (redondear aqui
+  // producia una diferencia sistematica de unos centimos).
+  const escolaridadDiaria = jornalDiario / 12;
+  return redondear(escolaridadDiaria * asistencia.dias_trabajados * numeroHijos);
+}
+
+/**
+ * Bonificacion por Alta Especializacion (BAE): solo operarios especializados
+ * (OPERARIO_EP/EM/TP), porcentaje del jornal segun tabla_categorias.bae.
+ * Verificado exacto contra boleta real de Operario Equipo Pesado (BAE 10%).
+ */
+export function calcularBonificacionBAE(
+  contrato: Contrato,
+  jornalDiario: number,
+  asistencia: AsistenciaEntrada,
+  tablaCategorias: TablaSalarialMensual
+): number {
+  if (!esConstruccionCivil(contrato.categoria_ocupacional)) return 0;
+  const config = tablaCategorias[contrato.categoria_ocupacional];
+  if (!config || !config.bae) return 0;
+  const baeDiaria = redondear(jornalDiario * config.bae);
+  return redondear(baeDiaria * asistencia.dias_trabajados);
+}
+
+/**
+ * Bonificacion por movilidad acumulada (solo construccion civil): monto fijo
+ * por dia EFECTIVAMENTE trabajado (no se paga en dominicales/feriados no
+ * laborados), tomado de tabla_categorias.movilidad_acumulada. Verificado
+ * contra boletas reales: usa los dias trabajados redondeados al entero mas
+ * cercano (22.94 -> 23, 21.88 -> 22, 24.00 -> 24).
+ */
+export function calcularBonificacionMovilidad(
+  contrato: Contrato,
+  asistencia: AsistenciaEntrada,
+  tablaCategorias: TablaSalarialMensual
+): number {
+  if (!esConstruccionCivil(contrato.categoria_ocupacional)) return 0;
+  const config = tablaCategorias[contrato.categoria_ocupacional];
+  if (!config || !config.movilidad_acumulada) return 0;
+  const diasRedondeados = Math.round(asistencia.dias_trabajados);
+  return redondear(config.movilidad_acumulada * diasRedondeados);
 }
 
 /** Bonificacion Unificada de Construccion (BUC) - solo categorias de construccion civil. */
@@ -198,19 +262,34 @@ function calcularRemuneracionComputableRegular(
 
 /**
  * Gratificacion (Fiestas Patrias / Navidad).
- * Formula legal: (remuneracion computable / 6) x meses completos laborados
- * en el semestre (jul-dic o ene-jun). Se calcula solo cuando el periodo
- * corresponde a julio o diciembre; el resto de meses retorna 0.
- * mesesComputables se calcula segun la fecha de ingreso real del contrato
- * (un trabajador que ingreso el mismo mes de pago no tiene meses del
- * semestre anterior, por lo que le corresponde 0).
+ *
+ * Construccion civil (RD N°777-87-DR-LIM): NO es un pago unico en julio o
+ * diciembre. Se devenga y paga EN CADA PERIODO, en proporcion a los dias
+ * trabajados + dominicales + feriados de ese periodo, usando la tasa diaria
+ * de la tabla salarial (jornal x 40/210 = tabla_categorias.gratificacion_diaria).
+ * Verificado exacto (o casi exacto, por redondeo de la tasa diaria) contra
+ * las boletas reales de Operario, Oficial, Peon y Operario Equipo Pesado.
+ *
+ * EMPLEADO (regimen general): se mantiene la formula anterior, pago unico
+ * en julio/diciembre = (remuneracion computable / 6) x meses completos
+ * laborados en el semestre.
  */
 export function calcularGratificacion(
+  contrato: Contrato,
+  asistencia: AsistenciaEntrada,
+  tablaCategorias: TablaSalarialMensual,
   remuneracionComputable: number,
   mes: number,
   anio: number,
   fechaIngreso: string
 ): number {
+  if (esConstruccionCivil(contrato.categoria_ocupacional)) {
+    const config = tablaCategorias[contrato.categoria_ocupacional];
+    if (!config || !config.gratificacion_diaria) return 0;
+    const diasComputables = asistencia.dias_trabajados + asistencia.dias_dominical + asistencia.dias_feriado;
+    return redondear(config.gratificacion_diaria * diasComputables);
+  }
+
   if (mes !== 7 && mes !== 12) return 0;
   const mesesComputables =
     mes === 7
@@ -221,18 +300,47 @@ export function calcularGratificacion(
 }
 
 /**
- * CTS (Compensacion por Tiempo de Servicios), depositada en mayo y noviembre.
- * Formula legal simplificada: remuneracion computable / 12 x meses del
- * semestre + 1/6 de la gratificacion del semestre.
- * VALIDAR contra el detalle real de RECORD_DIAS_CTS del Excel.
+ * Bonificacion Extraordinaria Ley N°29351/30334: 9% de la gratificacion, se
+ * paga en efectivo AL TRABAJADOR en vez de que ese 9% vaya a EsSalud (la
+ * gratificacion esta exonerada de ese aporte). Aplica a cualquier categoria
+ * que reciba gratificacion. Verificado exacto (9.00%) contra las 5 boletas
+ * reales, incluyendo la de un Empleado (regimen general).
+ */
+export function calcularBonificacionExtraordinaria(gratificacion: number): number {
+  if (gratificacion <= 0) return 0;
+  return redondear(gratificacion * 0.09);
+}
+
+/**
+ * CTS (Compensacion por Tiempo de Servicios).
+ *
+ * Construccion civil (RSD N°450-90-2SD-NEC): NO es un deposito semestral en
+ * mayo/noviembre. Es el 15% de los jornales basicos (dias trabajados) que
+ * se va devengando EN CADA PERIODO, y se paga recien en la liquidacion al
+ * cese del trabajador (por eso en el sistema se acumula como una linea mas
+ * de la boleta, igual que hace la empresa). Verificado exacto contra las
+ * boletas reales usando la tasa 15% redondeada a 2 decimales (ej. jornal
+ * 89.30 -> 13.40/dia, no 13.395/dia).
+ *
+ * EMPLEADO (regimen general): se mantiene la formula anterior, deposito en
+ * mayo/noviembre = remuneracion computable/12 x meses del semestre + 1/6 de
+ * la gratificacion del semestre.
  */
 export function calcularCTS(
+  contrato: Contrato,
+  jornalDiario: number,
+  asistencia: AsistenciaEntrada,
   remuneracionComputable: number,
   gratificacionSemestre: number,
   mes: number,
   anio: number,
   fechaIngreso: string
 ): number {
+  if (esConstruccionCivil(contrato.categoria_ocupacional)) {
+    const ctsDiaria = redondear(jornalDiario * 0.15);
+    return redondear(ctsDiaria * asistencia.dias_trabajados);
+  }
+
   if (mes !== 5 && mes !== 11) return 0;
   // Semestre CTS mayo: nov(anio-1) a abr(anio). Semestre CTS noviembre: may-oct(anio).
   const mesesComputables =
@@ -244,6 +352,23 @@ export function calcularCTS(
   const base = (remuneracionComputable / 12) * Math.min(6, mesesComputables);
   const sextaGrati = gratificacionSemestre / 6;
   return redondear(base + sextaGrati);
+}
+
+/**
+ * Vacaciones (compensacion vacacional, solo construccion civil): 10% del
+ * jornal basico por dia trabajado (RSD N°450-90-2SD-NEC), devengado cada
+ * periodo igual que la CTS. Verificado exacto contra las boletas reales.
+ * EMPLEADO: el modulo de record de vacaciones (gozadas/truncas) del regimen
+ * general todavia no esta implementado (queda en 0, como antes).
+ */
+export function calcularVacaciones(
+  contrato: Contrato,
+  jornalDiario: number,
+  asistencia: AsistenciaEntrada
+): number {
+  if (!esConstruccionCivil(contrato.categoria_ocupacional)) return 0;
+  const vacacionesDiaria = redondear(jornalDiario * 0.10);
+  return redondear(vacacionesDiaria * asistencia.dias_trabajados);
 }
 
 export interface DetalleAportePension {
@@ -297,24 +422,38 @@ export function calcularSCTR(
   return redondear(remuneracionAfecta * parametros.tasa_sctr_salud);
 }
 
-/** SENATI - aporte del empleador sobre remuneracion de construccion civil. */
+/**
+ * "Fondo Capacitacion" (campo senati) - aporte del empleador sobre
+ * construccion civil. Base verificada contra boletas reales = jornal +
+ * dominical + feriado (SIN horas extra, BUC, BAE ni vacaciones) - distinta
+ * a la base amplia (remuneracionAfecta) que se usa para pension/EsSalud.
+ */
 export function calcularSenati(
   contrato: Contrato,
-  remuneracionAfecta: number,
+  sueldoBasico: number,
+  remuneracionDominical: number,
+  remuneracionFeriado: number,
   parametros: ParametrosNormativos
 ): number {
   if (!esConstruccionCivil(contrato.categoria_ocupacional)) return 0;
-  return redondear(remuneracionAfecta * parametros.tasa_senati);
+  const base = sueldoBasico + remuneracionDominical + remuneracionFeriado;
+  return redondear(base * parametros.tasa_senati);
 }
 
-/** CONAFOVICER - descuento al trabajador de construccion civil (no EMPLEADO). */
+/**
+ * CONAFOVICER - descuento al trabajador de construccion civil (no EMPLEADO).
+ * Base verificada contra boletas reales = jornal + dominical (SIN feriado,
+ * horas extra, BUC, BAE ni vacaciones).
+ */
 export function calcularConafovicer(
   contrato: Contrato,
-  remuneracionAfecta: number,
+  sueldoBasico: number,
+  remuneracionDominical: number,
   parametros: ParametrosNormativos
 ): number {
   if (!esConstruccionCivil(contrato.categoria_ocupacional)) return 0;
-  return redondear(remuneracionAfecta * parametros.tasa_conafovicer);
+  const base = sueldoBasico + remuneracionDominical;
+  return redondear(base * parametros.tasa_conafovicer);
 }
 
 /**
@@ -388,12 +527,16 @@ export function calcularLineaPlanilla(
     diasPeriodo
   );
   const bonificacionBUC = calcularBonificacionBUC(contrato, jornalDiario, asistencia, tablaCategorias);
+  const asignacionEscolaridad = calcularAsignacionEscolar(jornalDiario, numeroHijos, asistencia, contrato.categoria_ocupacional);
+  const bonificacionBAE = calcularBonificacionBAE(contrato, jornalDiario, asistencia, tablaCategorias);
+  const bonificacionMovilidad = calcularBonificacionMovilidad(contrato, asistencia, tablaCategorias);
 
   // Remuneracion computable del periodo actual (solo para mostrar en el detalle)
   const remuneracionComputable = sueldoBasico + remDominical + asignacionFamiliar + bonificacionBUC;
-  // Gratificacion y CTS usan el sueldo de un mes COMPLETO, no el de este
-  // periodo (que puede estar prorrateado por dias trabajados/faltas) - ver
-  // calcularRemuneracionComputableRegular.
+  // Para EMPLEADO (regimen general), gratificacion/CTS usan el sueldo de un
+  // mes COMPLETO, no el de este periodo (que puede estar prorrateado por
+  // dias trabajados/faltas) - ver calcularRemuneracionComputableRegular.
+  // Construccion civil no usa este valor (ver calcularGratificacion/CTS).
   const remuneracionComputableRegular = calcularRemuneracionComputableRegular(
     contrato,
     jornalDiario,
@@ -401,9 +544,27 @@ export function calcularLineaPlanilla(
     parametros,
     tablaCategorias
   );
-  const gratificacion = calcularGratificacion(remuneracionComputableRegular, mes, anio, contrato.fecha_ingreso);
-  const cts = calcularCTS(remuneracionComputableRegular, gratificacion, mes, anio, contrato.fecha_ingreso);
-  const vacaciones = 0; // TODO: calcular record de vacaciones truncas/gozadas (Fase 2)
+  const gratificacion = calcularGratificacion(
+    contrato,
+    asistencia,
+    tablaCategorias,
+    remuneracionComputableRegular,
+    mes,
+    anio,
+    contrato.fecha_ingreso
+  );
+  const bonificacionExtraordinaria = calcularBonificacionExtraordinaria(gratificacion);
+  const cts = calcularCTS(
+    contrato,
+    jornalDiario,
+    asistencia,
+    remuneracionComputableRegular,
+    gratificacion,
+    mes,
+    anio,
+    contrato.fecha_ingreso
+  );
+  const vacaciones = calcularVacaciones(contrato, jornalDiario, asistencia);
 
   const totalIngresos = redondear(
     sueldoBasico +
@@ -411,15 +572,29 @@ export function calcularLineaPlanilla(
       remFeriado +
       importeHorasExtra +
       asignacionFamiliar +
+      asignacionEscolaridad +
       bonificacionBUC +
+      bonificacionBAE +
+      bonificacionMovilidad +
       gratificacion +
+      bonificacionExtraordinaria +
       cts +
       vacaciones
   );
 
-  // Base afecta a aportes/descuentos = ingresos regulares, sin CTS ni gratificacion (inafectas)
+  // Base afecta a aportes/descuentos = ingresos regulares, sin CTS,
+  // gratificacion, movilidad, escolaridad ni bonif. extraordinaria
+  // (inafectas). Vacaciones y BAE SI son computables - verificado contra
+  // el descuento AFP/ONP real de las boletas.
   const remuneracionAfecta = redondear(
-    sueldoBasico + remDominical + remFeriado + importeHorasExtra + asignacionFamiliar + bonificacionBUC
+    sueldoBasico +
+      remDominical +
+      remFeriado +
+      importeHorasExtra +
+      asignacionFamiliar +
+      bonificacionBUC +
+      bonificacionBAE +
+      vacaciones
   );
 
   const aportePension = calcularAportePension(contrato, remuneracionAfecta, parametros, afpTasas);
@@ -431,7 +606,7 @@ export function calcularLineaPlanilla(
   // antes de usar este descuento en un calculo real.
   const descuentoSindicato = contrato.sindicalizado ? redondear(remuneracionAfecta * 0.02) : 0; // VALIDAR tasa real
   const seguroVida = contrato.poliza_seguro ? parametros.seguro_vida_ley : 0;
-  const conafovicer = calcularConafovicer(contrato, remuneracionAfecta, parametros);
+  const conafovicer = calcularConafovicer(contrato, sueldoBasico, remDominical, parametros);
   const renta5ta = calcularRenta5ta(contrato, remuneracionAfecta, parametros);
   const otrosDescuentos = 0;
 
@@ -441,7 +616,7 @@ export function calcularLineaPlanilla(
 
   const essalud = calcularEssalud(remuneracionAfecta, parametros);
   const sctr = calcularSCTR(contrato, remuneracionAfecta, parametros);
-  const senati = calcularSenati(contrato, remuneracionAfecta, parametros);
+  const senati = calcularSenati(contrato, sueldoBasico, remDominical, remFeriado, parametros);
 
   const netoPagar = redondear(totalIngresos - totalDescuentos);
 
@@ -461,9 +636,13 @@ export function calcularLineaPlanilla(
       remuneracion_feriado: remFeriado,
       importe_horas_extra: importeHorasExtra,
       asignacion_familiar: asignacionFamiliar,
+      asignacion_escolaridad: asignacionEscolaridad,
       bonificacion_buc: bonificacionBUC,
+      bonificacion_bae: bonificacionBAE,
+      bonificacion_movilidad: bonificacionMovilidad,
       otras_bonificaciones: 0,
       gratificacion,
+      bonificacion_extraordinaria: bonificacionExtraordinaria,
       cts,
       vacaciones,
       total_ingresos: totalIngresos,

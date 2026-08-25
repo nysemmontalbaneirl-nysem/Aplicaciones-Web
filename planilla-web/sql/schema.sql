@@ -90,7 +90,7 @@ CREATE TABLE parametros_normativos (
     remuneracion_minima_vital   NUMERIC(10,2) NOT NULL DEFAULT 0,
     tasa_essalud                NUMERIC(6,4)  NOT NULL DEFAULT 0.09,
     tasa_onp                    NUMERIC(6,4)  NOT NULL DEFAULT 0.13,
-    tasa_senati                 NUMERIC(6,4)  NOT NULL DEFAULT 0.0075,
+    tasa_senati                 NUMERIC(6,4)  NOT NULL DEFAULT 0.0045, -- "Fondo Capacitacion" en la boleta real, no 0.75%
     tasa_conafovicer            NUMERIC(6,4)  NOT NULL DEFAULT 0.02,
     tasa_sctr_salud             NUMERIC(6,4)  NOT NULL DEFAULT 0.0155,
     asignacion_familiar         NUMERIC(10,2) NOT NULL,
@@ -245,9 +245,13 @@ CREATE TABLE detalle_planilla (
     remuneracion_feriado   NUMERIC(10,2) NOT NULL DEFAULT 0,
     importe_horas_extra    NUMERIC(10,2) NOT NULL DEFAULT 0,
     asignacion_familiar    NUMERIC(10,2) NOT NULL DEFAULT 0,
+    asignacion_escolaridad NUMERIC(10,2) NOT NULL DEFAULT 0,
     bonificacion_buc       NUMERIC(10,2) NOT NULL DEFAULT 0,
+    bonificacion_bae       NUMERIC(10,2) NOT NULL DEFAULT 0,
+    bonificacion_movilidad NUMERIC(10,2) NOT NULL DEFAULT 0,
     otras_bonificaciones   NUMERIC(10,2) NOT NULL DEFAULT 0,
     gratificacion          NUMERIC(10,2) NOT NULL DEFAULT 0,
+    bonificacion_extraordinaria NUMERIC(10,2) NOT NULL DEFAULT 0, -- Ley 29351/30334: 9% de la gratificacion, pagado al trabajador
     cts                    NUMERIC(10,2) NOT NULL DEFAULT 0,
     vacaciones             NUMERIC(10,2) NOT NULL DEFAULT 0,
     total_ingresos         NUMERIC(10,2) NOT NULL DEFAULT 0,
@@ -297,7 +301,7 @@ INSERT INTO parametros_normativos (
     anio, uit, remuneracion_minima_vital, tasa_essalud, tasa_onp, tasa_senati,
     tasa_conafovicer, tasa_sctr_salud, asignacion_familiar, seguro_vida_ley
 ) VALUES (
-    2026, 5500, 0, 0.09, 0.13, 0.0075, 0.02, 0.0155, 113.00, 5.00
+    2026, 5500, 0, 0.09, 0.13, 0.0045, 0.02, 0.0155, 113.00, 5.00
 );
 
 -- -------------------------------------------------------------------------

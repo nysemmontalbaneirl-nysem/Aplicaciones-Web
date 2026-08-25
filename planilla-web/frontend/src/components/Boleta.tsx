@@ -36,9 +36,13 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles }:
     { etiqueta: "Remuneración feriado", valor: detalle.remuneracion_feriado },
     { etiqueta: "Horas extra", valor: detalle.importe_horas_extra },
     { etiqueta: "Asignación familiar", valor: detalle.asignacion_familiar },
+    { etiqueta: "Asignación por escolaridad", valor: detalle.asignacion_escolaridad },
     { etiqueta: "Bonificación Unificada Construcción (BUC)", valor: detalle.bonificacion_buc },
+    { etiqueta: "Bonificación por Alta Especialización (BAE)", valor: detalle.bonificacion_bae },
+    { etiqueta: "Bonificación por movilidad", valor: detalle.bonificacion_movilidad },
     { etiqueta: "Otras bonificaciones", valor: detalle.otras_bonificaciones },
     { etiqueta: "Gratificación", valor: detalle.gratificacion },
+    { etiqueta: "Bonificación Extraordinaria Ley 29351", valor: detalle.bonificacion_extraordinaria },
     { etiqueta: "CTS", valor: detalle.cts },
     { etiqueta: "Vacaciones", valor: detalle.vacaciones },
   ]);
@@ -61,7 +65,7 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles }:
   const aportesEmpleador = filasSinCero([
     { etiqueta: "ESSALUD", valor: detalle.essalud },
     { etiqueta: "SCTR salud", valor: detalle.sctr },
-    { etiqueta: "SENATI", valor: detalle.senati },
+    { etiqueta: "Fondo de Capacitación", valor: detalle.senati },
   ]);
 
   return (

@@ -520,12 +520,13 @@ planillaRouter.post(
              periodo_id, contrato_id, dias_trabajados, dias_dominical, dias_feriado, dias_falta,
              horas_extra_25, horas_extra_35, horas_extra_100, jornal_diario, sueldo_basico,
              remuneracion_dominical, remuneracion_feriado, importe_horas_extra, asignacion_familiar,
-             bonificacion_buc, otras_bonificaciones, gratificacion, cts, vacaciones, total_ingresos,
-             aporte_pension, descuento_sindicato, seguro_vida, conafovicer, renta_5ta,
+             asignacion_escolaridad, bonificacion_buc, bonificacion_bae, bonificacion_movilidad,
+             otras_bonificaciones, gratificacion, bonificacion_extraordinaria, cts, vacaciones,
+             total_ingresos, aporte_pension, descuento_sindicato, seguro_vida, conafovicer, renta_5ta,
              otros_descuentos, total_descuentos, essalud, sctr, senati, neto_pagar, detalle_json
            ) VALUES (
-             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
-             $22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
+             $24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37
            )
            ON CONFLICT (periodo_id, contrato_id) DO UPDATE SET
              dias_trabajados = EXCLUDED.dias_trabajados,
@@ -541,9 +542,13 @@ planillaRouter.post(
              remuneracion_feriado = EXCLUDED.remuneracion_feriado,
              importe_horas_extra = EXCLUDED.importe_horas_extra,
              asignacion_familiar = EXCLUDED.asignacion_familiar,
+             asignacion_escolaridad = EXCLUDED.asignacion_escolaridad,
              bonificacion_buc = EXCLUDED.bonificacion_buc,
+             bonificacion_bae = EXCLUDED.bonificacion_bae,
+             bonificacion_movilidad = EXCLUDED.bonificacion_movilidad,
              otras_bonificaciones = EXCLUDED.otras_bonificaciones,
              gratificacion = EXCLUDED.gratificacion,
+             bonificacion_extraordinaria = EXCLUDED.bonificacion_extraordinaria,
              cts = EXCLUDED.cts,
              vacaciones = EXCLUDED.vacaciones,
              total_ingresos = EXCLUDED.total_ingresos,
@@ -577,9 +582,13 @@ planillaRouter.post(
             detalle.remuneracion_feriado,
             detalle.importe_horas_extra,
             detalle.asignacion_familiar,
+            detalle.asignacion_escolaridad,
             detalle.bonificacion_buc,
+            detalle.bonificacion_bae,
+            detalle.bonificacion_movilidad,
             detalle.otras_bonificaciones,
             detalle.gratificacion,
+            detalle.bonificacion_extraordinaria,
             detalle.cts,
             detalle.vacaciones,
             detalle.total_ingresos,

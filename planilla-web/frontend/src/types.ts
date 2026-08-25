@@ -132,9 +132,13 @@ export interface DetallePlanilla {
   remuneracion_feriado: number;
   importe_horas_extra: number;
   asignacion_familiar: number;
+  asignacion_escolaridad: number;
   bonificacion_buc: number;
+  bonificacion_bae: number;
+  bonificacion_movilidad: number;
   otras_bonificaciones: number;
   gratificacion: number;
+  bonificacion_extraordinaria: number;
   cts: number;
   vacaciones: number;
   total_ingresos: number;

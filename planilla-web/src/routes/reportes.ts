@@ -121,15 +121,19 @@ async function construirFilasReporte(periodoId: string, usuario: NonNullable<Req
         Number(importeTramo2y3.toFixed(2)),
         construccionCivil ? Number(importeTramo1.toFixed(2)) : "",
         Number(d.asignacion_familiar),
-        "", // 0211 Escolaridad - no calculado
+        Number(d.asignacion_escolaridad),
         Number(d.bonificacion_buc),
-        "", // BAE - no calculado (TODO conocido en motorCalculo.ts)
-        "", // Bonific. Ext. Ley 29351 - no identificado con certeza
-        periodo.mes === 12 ? Number(d.gratificacion) : "",
-        periodo.mes === 7 ? Number(d.gratificacion) : "",
+        Number(d.bonificacion_bae),
+        Number(d.bonificacion_extraordinaria),
+        // Construccion civil paga la gratificacion prorrateada CADA periodo
+        // (columna "Ley 29351-30334"), no como pago unico de julio/diciembre.
+        // "Julio - Diciembre" queda para el regimen general (EMPLEADO), que
+        // si es pago unico en esos meses.
+        !construccionCivil && (periodo.mes === 7 || periodo.mes === 12) ? Number(d.gratificacion) : "",
+        construccionCivil ? Number(d.gratificacion) : "",
         Number(d.cts),
         "", // Condicion de Trabajo - no calculado
-        "", // Movilidad - no aplicado todavia (existe en tabla salarial pero no se paga)
+        Number(d.bonificacion_movilidad),
         "", // Sumas O Bienes... - no calculado
         Number(d.total_ingresos),
         esAfp ? 2 : 1,
