@@ -464,19 +464,27 @@ export function calcularSCTR(
 
 /**
  * "Fondo Capacitacion" (campo senati) - aporte del empleador sobre
- * construccion civil. Base verificada contra boletas reales = jornal +
- * dominical + feriado (SIN horas extra, BUC, BAE ni vacaciones) - distinta
- * a la base amplia (remuneracionAfecta) que se usa para pension/EsSalud.
+ * construccion civil. Base = jornal + dominical + feriado + BUC (SIN horas
+ * extra, BAE ni vacaciones) - distinta a la base amplia (remuneracionAfecta)
+ * que se usa para pension/EsSalud.
+ *
+ * El BUC SI se incluye: verificado contra la Tabla 22 de SUNAT (PDT PLAME,
+ * catalogo oficial "Ingresos, Tributos y Descuentos"), donde el codigo 311
+ * "BONIFICACION UNIFICADA DE CONSTRUCCION" figura afecto a SENATI. Antes se
+ * excluia por error (se habia verificado contra boletas reales que
+ * resultaron tener el BUC en 0 en los periodos revisados, lo que oculto la
+ * diferencia).
  */
 export function calcularSenati(
   contrato: Contrato,
   sueldoBasico: number,
   remuneracionDominical: number,
   remuneracionFeriado: number,
+  bonificacionBUC: number,
   parametros: ParametrosNormativos
 ): number {
   if (!esConstruccionCivil(contrato.categoria_ocupacional)) return 0;
-  const base = sueldoBasico + remuneracionDominical + remuneracionFeriado;
+  const base = sueldoBasico + remuneracionDominical + remuneracionFeriado + bonificacionBUC;
   return redondear(base * parametros.tasa_senati);
 }
 
@@ -717,7 +725,7 @@ export function calcularLineaPlanilla(
 
   const essalud = calcularEssalud(remuneracionAfecta, parametros);
   const sctr = calcularSCTR(contrato, remuneracionAfecta, parametros);
-  const senati = calcularSenati(contrato, sueldoBasico, remDominical, remFeriado, parametros);
+  const senati = calcularSenati(contrato, sueldoBasico, remDominical, remFeriado, bonificacionBUC, parametros);
   // Poliza de vida (D.Leg. N°688 / convenio EsSalud+Vida): es un aporte
   // INTEGRO del empleador - esta prohibido descontarselo al trabajador. Se
   // reclasifico aqui (antes se restaba de total_descuentos por error).
