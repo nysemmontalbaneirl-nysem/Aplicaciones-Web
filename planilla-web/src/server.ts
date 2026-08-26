@@ -31,8 +31,19 @@ process.on("unhandledRejection", (err) => {
   console.error("Promesa rechazada sin capturar:", err);
 });
 
+// Origenes permitidos para el frontend (separados por coma en CORS_ORIGIN si
+// hace falta mas de uno, ej. produccion + un dominio de pruebas). Por
+// defecto trae los puertos que ya usa este proyecto en desarrollo (Vite
+// "npm run dev" = 5173, "npm run preview" = 4173), asi que instalar este
+// cambio no rompe el flujo local existente. Cuando el sistema se publique
+// en un dominio real, hay que poner ese dominio en CORS_ORIGIN.
+const origenesPermitidos = (process.env.CORS_ORIGIN ?? "http://localhost:5173,http://localhost:4173")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
 const app = express();
-app.use(cors());
+app.use(cors({ origin: origenesPermitidos }));
 // El limite por defecto de 100kb se queda corto al calcular planilla con
 // miles de trabajadores (el array de asistencias del periodo puede pesar
 // varios cientos de KB).

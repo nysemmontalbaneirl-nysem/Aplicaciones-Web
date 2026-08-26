@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { Router, Request, Response } from "express";
+import rateLimit from "express-rate-limit";
 import { asyncHandler } from "../asyncHandler";
 import { firmarToken } from "../auth";
 import { requiereLogin } from "../authMiddleware";
@@ -8,9 +9,23 @@ import { ErrorValidacion } from "../validaciones";
 
 export const authRouter = Router();
 
+// Freno contra fuerza bruta: como el mensaje de error no distingue "correo
+// no existe" de "contraseña incorrecta" (a proposito, ver mas abajo), sin
+// esto alguien podria probar contraseñas sin limite hasta acertar. 10
+// intentos cada 15 minutos por IP es suficiente margen para un usuario que
+// se equivoca escribiendo, pero corta un ataque automatizado.
+const limitadorLogin = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiados intentos de inicio de sesión. Espera unos minutos e inténtalo de nuevo." },
+});
+
 // POST /api/auth/login  body: { correo, password }
 authRouter.post(
   "/login",
+  limitadorLogin,
   asyncHandler(async (req: Request, res: Response) => {
     const { correo, password } = req.body as { correo?: string; password?: string };
     if (!correo || !password) {
