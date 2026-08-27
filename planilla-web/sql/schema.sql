@@ -19,8 +19,40 @@ DROP TABLE IF EXISTS empleados CASCADE;
 DROP TABLE IF EXISTS parametros_normativos CASCADE;
 DROP TABLE IF EXISTS usuario_proyecto CASCADE;
 DROP TABLE IF EXISTS usuarios CASCADE;
+DROP TABLE IF EXISTS rol_permiso CASCADE;
+DROP TABLE IF EXISTS permisos_catalogo CASCADE;
+DROP TABLE IF EXISTS roles CASCADE;
 DROP TABLE IF EXISTS proyectos CASCADE;
 DROP TABLE IF EXISTS datos_empresa CASCADE;
+
+-- -------------------------------------------------------------------------
+-- roles / permisos_catalogo / rol_permiso: roles configurables desde la
+-- pestaña Roles (ver sql/migracion_014_roles_permisos.sql para el detalle).
+-- "protegido" = true solo para ADMIN: acceso total siempre, no editable ni
+-- eliminable, para que el sistema nunca se quede sin un Administrador.
+-- -------------------------------------------------------------------------
+CREATE TABLE roles (
+    codigo      VARCHAR(50) PRIMARY KEY,
+    nombre      VARCHAR(100) NOT NULL,
+    descripcion VARCHAR(300),
+    protegido   BOOLEAN NOT NULL DEFAULT false,
+    creado_en   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Catalogo fijo de permisos que el sistema sabe controlar (no editable
+-- desde la pantalla, solo que rol tiene cada uno).
+CREATE TABLE permisos_catalogo (
+    codigo  VARCHAR(60) PRIMARY KEY,
+    nombre  VARCHAR(200) NOT NULL,
+    grupo   VARCHAR(60) NOT NULL,
+    orden   INT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE rol_permiso (
+    rol_codigo     VARCHAR(50) NOT NULL REFERENCES roles(codigo) ON DELETE CASCADE ON UPDATE CASCADE,
+    permiso_codigo VARCHAR(60) NOT NULL REFERENCES permisos_catalogo(codigo) ON DELETE CASCADE,
+    PRIMARY KEY (rol_codigo, permiso_codigo)
+);
 
 -- -------------------------------------------------------------------------
 -- usuarios: acceso al sistema (login real con contraseña)
@@ -30,10 +62,10 @@ CREATE TABLE usuarios (
     nombre          VARCHAR(150) NOT NULL,
     correo          VARCHAR(150) NOT NULL UNIQUE,
     password_hash   VARCHAR(255) NOT NULL,
-    -- ADMIN: acceso total. RESPONSABLE_PLANILLA: tareo/calculo/boletas solo
-    -- de sus proyectos asignados. TAREADOR: solo carga tareo de sus
-    -- proyectos asignados (no calcula ni ve boletas).
-    rol             VARCHAR(30)  NOT NULL DEFAULT 'TAREADOR',
+    -- Codigo de roles.codigo. ADMIN (protegido): acceso total. Los demas
+    -- roles definen su acceso via rol_permiso, mas el filtro por proyecto
+    -- asignado (usuario_proyecto) para lo que si tienen permiso de hacer.
+    rol             VARCHAR(30)  NOT NULL DEFAULT 'TAREADOR' REFERENCES roles(codigo),
     activo          BOOLEAN      NOT NULL DEFAULT TRUE,
     creado_en       TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
@@ -486,6 +518,40 @@ INSERT INTO tabla_salarial_mensual (anio, mes, categoria, jornal_basico, buc, ba
     (2026, 2, 'OPERARIO_TP', 89.30, 0.32, 0.09, 8.60, 17.01),
     (2026, 2, 'PEON_A',      47.61, 0,    0,    0,    0),
     (2026, 2, 'R_GENERAL',   37.67, 0,    0,    0,    0);
+
+-- -------------------------------------------------------------------------
+-- Roles del sistema y catalogo de permisos (ver migracion_014 para el
+-- detalle de cada permiso). RESPONSABLE_PLANILLA y TAREADOR quedan con el
+-- mismo acceso que tenian antes de que existiera esta tabla.
+-- -------------------------------------------------------------------------
+INSERT INTO roles (codigo, nombre, descripcion, protegido) VALUES
+    ('ADMIN', 'Administrador', 'Acceso total al sistema. No se puede editar ni eliminar.', true),
+    ('RESPONSABLE_PLANILLA', 'Encargado de planilla', 'Gestiona trabajadores, tareo, calculo y boletas de sus proyectos asignados.', false),
+    ('TAREADOR', 'Tareador', 'Solo carga el tareo (asistencia) de sus proyectos asignados.', false);
+
+INSERT INTO permisos_catalogo (codigo, nombre, grupo, orden) VALUES
+    ('empleados.gestionar',     'Crear y editar trabajadores',                                'Trabajadores',   10),
+    ('contratos.gestionar',     'Crear, editar y dar de cese a contratos',                    'Trabajadores',   20),
+    ('importacion.masiva',      'Importar trabajadores de forma masiva',                      'Trabajadores',   30),
+    ('periodos.gestionar',      'Crear y eliminar periodos de planilla',                      'Planillas',      40),
+    ('planilla.calcular',       'Calcular la planilla de un periodo',                         'Planillas',      50),
+    ('boletas.ver',             'Ver las boletas ya calculadas',                              'Planillas',      60),
+    ('reportes.ver',            'Ver y descargar el resumen de planilla (Excel)',             'Planillas',      70),
+    ('exportaciones.descargar', 'Descargar archivos REM / AFPnet',                            'Planillas',      80),
+    ('vacaciones.gestionar',    'Registrar goces de vacaciones y generar boletas',            'Vacaciones',     90),
+    ('parametros.editar',       'Editar tasas legales, AFP y tabla salarial',                 'Parametros',    100),
+    ('conceptos.editar',        'Configurar a que aportes/descuentos esta afecto cada concepto', 'Configuracion', 110),
+    ('proyectos.gestionar',     'Crear y editar proyectos/obras',                             'Proyectos',     120),
+    ('empresa.editar',          'Editar los datos de la empresa',                             'Empresa',       130),
+    ('bitacora.ver',            'Ver el historial de cambios del sistema',                    'Bitacora',      140);
+
+INSERT INTO rol_permiso (rol_codigo, permiso_codigo)
+SELECT 'RESPONSABLE_PLANILLA', codigo FROM permisos_catalogo
+WHERE codigo IN (
+    'empleados.gestionar', 'contratos.gestionar', 'periodos.gestionar',
+    'planilla.calcular', 'boletas.ver', 'reportes.ver',
+    'exportaciones.descargar', 'vacaciones.gestionar'
+);
 
 -- -------------------------------------------------------------------------
 -- Usuario administrador inicial. Contraseña temporal: Cambiar123!

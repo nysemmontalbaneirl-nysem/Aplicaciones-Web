@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiPost, apiPut } from "../api";
-import { Proyecto, RolUsuario } from "../types";
+import { Proyecto, Rol, RolUsuario } from "../types";
 
 interface UsuarioFila {
   id: number;
@@ -11,38 +11,42 @@ interface UsuarioFila {
   proyectos: string[];
 }
 
-const ROLES: RolUsuario[] = ["ADMIN", "RESPONSABLE_PLANILLA", "TAREADOR"];
-
-const ETIQUETAS_ROL: Record<RolUsuario, string> = {
-  ADMIN: "Administrador",
-  RESPONSABLE_PLANILLA: "Encargado de planilla",
-  TAREADOR: "Tareador",
-};
-
 const FORM_VACIO = {
   nombre: "",
   correo: "",
   password: "",
-  rol: "TAREADOR" as RolUsuario,
+  rol: "" as RolUsuario,
   proyecto_ids: [] as number[],
 };
 
 export default function Usuarios() {
   const [usuarios, setUsuarios] = useState<UsuarioFila[]>([]);
   const [proyectos, setProyectos] = useState<Proyecto[]>([]);
+  const [roles, setRoles] = useState<Rol[]>([]);
   const [form, setForm] = useState(FORM_VACIO);
   const [editandoId, setEditandoId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
 
+  function nombreRol(codigo: string): string {
+    return roles.find((r) => r.codigo === codigo)?.nombre ?? codigo;
+  }
+
+  function esRolProtegido(codigo: string): boolean {
+    return roles.find((r) => r.codigo === codigo)?.protegido ?? false;
+  }
+
   async function cargar() {
-    const [listaUsuarios, listaProyectos] = await Promise.all([
+    const [listaUsuarios, listaProyectos, listaRoles] = await Promise.all([
       apiGet<UsuarioFila[]>("/usuarios"),
       apiGet<Proyecto[]>("/proyectos"),
+      apiGet<Rol[]>("/roles"),
     ]);
     setUsuarios(listaUsuarios);
     setProyectos(listaProyectos);
+    setRoles(listaRoles);
+    setForm((f) => (f.rol ? f : { ...f, rol: listaRoles.find((r) => !r.protegido)?.codigo ?? listaRoles[0]?.codigo ?? "" }));
   }
 
   useEffect(() => {
@@ -146,16 +150,16 @@ export default function Usuarios() {
             <label>
               Rol
               <select value={form.rol} onChange={(e) => setForm((f) => ({ ...f, rol: e.target.value as RolUsuario }))}>
-                {ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {ETIQUETAS_ROL[r]}
+                {roles.map((r) => (
+                  <option key={r.codigo} value={r.codigo}>
+                    {r.nombre}
                   </option>
                 ))}
               </select>
             </label>
           </div>
 
-          {form.rol !== "ADMIN" && (
+          {!esRolProtegido(form.rol) && (
             <div style={{ marginTop: 12 }}>
               <p style={{ marginBottom: 6, fontSize: "0.88rem", color: "#5a6172" }}>
                 Proyectos a los que tiene acceso este usuario:
@@ -218,8 +222,8 @@ export default function Usuarios() {
               <tr key={u.id}>
                 <td>{u.nombre}</td>
                 <td>{u.correo}</td>
-                <td>{ETIQUETAS_ROL[u.rol]}</td>
-                <td>{u.rol === "ADMIN" ? "Todos" : u.proyectos.join(", ") || "—"}</td>
+                <td>{nombreRol(u.rol)}</td>
+                <td>{esRolProtegido(u.rol) ? "Todos" : u.proyectos.join(", ") || "—"}</td>
                 <td>{u.activo ? "Activo" : "Inactivo"}</td>
                 <td style={{ display: "flex", gap: 6 }}>
                   <button type="button" onClick={() => iniciarEdicion(u)}>

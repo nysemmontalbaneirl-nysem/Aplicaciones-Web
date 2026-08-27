@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { asyncHandler } from "../asyncHandler";
-import { requiereRol } from "../authMiddleware";
+import { requierePermiso } from "../authMiddleware";
 import { pool } from "../db";
 
 export const empresaRouter = Router();
@@ -18,7 +18,7 @@ empresaRouter.get(
 
 empresaRouter.put(
   "/",
-  requiereRol("ADMIN"),
+  requierePermiso("empresa.editar"),
   asyncHandler(async (req: Request, res: Response) => {
     const b = req.body;
     const existente = await pool.query("SELECT id FROM datos_empresa ORDER BY id LIMIT 1");

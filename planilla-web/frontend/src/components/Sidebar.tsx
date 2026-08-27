@@ -14,7 +14,8 @@ export type Pestana =
   | "empresa"
   | "proyectos"
   | "configuracion"
-  | "bitacora";
+  | "bitacora"
+  | "roles";
 
 interface ItemMenu {
   id: Pestana;
@@ -34,6 +35,15 @@ interface Props {
   periodoSeleccionado: boolean;
   esAdmin: boolean;
   puedeCalcular: boolean;
+  puedeVerBoletas: boolean;
+  puedeVerReportes: boolean;
+  puedeVerVacaciones: boolean;
+  puedeImportarMasivo: boolean;
+  puedeVerParametros: boolean;
+  puedeVerConfiguracion: boolean;
+  puedeVerProyectos: boolean;
+  puedeVerEmpresa: boolean;
+  puedeVerBitacora: boolean;
 }
 
 export default function Sidebar({
@@ -42,14 +52,31 @@ export default function Sidebar({
   periodoSeleccionado,
   esAdmin,
   puedeCalcular,
+  puedeVerBoletas,
+  puedeVerReportes,
+  puedeVerVacaciones,
+  puedeImportarMasivo,
+  puedeVerParametros,
+  puedeVerConfiguracion,
+  puedeVerProyectos,
+  puedeVerEmpresa,
+  puedeVerBitacora,
 }: Props) {
+  const puedeVerAdministracion =
+    puedeVerParametros ||
+    puedeVerConfiguracion ||
+    puedeVerProyectos ||
+    puedeVerEmpresa ||
+    puedeVerBitacora ||
+    esAdmin;
+
   const grupos: GrupoMenu[] = [
     {
       id: "trabajadores",
       etiqueta: "Trabajadores",
       items: [
         { id: "trabajadores", etiqueta: "Trabajadores" },
-        ...(esAdmin ? [{ id: "importar" as const, etiqueta: "Importar masivo" }] : []),
+        ...(puedeImportarMasivo ? [{ id: "importar" as const, etiqueta: "Importar masivo" }] : []),
       ],
     },
     {
@@ -58,28 +85,25 @@ export default function Sidebar({
       items: [
         { id: "periodos", etiqueta: "Periodos" },
         { id: "tareo", etiqueta: "Tareo", disabled: !periodoSeleccionado },
-        ...(puedeCalcular
-          ? [
-              { id: "calculo" as const, etiqueta: "Calcular", disabled: !periodoSeleccionado },
-              { id: "boletas" as const, etiqueta: "Boletas" },
-              { id: "reportes" as const, etiqueta: "Reportes" },
-              { id: "vacaciones" as const, etiqueta: "Vacaciones" },
-            ]
-          : []),
+        ...(puedeCalcular ? [{ id: "calculo" as const, etiqueta: "Calcular", disabled: !periodoSeleccionado }] : []),
+        ...(puedeVerBoletas ? [{ id: "boletas" as const, etiqueta: "Boletas" }] : []),
+        ...(puedeVerReportes ? [{ id: "reportes" as const, etiqueta: "Reportes" }] : []),
+        ...(puedeVerVacaciones ? [{ id: "vacaciones" as const, etiqueta: "Vacaciones" }] : []),
       ],
     },
-    ...(esAdmin
+    ...(puedeVerAdministracion
       ? [
           {
             id: "administracion",
             etiqueta: "Administración",
             items: [
-              { id: "parametros" as const, etiqueta: "Parametros" },
-              { id: "configuracion" as const, etiqueta: "Configuración" },
-              { id: "proyectos" as const, etiqueta: "Proyectos" },
-              { id: "usuarios" as const, etiqueta: "Usuarios" },
-              { id: "empresa" as const, etiqueta: "Empresa" },
-              { id: "bitacora" as const, etiqueta: "Bitácora" },
+              ...(puedeVerParametros ? [{ id: "parametros" as const, etiqueta: "Parametros" }] : []),
+              ...(puedeVerConfiguracion ? [{ id: "configuracion" as const, etiqueta: "Configuración" }] : []),
+              ...(puedeVerProyectos ? [{ id: "proyectos" as const, etiqueta: "Proyectos" }] : []),
+              ...(esAdmin ? [{ id: "usuarios" as const, etiqueta: "Usuarios" }] : []),
+              ...(esAdmin ? [{ id: "roles" as const, etiqueta: "Roles" }] : []),
+              ...(puedeVerEmpresa ? [{ id: "empresa" as const, etiqueta: "Empresa" }] : []),
+              ...(puedeVerBitacora ? [{ id: "bitacora" as const, etiqueta: "Bitácora" }] : []),
             ],
           },
         ]

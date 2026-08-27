@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import ExcelJS from "exceljs";
 import { asyncHandler } from "../asyncHandler";
-import { requiereRol } from "../authMiddleware";
+import { requierePermiso } from "../authMiddleware";
 import { pool } from "../db";
 import { esConstruccionCivil } from "../motorCalculo";
 
@@ -173,7 +173,7 @@ async function construirFilasReporte(periodoId: string, usuario: NonNullable<Req
 // Vista previa en pantalla: mismas columnas y filas que el Excel, en JSON.
 reportesRouter.get(
   "/:id/reporte/datos",
-  requiereRol("ADMIN", "RESPONSABLE_PLANILLA"),
+  requierePermiso("reportes.ver"),
   asyncHandler(async (req: Request, res: Response) => {
     try {
       const { periodo, filas } = await construirFilasReporte(req.params.id, req.usuario!);
@@ -188,7 +188,7 @@ reportesRouter.get(
 
 reportesRouter.get(
   "/:id/reporte",
-  requiereRol("ADMIN", "RESPONSABLE_PLANILLA"),
+  requierePermiso("reportes.ver"),
   asyncHandler(async (req: Request, res: Response) => {
     let datos: FilaReporte;
     try {

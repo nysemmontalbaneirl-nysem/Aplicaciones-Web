@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { asyncHandler } from "../asyncHandler";
-import { requiereRol } from "../authMiddleware";
+import { requierePermiso } from "../authMiddleware";
 import { pool } from "../db";
 import { generarLineasREM } from "../plame";
 import { generarCSVAFPnet } from "../afpnet";
@@ -18,7 +18,7 @@ async function obtenerPeriodo(periodoId: string) {
 // Mismo criterio que Reportes (ver routes/reportes.ts): ADMIN + RESPONSABLE_PLANILLA.
 
 // GET /api/periodos/:id/exportar/rem -> archivo .rem para PLAME/T-Registro
-exportacionesRouter.get("/:id/exportar/rem", requiereRol("ADMIN", "RESPONSABLE_PLANILLA"), asyncHandler(async (req: Request, res: Response) => {
+exportacionesRouter.get("/:id/exportar/rem", requierePermiso("exportaciones.descargar"), asyncHandler(async (req: Request, res: Response) => {
   const periodo = await obtenerPeriodo(req.params.id);
   if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
 
@@ -32,7 +32,7 @@ exportacionesRouter.get("/:id/exportar/rem", requiereRol("ADMIN", "RESPONSABLE_P
 }));
 
 // GET /api/periodos/:id/exportar/afpnet?proyecto=... -> CSV para digitar en AFPnet
-exportacionesRouter.get("/:id/exportar/afpnet", requiereRol("ADMIN", "RESPONSABLE_PLANILLA"), asyncHandler(async (req: Request, res: Response) => {
+exportacionesRouter.get("/:id/exportar/afpnet", requierePermiso("exportaciones.descargar"), asyncHandler(async (req: Request, res: Response) => {
   const periodo = await obtenerPeriodo(req.params.id);
   if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
 

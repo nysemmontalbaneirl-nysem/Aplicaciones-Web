@@ -8,10 +8,13 @@ import { registrarBitacora } from "../bitacora";
 
 export const usuariosRouter = Router();
 
-const ROLES_VALIDOS = ["ADMIN", "RESPONSABLE_PLANILLA", "TAREADOR"];
-
 // Toda esta pestana es solo para ADMIN.
 usuariosRouter.use(requiereRol("ADMIN"));
+
+async function esRolValido(rol: string): Promise<boolean> {
+  const r = await pool.query("SELECT 1 FROM roles WHERE codigo = $1", [rol]);
+  return (r.rowCount ?? 0) > 0;
+}
 
 usuariosRouter.get(
   "/",
@@ -46,8 +49,8 @@ usuariosRouter.post(
         throw new ErrorValidacion("password es obligatorio y debe tener al menos 8 caracteres");
       }
       const rol = (b.rol ?? "TAREADOR").toUpperCase();
-      if (!ROLES_VALIDOS.includes(rol)) {
-        throw new ErrorValidacion(`rol invalido. Valores permitidos: ${ROLES_VALIDOS.join(", ")}`);
+      if (!(await esRolValido(rol))) {
+        throw new ErrorValidacion(`rol invalido: no existe un rol con el codigo "${rol}"`);
       }
 
       const hash = await bcrypt.hash(b.password, 10);
@@ -102,8 +105,8 @@ usuariosRouter.put(
         proyecto_ids?: number[];
       };
       const rol = b.rol ? b.rol.toUpperCase() : undefined;
-      if (rol && !ROLES_VALIDOS.includes(rol)) {
-        throw new ErrorValidacion(`rol invalido. Valores permitidos: ${ROLES_VALIDOS.join(", ")}`);
+      if (rol && !(await esRolValido(rol))) {
+        throw new ErrorValidacion(`rol invalido: no existe un rol con el codigo "${rol}"`);
       }
       if (b.password && b.password.length < 8) {
         throw new ErrorValidacion("password debe tener al menos 8 caracteres");

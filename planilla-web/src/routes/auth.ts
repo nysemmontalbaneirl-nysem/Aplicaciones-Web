@@ -46,16 +46,35 @@ authRouter.post(
       return res.status(401).json({ error: "Correo o contraseña incorrectos." });
     }
 
+    const rolResult = await pool.query("SELECT protegido FROM roles WHERE codigo = $1", [usuario.rol]);
+    const rolProtegido = rolResult.rows[0]?.protegido ?? false;
+
     let proyectos: string[] = [];
-    if (usuario.rol !== "ADMIN") {
+    let permisos: string[] = [];
+    if (rolProtegido) {
+      // Rol protegido (ej. ADMIN): acceso total, no depende de rol_permiso.
+      permisos = ["*"];
+    } else {
       const rp = await pool.query(
         `SELECT p.nombre FROM usuario_proyecto up JOIN proyectos p ON p.id = up.proyecto_id WHERE up.usuario_id = $1`,
         [usuario.id]
       );
       proyectos = rp.rows.map((f) => f.nombre);
+
+      const permisosResult = await pool.query("SELECT permiso_codigo FROM rol_permiso WHERE rol_codigo = $1", [
+        usuario.rol,
+      ]);
+      permisos = permisosResult.rows.map((f) => f.permiso_codigo);
     }
 
-    const payload = { id: usuario.id, nombre: usuario.nombre, correo: usuario.correo, rol: usuario.rol, proyectos };
+    const payload = {
+      id: usuario.id,
+      nombre: usuario.nombre,
+      correo: usuario.correo,
+      rol: usuario.rol,
+      proyectos,
+      permisos,
+    };
     const token = firmarToken(payload);
     res.json({ token, usuario: payload });
   })

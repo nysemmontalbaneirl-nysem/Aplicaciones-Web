@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { asyncHandler } from "../asyncHandler";
-import { requiereRol } from "../authMiddleware";
+import { requierePermiso } from "../authMiddleware";
 import { tieneAccesoProyecto } from "../permisos";
 import { pool } from "../db";
 import { ErrorValidacion } from "../validaciones";
@@ -56,7 +56,7 @@ async function obtenerContratoOFallar(contratoId: string) {
 // pendiente, y el historial de goces registrados.
 vacacionesRouter.get(
   "/:contratoId",
-  requiereRol("ADMIN", "RESPONSABLE_PLANILLA"),
+  requierePermiso("vacaciones.gestionar"),
   asyncHandler(async (req: Request, res: Response) => {
     let contrato;
     try {
@@ -135,7 +135,7 @@ vacacionesRouter.get(
 // POST /api/vacaciones/:contratoId/goce  body: { fecha_inicio, fecha_fin, observaciones? }
 vacacionesRouter.post(
   "/:contratoId/goce",
-  requiereRol("ADMIN", "RESPONSABLE_PLANILLA"),
+  requierePermiso("vacaciones.gestionar"),
   asyncHandler(async (req: Request, res: Response) => {
     let contrato;
     try {
@@ -221,7 +221,7 @@ vacacionesRouter.post(
 // vacaciones ya generada, con el detalle necesario para imprimirla.
 vacacionesRouter.get(
   "/:contratoId/goce/:goceId/boleta",
-  requiereRol("ADMIN", "RESPONSABLE_PLANILLA"),
+  requierePermiso("vacaciones.gestionar"),
   asyncHandler(async (req: Request, res: Response) => {
     let contrato;
     try {
@@ -261,7 +261,7 @@ vacacionesRouter.get(
 // DELETE /api/vacaciones/:contratoId/goce/:goceId
 vacacionesRouter.delete(
   "/:contratoId/goce/:goceId",
-  requiereRol("ADMIN", "RESPONSABLE_PLANILLA"),
+  requierePermiso("vacaciones.gestionar"),
   asyncHandler(async (req: Request, res: Response) => {
     let contrato;
     try {

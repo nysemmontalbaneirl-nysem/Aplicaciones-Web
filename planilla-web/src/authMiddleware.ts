@@ -41,3 +41,19 @@ export function requiereRol(...roles: RolUsuario[]) {
     next();
   };
 }
+
+// Igual que requiereRol, pero contra un permiso de permisos_catalogo en vez
+// de un rol fijo por nombre - lo que tenga el rol del usuario depende de
+// rol_permiso, configurable por el Administrador desde la pestaña Roles.
+// "*" (rol protegido, ej. ADMIN) siempre pasa.
+export function requierePermiso(codigo: string) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.usuario) {
+      return res.status(401).json({ error: "No hay sesion activa. Inicia sesion de nuevo." });
+    }
+    if (!req.usuario.permisos.includes("*") && !req.usuario.permisos.includes(codigo)) {
+      return res.status(403).json({ error: "No tienes permiso para hacer esto." });
+    }
+    next();
+  };
+}

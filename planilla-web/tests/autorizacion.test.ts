@@ -252,3 +252,92 @@ describe("control por proyecto (RESPONSABLE_PLANILLA)", () => {
     expect(proyectos).toEqual(expect.arrayContaining(["Proyecto A", "Proyecto B"]));
   });
 });
+
+// Roles configurables: prueba que un rol NUEVO creado desde la pestaña
+// Roles realmente controle el acceso (no solo quede como una casilla
+// marcada sin efecto), y que el rol protegido (ADMIN) quede a salvo de
+// edicion/eliminacion accidental.
+describe("roles configurables", () => {
+  it("gestionar roles es solo para ADMIN, no delegable", async () => {
+    const r1 = await request(app).get("/api/roles").set(auth("responsableA"));
+    expect(r1.status).toBe(403);
+    const r2 = await request(app).get("/api/roles").set(auth("tareadorA"));
+    expect(r2.status).toBe(403);
+  });
+
+  it("el catalogo de permisos disponibles incluye los permisos conocidos", async () => {
+    const r = await request(app).get("/api/roles/permisos-disponibles").set(auth("admin"));
+    expect(r.status).toBe(200);
+    const codigos = r.body.map((p: { codigo: string }) => p.codigo);
+    expect(codigos).toEqual(expect.arrayContaining(["planilla.calcular", "reportes.ver", "empresa.editar"]));
+  });
+
+  it("el rol protegido (ADMIN) no se puede editar ni eliminar", async () => {
+    const rEditar = await request(app).put("/api/roles/ADMIN").set(auth("admin")).send({ nombre: "Otro nombre" });
+    expect(rEditar.status).toBe(409);
+    const rBorrar = await request(app).delete("/api/roles/ADMIN").set(auth("admin"));
+    expect(rBorrar.status).toBe(409);
+  });
+
+  it("crea un rol nuevo con un solo permiso y ese permiso SI controla el acceso real", async () => {
+    const crear = await request(app)
+      .post("/api/roles")
+      .set(auth("admin"))
+      .send({ nombre: "Supervisor de Prueba", permisos: ["planilla.calcular"] });
+    expect(crear.status).toBe(201);
+    const codigoRol = crear.body.codigo;
+    expect(crear.body.permisos).toEqual(["planilla.calcular"]);
+
+    const crearUsuario = await request(app)
+      .post("/api/usuarios")
+      .set(auth("admin"))
+      .send({
+        nombre: "Usuario Supervisor Prueba",
+        correo: "supervisor-prueba@prueba.local",
+        password: "ClavePrueba123!",
+        rol: codigoRol,
+        proyecto_ids: [],
+      });
+    expect(crearUsuario.status).toBe(201);
+
+    const login = await request(app)
+      .post("/api/auth/login")
+      .send({ correo: "supervisor-prueba@prueba.local", password: "ClavePrueba123!" });
+    expect(login.status).toBe(200);
+    expect(login.body.usuario.permisos).toEqual(["planilla.calcular"]);
+    const tokenSupervisor = login.body.token as string;
+
+    // Tiene el permiso planilla.calcular: no lo bloquea el rol (puede
+    // fallar despues por reglas de negocio, ej. falta tareo, pero eso ya
+    // no es un 401/403).
+    const calcular = await request(app)
+      .post(`/api/periodos/${periodoId}/calcular`)
+      .set({ Authorization: `Bearer ${tokenSupervisor}` });
+    expect(calcular.status).not.toBe(401);
+    expect(calcular.status).not.toBe(403);
+
+    // NO tiene reportes.ver: el checklist debe bloquearlo igual que a
+    // cualquier otro rol sin ese permiso.
+    const reporte = await request(app)
+      .get(`/api/periodos/${periodoId}/reporte/datos`)
+      .set({ Authorization: `Bearer ${tokenSupervisor}` });
+    expect(reporte.status).toBe(403);
+
+    // No se puede eliminar un rol que todavia tiene usuarios asignados.
+    const borrarEnUso = await request(app).delete(`/api/roles/${codigoRol}`).set(auth("admin"));
+    expect(borrarEnUso.status).toBe(409);
+  });
+
+  it("no se puede crear un usuario con un rol que no existe", async () => {
+    const r = await request(app)
+      .post("/api/usuarios")
+      .set(auth("admin"))
+      .send({
+        nombre: "Usuario Rol Invalido",
+        correo: "rol-invalido@prueba.local",
+        password: "ClavePrueba123!",
+        rol: "ROL_QUE_NO_EXISTE",
+      });
+    expect(r.status).toBe(400);
+  });
+});

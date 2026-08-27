@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { asyncHandler } from "../asyncHandler";
-import { requiereRol } from "../authMiddleware";
+import { requierePermiso } from "../authMiddleware";
 import { pool } from "../db";
 import {
   ErrorValidacion,
@@ -27,7 +27,7 @@ empleadosRouter.get("/:id", asyncHandler(async (req: Request, res: Response) => 
   res.json(resultado.rows[0]);
 }));
 
-empleadosRouter.post("/", requiereRol("ADMIN", "RESPONSABLE_PLANILLA"), asyncHandler(async (req: Request, res: Response) => {
+empleadosRouter.post("/", requierePermiso("empleados.gestionar"), asyncHandler(async (req: Request, res: Response) => {
   try {
     const b = req.body;
     const numero_documento = validarNumeroDocumento(b.numero_documento);
@@ -67,7 +67,7 @@ empleadosRouter.post("/", requiereRol("ADMIN", "RESPONSABLE_PLANILLA"), asyncHan
   }
 }));
 
-empleadosRouter.put("/:id", requiereRol("ADMIN", "RESPONSABLE_PLANILLA"), asyncHandler(async (req: Request, res: Response) => {
+empleadosRouter.put("/:id", requierePermiso("empleados.gestionar"), asyncHandler(async (req: Request, res: Response) => {
   try {
     const b = req.body;
     const apellidos_nombres = validarApellidosNombres(b.apellidos_nombres);

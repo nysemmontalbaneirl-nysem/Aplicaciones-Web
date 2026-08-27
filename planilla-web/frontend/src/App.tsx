@@ -18,7 +18,8 @@ import Importar from "./components/Importar";
 import Usuarios from "./components/Usuarios";
 import Empresa from "./components/Empresa";
 import Proyectos from "./components/Proyectos";
-import { PeriodoPlanilla } from "./types";
+import Roles from "./components/Roles";
+import { PeriodoPlanilla, tienePermiso } from "./types";
 
 export default function App() {
   const { usuario, cargando, cerrarSesion } = useAuth();
@@ -45,8 +46,20 @@ export default function App() {
   }
 
   const esAdmin = usuario.rol === "ADMIN";
-  // TAREADOR solo carga tareo, no calcula ni ve boletas/reportes.
-  const puedeCalcular = esAdmin || usuario.rol === "RESPONSABLE_PLANILLA";
+  // Ver boletas/calcular/reportes/vacaciones ya no depende del nombre del
+  // rol, sino de los permisos que el Administrador le haya marcado desde la
+  // pestaña Roles (para que un rol nuevo que creado desde ahi funcione de
+  // verdad, no solo quede como una casilla marcada sin efecto).
+  const puedeCalcular = tienePermiso(usuario, "planilla.calcular");
+  const puedeVerBoletas = tienePermiso(usuario, "boletas.ver");
+  const puedeVerReportes = tienePermiso(usuario, "reportes.ver");
+  const puedeVerVacaciones = tienePermiso(usuario, "vacaciones.gestionar");
+  const puedeImportarMasivo = tienePermiso(usuario, "importacion.masiva");
+  const puedeVerParametros = tienePermiso(usuario, "parametros.editar");
+  const puedeVerConfiguracion = tienePermiso(usuario, "conceptos.editar");
+  const puedeVerProyectos = tienePermiso(usuario, "proyectos.gestionar");
+  const puedeVerEmpresa = tienePermiso(usuario, "empresa.editar");
+  const puedeVerBitacora = tienePermiso(usuario, "bitacora.ver");
 
   return (
     <div className="app-shell">
@@ -63,13 +76,22 @@ export default function App() {
           periodoSeleccionado={!!periodoSeleccionado}
           esAdmin={esAdmin}
           puedeCalcular={puedeCalcular}
+          puedeVerBoletas={puedeVerBoletas}
+          puedeVerReportes={puedeVerReportes}
+          puedeVerVacaciones={puedeVerVacaciones}
+          puedeImportarMasivo={puedeImportarMasivo}
+          puedeVerParametros={puedeVerParametros}
+          puedeVerConfiguracion={puedeVerConfiguracion}
+          puedeVerProyectos={puedeVerProyectos}
+          puedeVerEmpresa={puedeVerEmpresa}
+          puedeVerBitacora={puedeVerBitacora}
         />
 
         <div className="main-content">
           {cambiandoPassword && <CambiarPassword onListo={() => setCambiandoPassword(false)} />}
 
           {pestana === "trabajadores" && <Trabajadores />}
-          {pestana === "importar" && esAdmin && <Importar />}
+          {pestana === "importar" && puedeImportarMasivo && <Importar />}
           {pestana === "periodos" && (
             <Periodos onCargarTareo={irATareo} onCalcular={puedeCalcular ? irACalculo : undefined} />
           )}
@@ -79,15 +101,16 @@ export default function App() {
           {pestana === "calculo" && periodoSeleccionado && puedeCalcular && (
             <Calculo periodo={periodoSeleccionado} onVerBoletas={() => setPestana("boletas")} />
           )}
-          {pestana === "boletas" && puedeCalcular && <Boletas periodoInicial={periodoSeleccionado} />}
-          {pestana === "reportes" && puedeCalcular && <Reportes />}
-          {pestana === "vacaciones" && puedeCalcular && <Vacaciones />}
-          {pestana === "parametros" && esAdmin && <Parametros />}
-          {pestana === "configuracion" && esAdmin && <Configuracion />}
-          {pestana === "bitacora" && esAdmin && <Bitacora />}
-          {pestana === "proyectos" && esAdmin && <Proyectos />}
+          {pestana === "boletas" && puedeVerBoletas && <Boletas periodoInicial={periodoSeleccionado} />}
+          {pestana === "reportes" && puedeVerReportes && <Reportes />}
+          {pestana === "vacaciones" && puedeVerVacaciones && <Vacaciones />}
+          {pestana === "parametros" && puedeVerParametros && <Parametros />}
+          {pestana === "configuracion" && puedeVerConfiguracion && <Configuracion />}
+          {pestana === "bitacora" && puedeVerBitacora && <Bitacora />}
+          {pestana === "proyectos" && puedeVerProyectos && <Proyectos />}
           {pestana === "usuarios" && esAdmin && <Usuarios />}
-          {pestana === "empresa" && esAdmin && <Empresa />}
+          {pestana === "roles" && esAdmin && <Roles />}
+          {pestana === "empresa" && puedeVerEmpresa && <Empresa />}
         </div>
       </div>
     </div>

@@ -23,6 +23,12 @@ export interface TokenPayload {
   // Nombres de los proyectos a los que tiene acceso (vacio/ignorado si rol === "ADMIN",
   // que tiene acceso a todos).
   proyectos: string[];
+  // Codigos de permisos_catalogo que tiene su rol (ver rol_permiso). Si el
+  // rol es "protegido" (ADMIN), viene como ["*"] = acceso a todo. Se
+  // calcula al hacer login (routes/auth.ts); si el Administrador cambia los
+  // permisos de un rol, los usuarios de ese rol lo ven recien al volver a
+  // iniciar sesion (igual que ya pasa hoy con los proyectos asignados).
+  permisos: string[];
 }
 
 export function firmarToken(payload: TokenPayload): string {

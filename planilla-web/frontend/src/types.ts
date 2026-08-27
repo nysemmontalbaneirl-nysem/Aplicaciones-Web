@@ -182,9 +182,9 @@ export interface AsistenciaTareo extends AsistenciaEntrada {
   categoria_ocupacional: CategoriaOcupacional;
 }
 
-// ADMIN: acceso total. RESPONSABLE_PLANILLA: tareo/calculo/boletas solo de
-// sus proyectos asignados. TAREADOR: solo carga tareo de sus proyectos.
-export type RolUsuario = "ADMIN" | "RESPONSABLE_PLANILLA" | "TAREADOR";
+// Codigo de rol (roles.codigo): ADMIN, RESPONSABLE_PLANILLA, TAREADOR, o
+// cualquier rol nuevo que el Administrador cree desde la pestaña Roles.
+export type RolUsuario = string;
 
 export interface Usuario {
   id: number;
@@ -193,6 +193,29 @@ export interface Usuario {
   rol: RolUsuario;
   activo: boolean;
   proyectos: string[];
+  // Codigos de permisos_catalogo que tiene su rol. ["*"] = acceso a todo
+  // (rol protegido, ej. ADMIN). Viene calculado desde el login.
+  permisos: string[];
+}
+
+export interface Rol {
+  codigo: string;
+  nombre: string;
+  descripcion: string | null;
+  protegido: boolean;
+  permisos: string[];
+  usuarios_count: number;
+}
+
+export interface PermisoCatalogo {
+  codigo: string;
+  nombre: string;
+  grupo: string;
+  orden: number;
+}
+
+export function tienePermiso(usuario: Usuario, codigo: string): boolean {
+  return usuario.permisos.includes("*") || usuario.permisos.includes(codigo);
 }
 
 export interface Proyecto {

@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { asyncHandler } from "../asyncHandler";
-import { requiereRol } from "../authMiddleware";
+import { requierePermiso } from "../authMiddleware";
 import { pool } from "../db";
 import { tieneAccesoProyecto } from "../permisos";
 import {
@@ -42,7 +42,7 @@ contratosRouter.get("/", asyncHandler(async (req: Request, res: Response) => {
   res.json(resultado.rows);
 }));
 
-contratosRouter.post("/", requiereRol("ADMIN", "RESPONSABLE_PLANILLA"), asyncHandler(async (req: Request, res: Response) => {
+contratosRouter.post("/", requierePermiso("contratos.gestionar"), asyncHandler(async (req: Request, res: Response) => {
   try {
     const b = req.body;
     const categoria_ocupacional = validarCategoriaOcupacional(b.categoria_ocupacional);
@@ -98,7 +98,7 @@ contratosRouter.post("/", requiereRol("ADMIN", "RESPONSABLE_PLANILLA"), asyncHan
   }
 }));
 
-contratosRouter.put("/:id", requiereRol("ADMIN", "RESPONSABLE_PLANILLA"), asyncHandler(async (req: Request, res: Response) => {
+contratosRouter.put("/:id", requierePermiso("contratos.gestionar"), asyncHandler(async (req: Request, res: Response) => {
   try {
     const b = req.body;
     const categoria_ocupacional = validarCategoriaOcupacional(b.categoria_ocupacional);
@@ -163,7 +163,7 @@ contratosRouter.put("/:id", requiereRol("ADMIN", "RESPONSABLE_PLANILLA"), asyncH
   }
 }));
 
-contratosRouter.post("/:id/cese", requiereRol("ADMIN", "RESPONSABLE_PLANILLA"), asyncHandler(async (req: Request, res: Response) => {
+contratosRouter.post("/:id/cese", requierePermiso("contratos.gestionar"), asyncHandler(async (req: Request, res: Response) => {
   try {
     const fecha_cese = validarFecha(req.body.fecha_cese, "fecha_cese");
     const actual = await pool.query("SELECT proyecto FROM contratos WHERE id = $1", [req.params.id]);

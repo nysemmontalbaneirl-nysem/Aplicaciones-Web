@@ -3,7 +3,7 @@ import multer from "multer";
 import { parse } from "csv-parse/sync";
 import ExcelJS from "exceljs";
 import { asyncHandler } from "../asyncHandler";
-import { requiereRol } from "../authMiddleware";
+import { requierePermiso } from "../authMiddleware";
 import { pool } from "../db";
 import { calcularLineaPlanilla } from "../motorCalculo";
 import { obtenerConceptos } from "./conceptos";
@@ -79,7 +79,7 @@ export async function obtenerAfpTasas(anio: number, mes: number): Promise<TasasA
 // sus proyectos asignados.
 planillaRouter.get(
   "/:id/planilla",
-  requiereRol("ADMIN", "RESPONSABLE_PLANILLA"),
+  requierePermiso("boletas.ver"),
   asyncHandler(async (req: Request, res: Response) => {
   const periodo = await obtenerPeriodo(req.params.id);
   if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
@@ -442,7 +442,7 @@ planillaRouter.post(
 // proyectos que haya calculado otro responsable en el mismo periodo).
 planillaRouter.post(
   "/:id/calcular",
-  requiereRol("ADMIN", "RESPONSABLE_PLANILLA"),
+  requierePermiso("planilla.calcular"),
   asyncHandler(async (req: Request, res: Response) => {
   const cliente = await pool.connect();
   try {

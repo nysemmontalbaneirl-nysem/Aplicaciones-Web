@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { asyncHandler } from "../asyncHandler";
-import { requiereRol } from "../authMiddleware";
+import { requierePermiso } from "../authMiddleware";
 import { pool } from "../db";
 import { ErrorValidacion } from "../validaciones";
 
@@ -16,7 +16,7 @@ proyectosRouter.get(
 
 proyectosRouter.post(
   "/",
-  requiereRol("ADMIN"),
+  requierePermiso("proyectos.gestionar"),
   asyncHandler(async (req: Request, res: Response) => {
     try {
       const b = req.body;
@@ -40,7 +40,7 @@ proyectosRouter.post(
 
 proyectosRouter.put(
   "/:id",
-  requiereRol("ADMIN"),
+  requierePermiso("proyectos.gestionar"),
   asyncHandler(async (req: Request, res: Response) => {
     const b = req.body;
     const r = await pool.query(

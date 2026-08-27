@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { asyncHandler } from "../asyncHandler";
-import { requiereRol } from "../authMiddleware";
+import { requierePermiso } from "../authMiddleware";
 import { pool } from "../db";
 
 export const bitacoraRouter = Router();
@@ -9,7 +9,7 @@ export const bitacoraRouter = Router();
 // Solo ADMIN: la bitacora es informacion de auditoria interna.
 bitacoraRouter.get(
   "/",
-  requiereRol("ADMIN"),
+  requierePermiso("bitacora.ver"),
   asyncHandler(async (req: Request, res: Response) => {
     const porPagina = 50;
     const pagina = Math.max(1, Number(req.query.pagina) || 1);
@@ -62,7 +62,7 @@ bitacoraRouter.get(
 // registrados, para armar el filtro en la pantalla sin hardcodearlos ahi.
 bitacoraRouter.get(
   "/acciones",
-  requiereRol("ADMIN"),
+  requierePermiso("bitacora.ver"),
   asyncHandler(async (_req: Request, res: Response) => {
     const r = await pool.query(`SELECT DISTINCT accion FROM bitacora_planilla ORDER BY accion`);
     res.json(r.rows.map((f) => f.accion));

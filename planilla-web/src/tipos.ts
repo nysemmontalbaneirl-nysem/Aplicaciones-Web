@@ -187,9 +187,10 @@ export interface DetallePlanilla {
   detalle_json: Record<string, unknown>;
 }
 
-// ADMIN: acceso total. RESPONSABLE_PLANILLA: tareo/calculo/boletas solo de
-// sus proyectos asignados. TAREADOR: solo carga tareo de sus proyectos.
-export type RolUsuario = "ADMIN" | "RESPONSABLE_PLANILLA" | "TAREADOR";
+// Codigo de rol (roles.codigo): ADMIN, RESPONSABLE_PLANILLA, TAREADOR, o
+// cualquier rol nuevo que el Administrador cree desde la pestaña Roles.
+// Ya no es una union fija: los roles son configurables (ver routes/roles.ts).
+export type RolUsuario = string;
 
 export interface Usuario {
   id: number;
@@ -197,6 +198,22 @@ export interface Usuario {
   correo: string;
   rol: RolUsuario;
   activo: boolean;
+}
+
+export interface Rol {
+  codigo: string;
+  nombre: string;
+  descripcion: string | null;
+  protegido: boolean;
+  permisos: string[];
+  usuarios_count: number;
+}
+
+export interface PermisoCatalogo {
+  codigo: string;
+  nombre: string;
+  grupo: string;
+  orden: number;
 }
 
 export interface Proyecto {

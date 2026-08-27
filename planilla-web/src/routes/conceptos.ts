@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { asyncHandler } from "../asyncHandler";
-import { requiereRol } from "../authMiddleware";
+import { requierePermiso } from "../authMiddleware";
 import { pool } from "../db";
 import { ConceptoPlanilla, ConceptosPlanilla } from "../tipos";
 import { ErrorValidacion } from "../validaciones";
@@ -49,7 +49,7 @@ export async function obtenerConceptos(): Promise<ConceptosPlanilla> {
 // GET /api/conceptos -> catalogo completo, ordenado para mostrar en la tabla.
 conceptosRouter.get(
   "/",
-  requiereRol("ADMIN"),
+  requierePermiso("conceptos.editar"),
   asyncHandler(async (_req: Request, res: Response) => {
     const r = await pool.query("SELECT * FROM conceptos_planilla ORDER BY orden");
     res.json(r.rows.map(filaAConcepto));
@@ -70,7 +70,7 @@ const CAMPOS_AFECTO = [
 // Cualquier campo omitido conserva su valor actual.
 conceptosRouter.put(
   "/:codigo",
-  requiereRol("ADMIN"),
+  requierePermiso("conceptos.editar"),
   asyncHandler(async (req: Request, res: Response) => {
     const existente = await pool.query("SELECT * FROM conceptos_planilla WHERE codigo = $1", [req.params.codigo]);
     if (existente.rowCount === 0) {
@@ -143,7 +143,7 @@ conceptosRouter.put(
 // una configuracion manual queda mal armada.
 conceptosRouter.post(
   "/restaurar",
-  requiereRol("ADMIN"),
+  requierePermiso("conceptos.editar"),
   asyncHandler(async (req: Request, res: Response) => {
     for (const valores of VALORES_ORIGINALES) {
       await pool.query(
