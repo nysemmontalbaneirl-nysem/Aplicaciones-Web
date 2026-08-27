@@ -20,6 +20,7 @@ import { reportesRouter } from "./routes/reportes";
 import { importacionRouter } from "./routes/importacion";
 import { vacacionesRouter } from "./routes/vacaciones";
 import { conceptosRouter } from "./routes/conceptos";
+import { bitacoraRouter } from "./routes/bitacora";
 
 // Red de seguridad adicional: si algo lanza un error fuera de una peticion
 // HTTP (o se escapa del asyncHandler de las rutas), que quede en el log en
@@ -75,6 +76,7 @@ app.use("/api/periodos", reportesRouter);
 app.use("/api/empleados", importacionRouter);
 app.use("/api/vacaciones", vacacionesRouter);
 app.use("/api/conceptos", conceptosRouter);
+app.use("/api/bitacora", bitacoraRouter);
 
 // Manejador de errores centralizado
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

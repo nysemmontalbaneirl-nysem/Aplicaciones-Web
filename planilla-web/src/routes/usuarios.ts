@@ -4,6 +4,7 @@ import { asyncHandler } from "../asyncHandler";
 import { requiereRol } from "../authMiddleware";
 import { pool } from "../db";
 import { ErrorValidacion } from "../validaciones";
+import { registrarBitacora } from "../bitacora";
 
 export const usuariosRouter = Router();
 
@@ -65,6 +66,11 @@ usuariosRouter.post(
           );
         }
         await cliente.query("COMMIT");
+        await registrarBitacora(req.usuario!.id, "CREAR_USUARIO", "usuarios", usuarioId, {
+          nombre: r.rows[0].nombre,
+          correo: r.rows[0].correo,
+          rol: r.rows[0].rol,
+        });
         res.status(201).json(r.rows[0]);
       } catch (err) {
         await cliente.query("ROLLBACK");
@@ -107,6 +113,10 @@ usuariosRouter.put(
       try {
         await cliente.query("BEGIN");
 
+        const anterior = await cliente.query("SELECT nombre, rol, activo FROM usuarios WHERE id = $1", [
+          req.params.id,
+        ]);
+
         if (b.password) {
           const hash = await bcrypt.hash(b.password, 10);
           await cliente.query("UPDATE usuarios SET password_hash = $1 WHERE id = $2", [hash, req.params.id]);
@@ -136,6 +146,11 @@ usuariosRouter.put(
         }
 
         await cliente.query("COMMIT");
+        await registrarBitacora(req.usuario!.id, "EDICION_USUARIO", "usuarios", Number(req.params.id), {
+          antes: anterior.rows[0],
+          despues: { nombre: r.rows[0].nombre, rol: r.rows[0].rol, activo: r.rows[0].activo },
+          password_cambiada: !!b.password,
+        });
         res.json(r.rows[0]);
       } catch (err) {
         await cliente.query("ROLLBACK");

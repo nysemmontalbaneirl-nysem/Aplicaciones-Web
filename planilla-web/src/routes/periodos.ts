@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { asyncHandler } from "../asyncHandler";
 import { pool } from "../db";
 import { ErrorValidacion } from "../validaciones";
+import { registrarBitacora } from "../bitacora";
 
 export const periodosRouter = Router();
 
@@ -61,5 +62,6 @@ periodosRouter.delete("/:id", asyncHandler(async (req: Request, res: Response) =
       error: "Solo se puede eliminar un periodo en estado ABIERTO (sin planilla calculada), o no existe",
     });
   }
+  await registrarBitacora(req.usuario!.id, "ELIMINAR_PERIODO", "periodos_planilla", Number(req.params.id), {});
   res.status(204).send();
 }));

@@ -3,6 +3,7 @@ import { asyncHandler } from "../asyncHandler";
 import { requiereRol } from "../authMiddleware";
 import { pool } from "../db";
 import { ErrorValidacion } from "../validaciones";
+import { registrarBitacora } from "../bitacora";
 
 export const parametrosRouter = Router();
 
@@ -54,6 +55,11 @@ parametrosRouter.post("/mensual", requiereRol("ADMIN"), asyncHandler(async (req:
       [anio, mes, copiar_de_anio, copiar_de_mes]
     );
     await cliente.query("COMMIT");
+    await registrarBitacora(req.usuario!.id, "CREAR_PARAMETROS_MENSUALES", "tabla_salarial_mensual", null, {
+      anio,
+      mes,
+      copiado_de: `${copiar_de_mes}/${copiar_de_anio}`,
+    });
     res.status(201).json({ anio, mes });
   } catch (err) {
     await cliente.query("ROLLBACK");
@@ -151,6 +157,12 @@ parametrosRouter.put("/mensual/:anio/:mes", requiereRol("ADMIN"), asyncHandler(a
     }
 
     await cliente.query("COMMIT");
+    await registrarBitacora(req.usuario!.id, "EDICION_PARAMETROS_MENSUALES", "tabla_salarial_mensual", null, {
+      anio,
+      mes,
+      afp_tasas,
+      tabla_categorias,
+    });
     res.json({ anio, mes, afp_tasas, tabla_categorias });
   } catch (err) {
     await cliente.query("ROLLBACK");
@@ -208,6 +220,10 @@ parametrosRouter.post("/", requiereRol("ADMIN"), asyncHandler(async (req: Reques
           p.tasa_conafovicer, p.tasa_sctr_salud, p.asignacion_familiar, p.seguro_vida_ley,
         ]
       );
+      await registrarBitacora(req.usuario!.id, "CREAR_PARAMETROS_ANUALES", "parametros_normativos", resultado.rows[0].id, {
+        anio: b.anio,
+        copiado_de_anio: b.copiar_de_anio,
+      });
       return res.status(201).json(resultado.rows[0]);
     }
 
@@ -230,6 +246,9 @@ parametrosRouter.post("/", requiereRol("ADMIN"), asyncHandler(async (req: Reques
         b.seguro_vida_ley ?? 5,
       ]
     );
+    await registrarBitacora(req.usuario!.id, "CREAR_PARAMETROS_ANUALES", "parametros_normativos", resultado.rows[0].id, {
+      anio: b.anio,
+    });
     res.status(201).json(resultado.rows[0]);
   } catch (err) {
     if (err instanceof ErrorValidacion) {
@@ -244,6 +263,10 @@ parametrosRouter.post("/", requiereRol("ADMIN"), asyncHandler(async (req: Reques
 
 parametrosRouter.put("/:anio", requiereRol("ADMIN"), asyncHandler(async (req: Request, res: Response) => {
   const b = req.body;
+  const anterior = await pool.query("SELECT * FROM parametros_normativos WHERE anio = $1", [req.params.anio]);
+  if (anterior.rowCount === 0) {
+    return res.status(404).json({ error: `No hay parametros configurados para el anio ${req.params.anio}` });
+  }
   const resultado = await pool.query(
     `UPDATE parametros_normativos SET
       uit = $1, remuneracion_minima_vital = $2, tasa_essalud = $3, tasa_onp = $4,
@@ -264,8 +287,10 @@ parametrosRouter.put("/:anio", requiereRol("ADMIN"), asyncHandler(async (req: Re
       req.params.anio,
     ]
   );
-  if (resultado.rowCount === 0) {
-    return res.status(404).json({ error: `No hay parametros configurados para el anio ${req.params.anio}` });
-  }
+  await registrarBitacora(req.usuario!.id, "EDICION_PARAMETROS_ANUALES", "parametros_normativos", resultado.rows[0].id, {
+    anio: req.params.anio,
+    antes: anterior.rows[0],
+    despues: resultado.rows[0],
+  });
   res.json(resultado.rows[0]);
 }));

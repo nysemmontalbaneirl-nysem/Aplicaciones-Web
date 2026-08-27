@@ -203,6 +203,24 @@ export interface Proyecto {
   cuota_sindical_semanal: number;
 }
 
+export interface EntradaBitacora {
+  id: number;
+  accion: string;
+  tabla_afectada: string | null;
+  registro_id: number | null;
+  detalle: Record<string, unknown>;
+  fecha: string;
+  usuario_nombre: string | null;
+  usuario_correo: string | null;
+}
+
+export interface RespuestaBitacora {
+  pagina: number;
+  por_pagina: number;
+  total: number;
+  registros: EntradaBitacora[];
+}
+
 export interface DatosEmpresa {
   id: number;
   ruc: string;

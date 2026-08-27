@@ -10,6 +10,7 @@ import { obtenerConceptos } from "./conceptos";
 import { tieneAccesoProyecto } from "../permisos";
 import { Contrato, ParametrosNormativos, TablaSalarialMensual, TasasAFPMensuales } from "../tipos";
 import { ErrorValidacion } from "../validaciones";
+import { registrarBitacora } from "../bitacora";
 
 export const planillaRouter = Router();
 
@@ -271,6 +272,10 @@ planillaRouter.delete("/:id/tareo/:contratoId", asyncHandler(async (req: Request
   if (resultado.rowCount === 0) {
     return res.status(404).json({ error: "No hay tareo cargado para ese trabajador en este periodo" });
   }
+  await registrarBitacora(req.usuario!.id, "QUITAR_TRABAJADOR_TAREO", "asistencia_periodo", null, {
+    periodo_id: req.params.id,
+    contrato_id: req.params.contratoId,
+  });
   res.status(204).send();
 }));
 
@@ -631,6 +636,14 @@ planillaRouter.post(
     );
 
     await cliente.query("COMMIT");
+    await registrarBitacora(req.usuario!.id, "CALCULO_PLANILLA", "periodos_planilla", periodo.id, {
+      anio: periodo.anio,
+      mes: periodo.mes,
+      estado_anterior: periodo.estado,
+      recalculo: periodo.estado === "CALCULADO",
+      trabajadores_calculados: lineasCalculadas.length,
+      errores: erroresCalculo.length,
+    });
     res.json({
       periodo_id: periodo.id,
       trabajadores_calculados: lineasCalculadas.length,

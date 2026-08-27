@@ -12,6 +12,7 @@ import Boletas from "./components/Boletas";
 import Reportes from "./components/Reportes";
 import Vacaciones from "./components/Vacaciones";
 import Configuracion from "./components/Configuracion";
+import Bitacora from "./components/Bitacora";
 import Parametros from "./components/Parametros";
 import Importar from "./components/Importar";
 import Usuarios from "./components/Usuarios";
@@ -83,6 +84,7 @@ export default function App() {
           {pestana === "vacaciones" && puedeCalcular && <Vacaciones />}
           {pestana === "parametros" && esAdmin && <Parametros />}
           {pestana === "configuracion" && esAdmin && <Configuracion />}
+          {pestana === "bitacora" && esAdmin && <Bitacora />}
           {pestana === "proyectos" && esAdmin && <Proyectos />}
           {pestana === "usuarios" && esAdmin && <Usuarios />}
           {pestana === "empresa" && esAdmin && <Empresa />}

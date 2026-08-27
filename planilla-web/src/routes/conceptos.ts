@@ -4,6 +4,7 @@ import { requiereRol } from "../authMiddleware";
 import { pool } from "../db";
 import { ConceptoPlanilla, ConceptosPlanilla } from "../tipos";
 import { ErrorValidacion } from "../validaciones";
+import { registrarBitacora } from "../bitacora";
 
 export const conceptosRouter = Router();
 
@@ -116,6 +117,22 @@ conceptosRouter.put(
         req.params.codigo,
       ]
     );
+    await registrarBitacora(req.usuario!.id, "EDICION_CONCEPTO_PLANILLA", "conceptos_planilla", r.rows[0].id, {
+      codigo: req.params.codigo,
+      antes: {
+        factor1: actual.factor1,
+        factor2: actual.factor2,
+        factor3: actual.factor3,
+        afecto_essalud: actual.afecto_essalud,
+        afecto_sctr: actual.afecto_sctr,
+        afecto_senati: actual.afecto_senati,
+        afecto_onp: actual.afecto_onp,
+        afecto_afp: actual.afecto_afp,
+        afecto_renta5ta: actual.afecto_renta5ta,
+        afecto_conafovicer: actual.afecto_conafovicer,
+      },
+      despues: filaAConcepto(r.rows[0]),
+    });
     res.json(filaAConcepto(r.rows[0]));
   })
 );
@@ -127,7 +144,7 @@ conceptosRouter.put(
 conceptosRouter.post(
   "/restaurar",
   requiereRol("ADMIN"),
-  asyncHandler(async (_req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     for (const valores of VALORES_ORIGINALES) {
       await pool.query(
         `UPDATE conceptos_planilla SET
@@ -151,6 +168,9 @@ conceptosRouter.post(
         ]
       );
     }
+    await registrarBitacora(req.usuario!.id, "RESTAURAR_CONCEPTOS_PLANILLA", "conceptos_planilla", null, {
+      nota: "Se restauraron los 14 conceptos a sus valores originales",
+    });
     const r = await pool.query("SELECT * FROM conceptos_planilla ORDER BY orden");
     res.json(r.rows.map(filaAConcepto));
   })

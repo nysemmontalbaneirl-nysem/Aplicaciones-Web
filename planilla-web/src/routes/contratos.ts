@@ -9,6 +9,7 @@ import {
   validarFecha,
   validarSistemaPension,
 } from "../validaciones";
+import { registrarBitacora } from "../bitacora";
 
 export const contratosRouter = Router();
 
@@ -179,6 +180,10 @@ contratosRouter.post("/:id/cese", requiereRol("ADMIN", "RESPONSABLE_PLANILLA"), 
     if (resultado.rowCount === 0) {
       return res.status(404).json({ error: "Contrato no encontrado" });
     }
+    await registrarBitacora(req.usuario!.id, "CESE_TRABAJADOR", "contratos", resultado.rows[0].id, {
+      fecha_cese,
+      proyecto: resultado.rows[0].proyecto,
+    });
     res.json(resultado.rows[0]);
   } catch (err) {
     if (err instanceof ErrorValidacion) {
