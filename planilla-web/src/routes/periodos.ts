@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { asyncHandler } from "../asyncHandler";
+import { requiereRol } from "../authMiddleware";
 import { pool } from "../db";
 import { ErrorValidacion } from "../validaciones";
 import { registrarBitacora } from "../bitacora";
@@ -13,7 +14,12 @@ periodosRouter.get("/", asyncHandler(async (_req: Request, res: Response) => {
   res.json(resultado.rows);
 }));
 
-periodosRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
+// Crear/eliminar un periodo afecta a TODOS los proyectos (un periodo no es
+// especifico de una obra) - por eso, a diferencia de tareo/contratos, aqui
+// no aplica tieneAccesoProyecto, solo el rol. Bug real corregido: estas dos
+// rutas no tenian NINGUN control de rol antes (cualquier usuario logueado,
+// incluido un Tareador, podia crear o borrar periodos de planilla).
+periodosRouter.post("/", requiereRol("ADMIN", "RESPONSABLE_PLANILLA"), asyncHandler(async (req: Request, res: Response) => {
   try {
     const b = req.body;
     if (!b.anio || !b.mes || !b.fecha_inicio || !b.fecha_fin) {
@@ -52,7 +58,7 @@ periodosRouter.post("/", asyncHandler(async (req: Request, res: Response) => {
 
 // Solo se puede eliminar un periodo que todavia no tiene planilla calculada,
 // para no perder resultados ya generados.
-periodosRouter.delete("/:id", asyncHandler(async (req: Request, res: Response) => {
+periodosRouter.delete("/:id", requiereRol("ADMIN", "RESPONSABLE_PLANILLA"), asyncHandler(async (req: Request, res: Response) => {
   const resultado = await pool.query(
     "DELETE FROM periodos_planilla WHERE id = $1 AND estado = 'ABIERTO' RETURNING id",
     [req.params.id]
