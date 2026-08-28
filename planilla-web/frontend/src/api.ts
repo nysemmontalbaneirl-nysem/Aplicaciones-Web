@@ -1,4 +1,8 @@
-export const BASE_URL = "http://localhost:3000/api";
+// En desarrollo (npm run dev) usa localhost. Para producción, define
+// VITE_API_URL en frontend/.env.production antes de compilar (ver
+// frontend/.env.production.example) — Vite la toma automáticamente al
+// correr "npm run build".
+export const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3000/api";
 
 const CLAVE_TOKEN = "planilla_token";
 

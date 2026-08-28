@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "ts-node src/server.ts",
     "build": "tsc",
+    "postinstall": "tsc",
     "start": "node dist/server.js",
     "respaldo": "node scripts/respaldo.js",
     "restaurar": "node scripts/restaurar.js",
