@@ -341,3 +341,37 @@ describe("roles configurables", () => {
     expect(r.status).toBe(400);
   });
 });
+
+// Dashboard: abierto a cualquier usuario logueado, pero el monto de la
+// planilla solo se muestra a quien tenga permiso de ver boletas/reportes.
+describe("dashboard", () => {
+  it("rechaza una peticion sin sesion", async () => {
+    const r = await request(app).get("/api/dashboard/resumen");
+    expect(r.status).toBe(401);
+  });
+
+  it("da la forma esperada y numeros validos para cualquier rol", async () => {
+    for (const u of ["admin", "responsableA", "tareadorA"] as const) {
+      const r = await request(app).get("/api/dashboard/resumen").set(auth(u));
+      expect(r.status).toBe(200);
+      expect(typeof r.body.trabajadores_activos).toBe("number");
+      expect(typeof r.body.proyectos_activos).toBe("number");
+      expect(Array.isArray(r.body.alertas)).toBe(true);
+    }
+  });
+
+  it("solo incluye el costo de la planilla si el rol tiene boletas.ver o reportes.ver", async () => {
+    const comoAdmin = await request(app).get("/api/dashboard/resumen").set(auth("admin"));
+    const comoResponsable = await request(app).get("/api/dashboard/resumen").set(auth("responsableA"));
+    const comoTareador = await request(app).get("/api/dashboard/resumen").set(auth("tareadorA"));
+
+    // Los 3 deben tener un periodo_actual (hay periodos creados en pruebas anteriores).
+    expect(comoAdmin.body.periodo_actual).not.toBeNull();
+    expect(comoResponsable.body.periodo_actual).not.toBeNull();
+    expect(comoTareador.body.periodo_actual).not.toBeNull();
+
+    expect(typeof comoAdmin.body.periodo_actual.costo_total_ingresos).toBe("number");
+    expect(typeof comoResponsable.body.periodo_actual.costo_total_ingresos).toBe("number");
+    expect(comoTareador.body.periodo_actual.costo_total_ingresos).toBeNull();
+  });
+});

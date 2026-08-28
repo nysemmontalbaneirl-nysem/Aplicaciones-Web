@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 export type Pestana =
+  | "inicio"
   | "trabajadores"
   | "importar"
   | "periodos"
@@ -72,6 +73,11 @@ export default function Sidebar({
 
   const grupos: GrupoMenu[] = [
     {
+      id: "inicio",
+      etiqueta: "Inicio",
+      items: [{ id: "inicio", etiqueta: "Resumen" }],
+    },
+    {
       id: "trabajadores",
       etiqueta: "Trabajadores",
       items: [
@@ -111,7 +117,7 @@ export default function Sidebar({
   ];
 
   const grupoDeLaPestanaActiva = grupos.find((g) => g.items.some((i) => i.id === pestana))?.id;
-  const [grupoAbierto, setGrupoAbierto] = useState<string | null>(grupoDeLaPestanaActiva ?? "trabajadores");
+  const [grupoAbierto, setGrupoAbierto] = useState<string | null>(grupoDeLaPestanaActiva ?? "inicio");
 
   return (
     <div className="sidebar">

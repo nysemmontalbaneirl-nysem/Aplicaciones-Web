@@ -19,11 +19,12 @@ import Usuarios from "./components/Usuarios";
 import Empresa from "./components/Empresa";
 import Proyectos from "./components/Proyectos";
 import Roles from "./components/Roles";
+import Dashboard from "./components/Dashboard";
 import { PeriodoPlanilla, tienePermiso } from "./types";
 
 export default function App() {
   const { usuario, cargando, cerrarSesion } = useAuth();
-  const [pestana, setPestana] = useState<Pestana>("trabajadores");
+  const [pestana, setPestana] = useState<Pestana>("inicio");
   const [periodoSeleccionado, setPeriodoSeleccionado] = useState<PeriodoPlanilla | null>(null);
   const [cambiandoPassword, setCambiandoPassword] = useState(false);
 
@@ -90,6 +91,7 @@ export default function App() {
         <div className="main-content">
           {cambiandoPassword && <CambiarPassword onListo={() => setCambiandoPassword(false)} />}
 
+          {pestana === "inicio" && <Dashboard nombreUsuario={usuario.nombre} />}
           {pestana === "trabajadores" && <Trabajadores />}
           {pestana === "importar" && puedeImportarMasivo && <Importar />}
           {pestana === "periodos" && (
