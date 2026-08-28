@@ -536,6 +536,7 @@ INSERT INTO permisos_catalogo (codigo, nombre, grupo, orden) VALUES
     ('periodos.gestionar',      'Crear y eliminar periodos de planilla',                      'Planillas',      40),
     ('planilla.calcular',       'Calcular la planilla de un periodo',                         'Planillas',      50),
     ('boletas.ver',             'Ver las boletas ya calculadas',                              'Planillas',      60),
+    ('boletas.enviar',          'Enviar boletas por correo',                                  'Planillas',      65),
     ('reportes.ver',            'Ver y descargar el resumen de planilla (Excel)',             'Planillas',      70),
     ('exportaciones.descargar', 'Descargar archivos REM / AFPnet',                            'Planillas',      80),
     ('vacaciones.gestionar',    'Registrar goces de vacaciones y generar boletas',            'Vacaciones',     90),
@@ -549,7 +550,7 @@ INSERT INTO rol_permiso (rol_codigo, permiso_codigo)
 SELECT 'RESPONSABLE_PLANILLA', codigo FROM permisos_catalogo
 WHERE codigo IN (
     'empleados.gestionar', 'contratos.gestionar', 'periodos.gestionar',
-    'planilla.calcular', 'boletas.ver', 'reportes.ver',
+    'planilla.calcular', 'boletas.ver', 'boletas.enviar', 'reportes.ver',
     'exportaciones.descargar', 'vacaciones.gestionar'
 );
 

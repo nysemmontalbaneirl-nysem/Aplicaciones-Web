@@ -155,6 +155,14 @@ describe("rutas ADMIN + RESPONSABLE_PLANILLA (TAREADOR sin acceso)", () => {
     ],
     ["POST /api/empleados", (u) => request(app).post("/api/empleados").set(auth(u)).send({})],
     ["POST /api/contratos", (u) => request(app).post("/api/contratos").set(auth(u)).send({})],
+    [
+      "POST /api/periodos/:id/boletas/enviar-correo",
+      (u) =>
+        request(app)
+          .post(`/api/periodos/${periodoId}/boletas/enviar-correo`)
+          .set(auth(u))
+          .send({ detalle_ids: [] }),
+    ],
   ];
 
   it.each(casos)("%s -> 403 para TAREADOR", async (_nombre, hacer) => {
@@ -339,6 +347,44 @@ describe("roles configurables", () => {
         rol: "ROL_QUE_NO_EXISTE",
       });
     expect(r.status).toBe(400);
+  });
+});
+
+// Envio de boletas por correo: valida el body y reporta por-boleta los
+// problemas (id inexistente/sin acceso, trabajador sin correo, etc.) sin
+// tumbar el resto del lote. No prueba el envio real de correo (necesitaria
+// un SMTP configurado); eso se probo a mano con un SMTP real.
+describe("envio de boletas por correo", () => {
+  it("rechaza un body sin detalle_ids", async () => {
+    const r = await request(app).post(`/api/periodos/${periodoId}/boletas/enviar-correo`).set(auth("admin")).send({});
+    expect(r.status).toBe(400);
+  });
+
+  it("rechaza un detalle_ids vacio", async () => {
+    const r = await request(app)
+      .post(`/api/periodos/${periodoId}/boletas/enviar-correo`)
+      .set(auth("admin"))
+      .send({ detalle_ids: [] });
+    expect(r.status).toBe(400);
+  });
+
+  it("reporta como error los ids que no existen o no son de ese periodo, sin tumbar la peticion", async () => {
+    const r = await request(app)
+      .post(`/api/periodos/${periodoId}/boletas/enviar-correo`)
+      .set(auth("admin"))
+      .send({ detalle_ids: [999999] });
+    expect(r.status).toBe(200);
+    expect(r.body.enviados).toBe(0);
+    expect(r.body.errores).toHaveLength(1);
+    expect(r.body.errores[0].motivo).toMatch(/no encontrada/i);
+  });
+
+  it("404 si el periodo no existe", async () => {
+    const r = await request(app)
+      .post("/api/periodos/999999/boletas/enviar-correo")
+      .set(auth("admin"))
+      .send({ detalle_ids: [1] });
+    expect(r.status).toBe(404);
   });
 });
 

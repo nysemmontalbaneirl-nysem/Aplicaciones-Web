@@ -1,7 +1,19 @@
 import { useEffect, useState } from "react";
-import { apiGet } from "../api";
-import { DetallePlanilla, PeriodoPlanilla } from "../types";
+import { apiGet, apiPost } from "../api";
+import { DetallePlanilla, PeriodoPlanilla, tienePermiso } from "../types";
+import { useAuth } from "../AuthContext";
 import Boleta from "./Boleta";
+
+interface ErrorEnvio {
+  dni: string;
+  nombre: string;
+  motivo: string;
+}
+
+interface ResultadoEnvio {
+  enviados: number;
+  errores: ErrorEnvio[];
+}
 
 const MESES = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -13,6 +25,8 @@ interface Props {
 }
 
 export default function Boletas({ periodoInicial }: Props) {
+  const { usuario } = useAuth();
+  const puedeEnviarCorreo = !!usuario && tienePermiso(usuario, "boletas.enviar");
   const [periodos, setPeriodos] = useState<PeriodoPlanilla[]>([]);
   const [periodoId, setPeriodoId] = useState<number | null>(periodoInicial?.id ?? null);
   const [busqueda, setBusqueda] = useState("");
@@ -22,6 +36,8 @@ export default function Boletas({ periodoInicial }: Props) {
   const [boletaSeleccionada, setBoletaSeleccionada] = useState<DetallePlanilla | null>(null);
   const [seleccionados, setSeleccionados] = useState<Set<number>>(new Set());
   const [imprimiendoLote, setImprimiendoLote] = useState(false);
+  const [enviandoCorreo, setEnviandoCorreo] = useState(false);
+  const [resultadoEnvio, setResultadoEnvio] = useState<ResultadoEnvio | null>(null);
 
   useEffect(() => {
     apiGet<PeriodoPlanilla[]>("/periodos")
@@ -40,6 +56,7 @@ export default function Boletas({ periodoInicial }: Props) {
     setError(null);
     setSeleccionados(new Set());
     setImprimiendoLote(false);
+    setResultadoEnvio(null);
     const q = busqueda.trim() ? `?q=${encodeURIComponent(busqueda.trim())}` : "";
     apiGet<{ periodo: PeriodoPlanilla; detalle: DetallePlanilla[] }>(`/periodos/${periodoId}/planilla${q}`)
       .then((d) => {
@@ -74,6 +91,23 @@ export default function Boletas({ periodoInicial }: Props) {
   }
 
   const boletasDelLote = resultado.filter((d) => seleccionados.has(d.id));
+
+  async function enviarPorCorreo() {
+    if (!periodoId) return;
+    setEnviandoCorreo(true);
+    setError(null);
+    setResultadoEnvio(null);
+    try {
+      const r = await apiPost<ResultadoEnvio>(`/periodos/${periodoId}/boletas/enviar-correo`, {
+        detalle_ids: Array.from(seleccionados),
+      });
+      setResultadoEnvio(r);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setEnviandoCorreo(false);
+    }
+  }
 
   return (
     <div>
@@ -111,15 +145,44 @@ export default function Boletas({ periodoInicial }: Props) {
             <h2>
               {resultado.length} boletas — {MESES[periodoActual.mes - 1]} {periodoActual.anio}
             </h2>
-            <button
-              className="primario"
-              type="button"
-              disabled={seleccionados.size === 0}
-              onClick={() => setImprimiendoLote(true)}
-            >
-              Imprimir seleccionadas ({seleccionados.size})
-            </button>
+            <div style={{ display: "flex", gap: 8 }}>
+              {puedeEnviarCorreo && (
+                <button
+                  type="button"
+                  disabled={seleccionados.size === 0 || enviandoCorreo}
+                  onClick={enviarPorCorreo}
+                >
+                  {enviandoCorreo ? "Enviando..." : `Enviar por correo (${seleccionados.size})`}
+                </button>
+              )}
+              <button
+                className="primario"
+                type="button"
+                disabled={seleccionados.size === 0}
+                onClick={() => setImprimiendoLote(true)}
+              >
+                Imprimir seleccionadas ({seleccionados.size})
+              </button>
+            </div>
           </div>
+
+          {resultadoEnvio && (
+            <div className={resultadoEnvio.errores.length > 0 ? "mensaje-error" : "mensaje-ok"} style={{ marginTop: 10 }}>
+              <div>
+                {resultadoEnvio.enviados} correo(s) enviado(s) correctamente
+                {resultadoEnvio.errores.length > 0 && `, ${resultadoEnvio.errores.length} con problemas:`}
+              </div>
+              {resultadoEnvio.errores.length > 0 && (
+                <ul style={{ margin: "4px 0 0", paddingLeft: 20 }}>
+                  {resultadoEnvio.errores.map((e, i) => (
+                    <li key={i}>
+                      {e.nombre} {e.dni && `(${e.dni})`}: {e.motivo}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
           <table>
             <thead>
               <tr>
