@@ -1,6 +1,7 @@
 import express, { NextFunction, Request, Response } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import path from "path";
 
 dotenv.config();
 
@@ -49,6 +50,19 @@ app.use(express.json({ limit: "10mb" }));
 
 app.get("/api/salud", (_req: Request, res: Response) => {
   res.json({ estado: "ok" });
+});
+
+// Sirve el frontend ya compilado (frontend/dist) cuando vive junto al
+// backend en el mismo servidor (ej. carpeta "public" en el hosting). En
+// desarrollo local esta carpeta no existe (el frontend corre aparte con
+// "npm run dev" en el puerto 5173) - express.static() simplemente no
+// encuentra nada y sigue de largo, sin romper nada.
+const publicDir = path.join(__dirname, "..", "public");
+app.use(express.static(publicDir));
+app.get(/^(?!\/api\/).*/, (_req: Request, res: Response, next: NextFunction) => {
+  res.sendFile(path.join(publicDir, "index.html"), (err) => {
+    if (err) next();
+  });
 });
 
 // /api/auth es publico (el login no puede requerir estar logueado); las
