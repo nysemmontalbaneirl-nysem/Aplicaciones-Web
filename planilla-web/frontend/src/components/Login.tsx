@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "../AuthContext";
+import logoJhcr from "../assets/logo-jhcr.jpg";
 
 export default function Login() {
   const { iniciarSesion } = useAuth();
@@ -24,7 +25,14 @@ export default function Login() {
   return (
     <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "80vh" }}>
       <div className="card" style={{ width: 360 }}>
-        <h2>Sistema de Planillas — JHCR</h2>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+          <img
+            src={logoJhcr}
+            alt="JHCR Recursos Humanos Web"
+            style={{ width: 96, height: 96, objectFit: "contain" }}
+          />
+        </div>
+        <h2 style={{ textAlign: "center" }}>Sistema de Planillas — JHCR</h2>
         {error && <div className="mensaje-error">{error}</div>}
         <form onSubmit={enviar}>
           <label>
