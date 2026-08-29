@@ -55,8 +55,8 @@ contratosRouter.post("/", requierePermiso("contratos.gestionar"), asyncHandler(a
     if (sistema_pension === "AFP" && !b.afp_nombre) {
       throw new ErrorValidacion("afp_nombre es obligatorio cuando sistema_pension = AFP");
     }
-    if (categoria_ocupacional === "EMPLEADO" && !b.sueldo_base) {
-      throw new ErrorValidacion("sueldo_base es obligatorio para la categoria EMPLEADO");
+    if ((categoria_ocupacional === "EMPLEADO" || categoria_ocupacional === "EVENTUAL") && !b.sueldo_base) {
+      throw new ErrorValidacion("sueldo_base es obligatorio para las categorias EMPLEADO y EVENTUAL");
     }
     if (!tieneAccesoProyecto(req.usuario!, b.proyecto ?? "")) {
       return res.status(403).json({ error: "No tienes acceso a ese proyecto" });
@@ -108,8 +108,8 @@ contratosRouter.put("/:id", requierePermiso("contratos.gestionar"), asyncHandler
     if (sistema_pension === "AFP" && !b.afp_nombre) {
       throw new ErrorValidacion("afp_nombre es obligatorio cuando sistema_pension = AFP");
     }
-    if (categoria_ocupacional === "EMPLEADO" && !b.sueldo_base) {
-      throw new ErrorValidacion("sueldo_base es obligatorio para la categoria EMPLEADO");
+    if ((categoria_ocupacional === "EMPLEADO" || categoria_ocupacional === "EVENTUAL") && !b.sueldo_base) {
+      throw new ErrorValidacion("sueldo_base es obligatorio para las categorias EMPLEADO y EVENTUAL");
     }
 
     const actual = await pool.query("SELECT proyecto FROM contratos WHERE id = $1", [req.params.id]);

@@ -39,7 +39,9 @@ function csvEscape(valor: string | number): string {
 
 /** Genera el CSV de aportes AFP de un periodo, opcionalmente filtrado por proyecto. */
 export async function generarCSVAFPnet(periodoId: number, proyecto?: string): Promise<string> {
-  const condiciones = ["d.periodo_id = $1", "c.sistema_pension = 'AFP'"];
+  // EVENTUAL no esta en planilla (ver motorCalculo.ts) y no aporta a
+  // pension, asi que se excluye aunque su contrato tenga sistema_pension AFP.
+  const condiciones = ["d.periodo_id = $1", "c.sistema_pension = 'AFP'", "c.categoria_ocupacional <> 'EVENTUAL'"];
   const valores: unknown[] = [periodoId];
   if (proyecto) {
     valores.push(proyecto);

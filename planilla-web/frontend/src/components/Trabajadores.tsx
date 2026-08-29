@@ -180,7 +180,10 @@ export default function Trabajadores() {
         sistema_comision: form.sistema_comision || null,
         fecha_ingreso: form.fecha_ingreso,
         fecha_cese: form.fecha_cese || null,
-        sueldo_base: form.categoria_ocupacional === "EMPLEADO" ? Number(form.sueldo_base) : null,
+        sueldo_base:
+          form.categoria_ocupacional === "EMPLEADO" || form.categoria_ocupacional === "EVENTUAL"
+            ? Number(form.sueldo_base)
+            : null,
         viaticos: Number(form.viaticos) || 0,
         sindicalizado: form.sindicalizado,
         poliza_seguro: form.poliza_seguro,
@@ -391,6 +394,17 @@ export default function Trabajadores() {
             {form.categoria_ocupacional === "EMPLEADO" && (
               <label>
                 Sueldo base (S/.)
+                <input
+                  type="number"
+                  step="0.01"
+                  value={form.sueldo_base}
+                  onChange={(e) => actualizarCampo("sueldo_base", e.target.value)}
+                />
+              </label>
+            )}
+            {form.categoria_ocupacional === "EVENTUAL" && (
+              <label>
+                Monto pactado (S/.)
                 <input
                   type="number"
                   step="0.01"

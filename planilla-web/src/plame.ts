@@ -102,7 +102,11 @@ function lineaRem(dni: string, codigo: string, devengado: number, percibido: num
   return `${TIPO_PLANILLA}|${dni.padStart(8, "0")}|${codigo}|${formateaMonto(devengado)}|${formateaMonto(percibido)}|`;
 }
 
-/** Genera las lineas del archivo .rem para un periodo ya calculado. */
+/**
+ * Genera las lineas del archivo .rem para un periodo ya calculado.
+ * Excluye EVENTUAL: no esta en planilla (ver motorCalculo.ts), asi que no
+ * corresponde declararlo en el T-Registro/PDT.
+ */
 export async function generarLineasREM(periodoId: number): Promise<string[]> {
   const resultado = await pool.query<FilaExportacion>(
     `SELECT e.numero_documento, c.sistema_pension,
@@ -114,7 +118,7 @@ export async function generarLineasREM(periodoId: number): Promise<string[]> {
      FROM detalle_planilla d
      JOIN contratos c ON c.id = d.contrato_id
      JOIN empleados e ON e.id = c.empleado_id
-     WHERE d.periodo_id = $1
+     WHERE d.periodo_id = $1 AND c.categoria_ocupacional <> 'EVENTUAL'
      ORDER BY e.numero_documento`,
     [periodoId]
   );

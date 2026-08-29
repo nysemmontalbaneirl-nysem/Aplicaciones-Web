@@ -93,15 +93,7 @@ export function calcularJornalDiario(
 }
 
 /** Sueldo/salario base del periodo = dias trabajados x jornal diario. */
-export function calcularSueldoBasico(
-  jornalDiario: number,
-  asistencia: AsistenciaEntrada,
-  categoria: CategoriaOcupacional
-): number {
-  if (categoria === "EVENTUAL") {
-    // El eventual cobra el sueldo pactado completo si estuvo habil, sin prorrateo por dia
-    return redondear(jornalDiario * 30);
-  }
+export function calcularSueldoBasico(jornalDiario: number, asistencia: AsistenciaEntrada): number {
   return redondear(jornalDiario * asistencia.dias_trabajados);
 }
 
@@ -655,6 +647,65 @@ export interface ResultadoCalculoLinea {
 }
 
 /**
+ * EVENTUAL: trabajador que NO esta en planilla, se le cancela un monto
+ * pactado por una tarea de menos de 8 horas. No genera ningun beneficio
+ * (gratificacion, CTS, vacaciones, asignaciones, etc.) ni esta afecto a
+ * ningun aporte o descuento (ESSALUD, SCTR, SENATI, ONP/AFP, renta 5ta,
+ * CONAFOVICER, sindicato) - confirmado por el usuario 29/08/2026. El monto
+ * pactado se guarda en contratos.sueldo_base (mismo campo que usa EMPLEADO
+ * para su sueldo mensual). Por esto mismo, plame.ts y afpnet.ts excluyen a
+ * los EVENTUAL de las declaraciones a SUNAT/AFP: no corresponde declarar a
+ * alguien que no esta en planilla.
+ */
+function calcularLineaEventual(contrato: Contrato, asistencia: AsistenciaEntrada): ResultadoCalculoLinea {
+  const montoPactado = redondear(contrato.sueldo_base ?? 0);
+  return {
+    detalle: {
+      contrato_id: contrato.id,
+      dias_trabajados: asistencia.dias_trabajados,
+      dias_dominical: 0,
+      dias_feriado: 0,
+      dias_falta: asistencia.dias_falta,
+      horas_extra_25: 0,
+      horas_extra_35: 0,
+      horas_extra_100: 0,
+      jornal_diario: 0,
+      sueldo_basico: montoPactado,
+      remuneracion_dominical: 0,
+      remuneracion_feriado: 0,
+      importe_horas_extra: 0,
+      asignacion_familiar: 0,
+      asignacion_escolaridad: 0,
+      bonificacion_buc: 0,
+      bonificacion_bae: 0,
+      bonificacion_movilidad: 0,
+      otras_bonificaciones: 0,
+      gratificacion: 0,
+      bonificacion_extraordinaria: 0,
+      cts: 0,
+      vacaciones: 0,
+      total_ingresos: montoPactado,
+      aporte_pension: 0,
+      descuento_sindicato: 0,
+      seguro_vida: 0,
+      conafovicer: 0,
+      renta_5ta: 0,
+      otros_descuentos: 0,
+      total_descuentos: 0,
+      essalud: 0,
+      sctr: 0,
+      senati: 0,
+      neto_pagar: montoPactado,
+      detalle_json: {
+        remuneracion_computable: 0,
+        bases: { essalud: 0, sctr: 0, senati: 0, onp: 0, afp: 0, renta5ta: 0, conafovicer: 0 },
+        total_aportes_empleador: 0,
+      },
+    },
+  };
+}
+
+/**
  * Suma los montos de los conceptos que esten marcados afectos a "campo"
  * (afecto_essalud, afecto_afp, afecto_renta5ta, etc.) en conceptos_planilla.
  * Esta es la pieza central de la pestana Configuracion: reemplaza las
@@ -694,8 +745,12 @@ export function calcularLineaPlanilla(
   cuotaSindicalSemanal: number,
   conceptos: ConceptosPlanilla
 ): ResultadoCalculoLinea {
+  if (contrato.categoria_ocupacional === "EVENTUAL") {
+    return calcularLineaEventual(contrato, asistencia);
+  }
+
   const jornalDiario = calcularJornalDiario(contrato, tablaCategorias, diasPeriodo);
-  const sueldoBasico = calcularSueldoBasico(jornalDiario, asistencia, contrato.categoria_ocupacional);
+  const sueldoBasico = calcularSueldoBasico(jornalDiario, asistencia);
   const remDominical = calcularRemuneracionDominical(jornalDiario, asistencia);
   const remFeriado = calcularRemuneracionFeriado(jornalDiario, asistencia);
   const importeHorasExtra = calcularHorasExtra(
