@@ -191,11 +191,71 @@ const CATALOGOS_REFERENCIA: { hoja: string; tabla: string; columnas: string }[] 
   { hoja: "UbigeoDistrito", tabla: "catalogo_ubigeo_distrito", columnas: "codigo, nombre, provincia_codigo" },
 ];
 
+// Fila de ejemplo de la hoja "Trabajadores": NO son datos de un trabajador
+// real (a proposito - un DNI real horneado en el codigo se podria terminar
+// sobreescribiendo si alguien olvida borrar la fila antes de importar). Usa
+// codigos de catalogo que si existen (los mismos que prueban los tests), asi
+// se ve el formato exacto esperado en cada columna, incluidas las SUNAT.
+const FILA_EJEMPLO: Record<(typeof COLUMNAS)[number], string | number> = {
+  DNI: "00000000",
+  APELLIDOS_NOMBRES: "EJEMPLO - BORRA ESTA FILA ANTES DE IMPORTAR",
+  FECHA_NACIMIENTO: "1990-05-15",
+  GRADO_INSTRUCCION: "",
+  NUMERO_HIJOS: 2,
+  CELULAR: "987654321",
+  CORREO: "ejemplo@correo.com",
+  DIRECCION: "AV. EJEMPLO 123",
+  UBIGEO: "",
+  ENTIDAD_BANCARIA: "",
+  CUENTA_BANCARIA: "191234567890123",
+  PROYECTO: "(nombre exacto del proyecto, igual a como aparece en Proyectos)",
+  GRUPO: "",
+  CATEGORIA: "PEON",
+  OCUPACION: "AYUDANTE",
+  SISTEMA_PENSION: "ONP",
+  AFP_NOMBRE: "",
+  CUSPP: "",
+  SISTEMA_COMISION: "",
+  FECHA_INGRESO: "2026-01-15",
+  FECHA_CESE: "",
+  SUELDO_BASE: "",
+  VIATICOS: 0,
+  SINDICALIZADO: "NO",
+  POLIZA_SEGURO: "SI",
+  SCTR_SALUD: "SI",
+  ESSALUD_VIDA: "NO",
+  ESTADO: "HABIL",
+  SEXO: "M",
+  ESTADO_CIVIL: "SOLTERO",
+  NACIONALIDAD_CODIGO: "9589",
+  PAIS_EMISOR_DOCUMENTO_CODIGO: "",
+  GRADO_INSTRUCCION_CODIGO: "01",
+  ENTIDAD_BANCARIA_CODIGO: "002",
+  DISCAPACIDAD: "NO",
+  SEGUNDA_DIRECCION: "",
+  DIRECCION_ESSALUD: "",
+  UBIGEO_DEPARTAMENTO_CODIGO: "19",
+  UBIGEO_PROVINCIA_CODIGO: "1903",
+  UBIGEO_DISTRITO_CODIGO: "190307",
+  CATEGORIA_OCUPACIONAL_SUNAT_CODIGO: "02",
+  TIPO_TRABAJADOR_CODIGO: "27",
+  REGIMEN_LABORAL_CODIGO: "21",
+  TIPO_CONTRATO_CODIGO: "09",
+  TIPO_PAGO_CODIGO: "",
+  PERIODICIDAD_CODIGO: "",
+  SITUACION_ESPECIAL_CODIGO: "0",
+  JORNADA_LABORAL: "",
+  REGIMEN_SALUD_CODIGO: "01",
+  EPS_CODIGO: "20431115825",
+  MOTIVO_BAJA_CODIGO: "",
+};
+
 // GET /api/empleados/importar-masivo/plantilla.xlsx -> descarga un Excel
 // listo para llenar y volver a subir: la hoja "Trabajadores" trae todas las
 // columnas (las historicas y las T-Registro/SUNAT nuevas) como encabezado,
-// y una hoja de referencia por cada catalogo SUNAT con su codigo y nombre,
-// para no tener que adivinar el codigo ni volver a la pantalla de alta.
+// una fila de ejemplo (ver FILA_EJEMPLO arriba) y una hoja de referencia por
+// cada catalogo SUNAT con su codigo y nombre, para no tener que adivinar el
+// codigo ni volver a la pantalla de alta.
 importacionRouter.get(
   "/importar-masivo/plantilla.xlsx",
   requierePermiso("importacion.masiva"),
@@ -206,6 +266,12 @@ importacionRouter.get(
     hojaPrincipal.columns = COLUMNAS.map((nombre) => ({ header: nombre, key: nombre, width: 20 }));
     hojaPrincipal.getRow(1).font = { bold: true };
     hojaPrincipal.getColumn("DNI").numFmt = "@"; // texto, para no perder ceros a la izquierda
+
+    const filaEjemplo = hojaPrincipal.addRow(FILA_EJEMPLO);
+    filaEjemplo.eachCell((celda) => {
+      celda.font = { italic: true, color: { argb: "FF808080" } };
+      celda.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF2CC" } };
+    });
 
     for (const { hoja, tabla, columnas } of CATALOGOS_REFERENCIA) {
       const resultado = await pool.query(`SELECT ${columnas} FROM ${tabla} ORDER BY nombre`);

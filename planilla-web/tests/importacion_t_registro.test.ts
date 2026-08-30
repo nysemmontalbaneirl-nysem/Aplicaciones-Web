@@ -171,6 +171,20 @@ describe("GET /api/empleados/importar-masivo/plantilla.xlsx", () => {
 
     const hojaBanco = workbook.getWorksheet("Banco")!;
     expect(hojaBanco.rowCount).toBeGreaterThan(1); // encabezado + al menos un banco
+
+    // Fila 2 = fila de ejemplo (no un trabajador real) con codigos SUNAT
+    // validos, para mostrar el formato esperado en cada columna. Una vez
+    // releido desde el buffer, ExcelJS ya no conoce las "keys" de columna
+    // (eran solo para escribir), asi que se ubica por el numero de columna
+    // segun el texto del encabezado en la fila 1.
+    const columnaPorNombre = new Map<string, number>();
+    hojaTrabajadores.getRow(1).eachCell((celda, numeroColumna) => {
+      columnaPorNombre.set(String(celda.value), numeroColumna);
+    });
+    const filaEjemplo = hojaTrabajadores.getRow(2);
+    expect(filaEjemplo.getCell(columnaPorNombre.get("DNI")!).value).toBe("00000000");
+    expect(filaEjemplo.getCell(columnaPorNombre.get("ENTIDAD_BANCARIA_CODIGO")!).value).toBe("002");
+    expect(filaEjemplo.getCell(columnaPorNombre.get("UBIGEO_DISTRITO_CODIGO")!).value).toBe("190307");
   });
 
   it("requiere sesion activa (sin token -> 401)", async () => {

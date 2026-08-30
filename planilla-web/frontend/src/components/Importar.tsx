@@ -81,8 +81,10 @@ export default function Importar() {
             Descargar plantilla en Excel
           </a>
           <p style={{ marginTop: 8, marginBottom: 0, fontSize: "0.82rem", color: "#5a6172" }}>
-            Trae todas las columnas (incluidas las de T-Registro/SUNAT) listas para llenar, más
-            una hoja de referencia por cada catálogo (código y nombre: banco, ubigeo, tipo de
+            Trae todas las columnas (incluidas las de T-Registro/SUNAT) listas para llenar, una
+            <strong> fila de ejemplo resaltada</strong> con datos ficticios (DNI 00000000) que
+            muestra el formato correcto de cada columna — <strong>bórrala antes de importar</strong>{" "}
+            — y una hoja de referencia por cada catálogo (código y nombre: banco, ubigeo, tipo de
             contrato, EPS, etc.). Una vez llena, en Excel usa <strong>Archivo → Guardar como</strong>{" "}
             y elige el formato <strong>CSV UTF-8 (delimitado por comas)</strong> antes de subirla
             aquí — el sistema solo acepta CSV, no .xlsx.
