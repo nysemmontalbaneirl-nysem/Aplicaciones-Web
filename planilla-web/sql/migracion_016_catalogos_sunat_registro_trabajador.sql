@@ -137,79 +137,6 @@ CREATE TABLE IF NOT EXISTS catalogo_ubigeo_distrito (
 CREATE INDEX IF NOT EXISTS idx_ubigeo_provincia_dep ON catalogo_ubigeo_provincia(departamento_codigo);
 CREATE INDEX IF NOT EXISTS idx_ubigeo_distrito_prov ON catalogo_ubigeo_distrito(provincia_codigo);
 
--- -------------------------------------------------------------------------
--- empleados: campos de identificacion que exige el T-Registro y que no
--- existian. Se mantienen entidad_bancaria/grado_instruccion/ubigeo (texto
--- libre) para no perder datos - las columnas *_codigo son las nuevas.
--- -------------------------------------------------------------------------
-
-ALTER TABLE empleados
-    ADD COLUMN IF NOT EXISTS sexo VARCHAR(1) CHECK (sexo IN ('M', 'F')),
-    ADD COLUMN IF NOT EXISTS estado_civil VARCHAR(20)
-        CHECK (estado_civil IN ('SOLTERO', 'CASADO', 'VIUDO', 'DIVORCIADO', 'CONVIVIENTE')),
-    ADD COLUMN IF NOT EXISTS nacionalidad_codigo VARCHAR(4)
-        REFERENCES catalogo_nacionalidad(codigo) DEFAULT '9589', -- PERU
-    ADD COLUMN IF NOT EXISTS pais_emisor_documento_codigo VARCHAR(4)
-        REFERENCES catalogo_nacionalidad(codigo), -- solo aplica si tipo_documento = pasaporte
-    ADD COLUMN IF NOT EXISTS grado_instruccion_codigo VARCHAR(2)
-        REFERENCES catalogo_grado_instruccion(codigo),
-    ADD COLUMN IF NOT EXISTS entidad_bancaria_codigo VARCHAR(3)
-        REFERENCES catalogo_banco(codigo),
-    ADD COLUMN IF NOT EXISTS discapacidad BOOLEAN NOT NULL DEFAULT FALSE,
-    -- Direccion: la del DNI muchas veces difiere de donde vive realmente el
-    -- trabajador (senalado por el usuario) - se agrega una segunda
-    -- direccion opcional, igual que en la Constancia de Alta de SUNAT
-    -- ("Primera direccion" / "Segunda direccion").
-    ADD COLUMN IF NOT EXISTS segunda_direccion TEXT,
-    ADD COLUMN IF NOT EXISTS direccion_essalud TEXT, -- referente para el centro asistencial EsSalud
-    ADD COLUMN IF NOT EXISTS ubigeo_departamento_codigo VARCHAR(2)
-        REFERENCES catalogo_ubigeo_departamento(codigo),
-    ADD COLUMN IF NOT EXISTS ubigeo_provincia_codigo VARCHAR(4)
-        REFERENCES catalogo_ubigeo_provincia(codigo),
-    ADD COLUMN IF NOT EXISTS ubigeo_distrito_codigo VARCHAR(6)
-        REFERENCES catalogo_ubigeo_distrito(codigo);
-
--- -------------------------------------------------------------------------
--- contratos: datos laborales y de seguridad social que exige el
--- T-Registro. Los defaults solo se ponen donde aplican practicamente
--- siempre a esta empresa (regimen construccion civil) - revisar si algun
--- dia se contrata bajo otro regimen.
--- -------------------------------------------------------------------------
-
-ALTER TABLE contratos
-    ADD COLUMN IF NOT EXISTS categoria_ocupacional_sunat_codigo VARCHAR(2)
-        REFERENCES catalogo_categoria_ocupacional_sunat(codigo),
-    ADD COLUMN IF NOT EXISTS tipo_trabajador_codigo VARCHAR(2)
-        REFERENCES catalogo_tipo_trabajador(codigo) DEFAULT '27', -- CONSTRUCCION CIVIL
-    ADD COLUMN IF NOT EXISTS regimen_laboral_codigo VARCHAR(2)
-        REFERENCES catalogo_regimen_laboral(codigo) DEFAULT '21', -- CONSTRUCCION CIVIL
-    ADD COLUMN IF NOT EXISTS tipo_contrato_codigo VARCHAR(2)
-        REFERENCES catalogo_tipo_contrato(codigo),
-    ADD COLUMN IF NOT EXISTS tipo_pago_codigo VARCHAR(1)
-        REFERENCES catalogo_tipo_pago(codigo),
-    ADD COLUMN IF NOT EXISTS periodicidad_codigo VARCHAR(1)
-        REFERENCES catalogo_periodicidad(codigo),
-    ADD COLUMN IF NOT EXISTS motivo_baja_codigo VARCHAR(2)
-        REFERENCES catalogo_motivo_baja(codigo), -- se llena recien al cesar al trabajador
-    ADD COLUMN IF NOT EXISTS situacion_especial_codigo VARCHAR(1)
-        REFERENCES catalogo_situacion_especial(codigo) DEFAULT '0', -- NINGUNA
-    ADD COLUMN IF NOT EXISTS jornada_laboral VARCHAR(100), -- sin tabla SUNAT propia (no es una de las 37 del Anexo 2)
-    ADD COLUMN IF NOT EXISTS regimen_salud_codigo VARCHAR(2)
-        REFERENCES catalogo_regimen_salud(codigo) DEFAULT '00', -- ESSALUD REGULAR
-    ADD COLUMN IF NOT EXISTS eps_codigo VARCHAR(11)
-        REFERENCES catalogo_eps(codigo); -- NULL = sin EPS (solo EsSalud)
-
--- -------------------------------------------------------------------------
--- proyectos: cada proyecto/obra es su propio establecimiento SUNAT
--- (confirmado con el usuario). "ubicacion" ya existente se usa como la
--- direccion del establecimiento - no hace falta duplicarla.
--- -------------------------------------------------------------------------
-
-ALTER TABLE proyectos
-    ADD COLUMN IF NOT EXISTS codigo_establecimiento VARCHAR(4) DEFAULT '0000',
-    ADD COLUMN IF NOT EXISTS tipo_establecimiento VARCHAR(30) NOT NULL DEFAULT 'ESTABLECIMIENTO ANEXO'
-        CHECK (tipo_establecimiento IN ('DOMICILIO FISCAL', 'ESTABLECIMIENTO ANEXO'));
-
 -- =========================================================================
 -- Datos de los catalogos (extraidos de docs/anexo2_tablas_parametricas_
 -- sunat.xlsx el 30/08/2026). Ver ese archivo si SUNAT publica una version
@@ -2849,3 +2776,84 @@ INSERT INTO catalogo_ubigeo_distrito (codigo, nombre, provincia_codigo) VALUES (
 INSERT INTO catalogo_ubigeo_distrito (codigo, nombre, provincia_codigo) VALUES ('250303', 'YURUA', '2503') ON CONFLICT (codigo) DO NOTHING;
 INSERT INTO catalogo_ubigeo_distrito (codigo, nombre, provincia_codigo) VALUES ('250304', 'SEPAHUA', '2503') ON CONFLICT (codigo) DO NOTHING;
 INSERT INTO catalogo_ubigeo_distrito (codigo, nombre, provincia_codigo) VALUES ('250401', 'PURÚS', '2504') ON CONFLICT (codigo) DO NOTHING;
+-- NOTA (corregido 30/08/2026): los datos de los catalogos se cargan
+-- ANTES de las columnas ALTER TABLE que los referencian con un valor
+-- DEFAULT (ej. empleados.nacionalidad_codigo DEFAULT '9589'). Es
+-- necesario en este orden porque, si la tabla empleados/contratos ya
+-- tiene filas (como en produccion), Postgres debe poder validar de
+-- inmediato la llave foranea del DEFAULT contra el catalogo - si el
+-- catalogo todavia esta vacio en ese momento, la migracion falla con
+-- un error de llave foranea (probado en produccion 30/08/2026).
+
+-- -------------------------------------------------------------------------
+-- empleados: campos de identificacion que exige el T-Registro y que no
+-- existian. Se mantienen entidad_bancaria/grado_instruccion/ubigeo (texto
+-- libre) para no perder datos - las columnas *_codigo son las nuevas.
+-- -------------------------------------------------------------------------
+
+ALTER TABLE empleados
+    ADD COLUMN IF NOT EXISTS sexo VARCHAR(1) CHECK (sexo IN ('M', 'F')),
+    ADD COLUMN IF NOT EXISTS estado_civil VARCHAR(20)
+        CHECK (estado_civil IN ('SOLTERO', 'CASADO', 'VIUDO', 'DIVORCIADO', 'CONVIVIENTE')),
+    ADD COLUMN IF NOT EXISTS nacionalidad_codigo VARCHAR(4)
+        REFERENCES catalogo_nacionalidad(codigo) DEFAULT '9589', -- PERU
+    ADD COLUMN IF NOT EXISTS pais_emisor_documento_codigo VARCHAR(4)
+        REFERENCES catalogo_nacionalidad(codigo), -- solo aplica si tipo_documento = pasaporte
+    ADD COLUMN IF NOT EXISTS grado_instruccion_codigo VARCHAR(2)
+        REFERENCES catalogo_grado_instruccion(codigo),
+    ADD COLUMN IF NOT EXISTS entidad_bancaria_codigo VARCHAR(3)
+        REFERENCES catalogo_banco(codigo),
+    ADD COLUMN IF NOT EXISTS discapacidad BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Direccion: la del DNI muchas veces difiere de donde vive realmente el
+    -- trabajador (senalado por el usuario) - se agrega una segunda
+    -- direccion opcional, igual que en la Constancia de Alta de SUNAT
+    -- ("Primera direccion" / "Segunda direccion").
+    ADD COLUMN IF NOT EXISTS segunda_direccion TEXT,
+    ADD COLUMN IF NOT EXISTS direccion_essalud TEXT, -- referente para el centro asistencial EsSalud
+    ADD COLUMN IF NOT EXISTS ubigeo_departamento_codigo VARCHAR(2)
+        REFERENCES catalogo_ubigeo_departamento(codigo),
+    ADD COLUMN IF NOT EXISTS ubigeo_provincia_codigo VARCHAR(4)
+        REFERENCES catalogo_ubigeo_provincia(codigo),
+    ADD COLUMN IF NOT EXISTS ubigeo_distrito_codigo VARCHAR(6)
+        REFERENCES catalogo_ubigeo_distrito(codigo);
+
+-- -------------------------------------------------------------------------
+-- contratos: datos laborales y de seguridad social que exige el
+-- T-Registro. Los defaults solo se ponen donde aplican practicamente
+-- siempre a esta empresa (regimen construccion civil) - revisar si algun
+-- dia se contrata bajo otro regimen.
+-- -------------------------------------------------------------------------
+
+ALTER TABLE contratos
+    ADD COLUMN IF NOT EXISTS categoria_ocupacional_sunat_codigo VARCHAR(2)
+        REFERENCES catalogo_categoria_ocupacional_sunat(codigo),
+    ADD COLUMN IF NOT EXISTS tipo_trabajador_codigo VARCHAR(2)
+        REFERENCES catalogo_tipo_trabajador(codigo) DEFAULT '27', -- CONSTRUCCION CIVIL
+    ADD COLUMN IF NOT EXISTS regimen_laboral_codigo VARCHAR(2)
+        REFERENCES catalogo_regimen_laboral(codigo) DEFAULT '21', -- CONSTRUCCION CIVIL
+    ADD COLUMN IF NOT EXISTS tipo_contrato_codigo VARCHAR(2)
+        REFERENCES catalogo_tipo_contrato(codigo),
+    ADD COLUMN IF NOT EXISTS tipo_pago_codigo VARCHAR(1)
+        REFERENCES catalogo_tipo_pago(codigo),
+    ADD COLUMN IF NOT EXISTS periodicidad_codigo VARCHAR(1)
+        REFERENCES catalogo_periodicidad(codigo),
+    ADD COLUMN IF NOT EXISTS motivo_baja_codigo VARCHAR(2)
+        REFERENCES catalogo_motivo_baja(codigo), -- se llena recien al cesar al trabajador
+    ADD COLUMN IF NOT EXISTS situacion_especial_codigo VARCHAR(1)
+        REFERENCES catalogo_situacion_especial(codigo) DEFAULT '0', -- NINGUNA
+    ADD COLUMN IF NOT EXISTS jornada_laboral VARCHAR(100), -- sin tabla SUNAT propia (no es una de las 37 del Anexo 2)
+    ADD COLUMN IF NOT EXISTS regimen_salud_codigo VARCHAR(2)
+        REFERENCES catalogo_regimen_salud(codigo) DEFAULT '00', -- ESSALUD REGULAR
+    ADD COLUMN IF NOT EXISTS eps_codigo VARCHAR(11)
+        REFERENCES catalogo_eps(codigo); -- NULL = sin EPS (solo EsSalud)
+
+-- -------------------------------------------------------------------------
+-- proyectos: cada proyecto/obra es su propio establecimiento SUNAT
+-- (confirmado con el usuario). "ubicacion" ya existente se usa como la
+-- direccion del establecimiento - no hace falta duplicarla.
+-- -------------------------------------------------------------------------
+
+ALTER TABLE proyectos
+    ADD COLUMN IF NOT EXISTS codigo_establecimiento VARCHAR(4) DEFAULT '0000',
+    ADD COLUMN IF NOT EXISTS tipo_establecimiento VARCHAR(30) NOT NULL DEFAULT 'ESTABLECIMIENTO ANEXO'
+        CHECK (tipo_establecimiento IN ('DOMICILIO FISCAL', 'ESTABLECIMIENTO ANEXO'));
