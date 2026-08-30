@@ -1,6 +1,30 @@
 import { useEffect, useMemo, useState } from "react";
-import { apiGet, apiPost, apiPut } from "../api";
+import { apiGet, apiPost, apiPut, ErrorApi } from "../api";
 import { CategoriaOcupacional, Catalogos, CatalogoItem, Contrato, Empleado, Proyecto } from "../types";
+
+// Crea un contrato; si el trabajador ya tiene otro contrato HABIL, el
+// backend responde 409 pidiendo confirmacion (ver routes/contratos.ts) en
+// vez de bloquear directamente - puede ser un descuido (olvidaron cesar el
+// anterior) o un caso legitimo (dos proyectos a la vez), asi que se le
+// pregunta al usuario en vez de decidir por el.
+async function crearContratoConConfirmacion(cuerpo: Record<string, unknown>): Promise<Contrato> {
+  try {
+    return await apiPost<Contrato>("/contratos", cuerpo);
+  } catch (e) {
+    if (e instanceof ErrorApi && e.status === 409 && (e.body as { requiere_confirmacion?: boolean })?.requiere_confirmacion) {
+      const habiles = (e.body as { contratos_habiles?: { proyecto: string; fecha_ingreso: string }[] }).contratos_habiles ?? [];
+      const detalle = habiles.map((h) => `${h.proyecto} (desde ${h.fecha_ingreso})`).join(", ");
+      const continuar = window.confirm(
+        `${e.message}${detalle ? `\n\nContrato(s) activo(s) actual(es): ${detalle}` : ""}`
+      );
+      if (!continuar) {
+        throw new Error("Registro cancelado: ya existe un contrato activo para este trabajador.");
+      }
+      return await apiPost<Contrato>("/contratos", { ...cuerpo, confirmar_duplicado: true });
+    }
+    throw e;
+  }
+}
 
 const CATEGORIAS: CategoriaOcupacional[] = [
   "OPERARIO",
@@ -110,6 +134,10 @@ export default function Trabajadores() {
   const [guardando, setGuardando] = useState(false);
   // Cuando no es null, el formulario esta editando este contrato en vez de crear uno nuevo
   const [contratoEnEdicion, setContratoEnEdicion] = useState<Contrato | null>(null);
+  // Cuando no es null, el formulario esta creando un contrato NUEVO para un
+  // trabajador que YA EXISTE (reingreso tras un cese) - no se crea un
+  // empleado nuevo, solo un contrato adicional para este empleado_id.
+  const [reingresoEmpleadoId, setReingresoEmpleadoId] = useState<number | null>(null);
 
   // Dar de baja necesita pedir fecha Y motivo (T17) - un solo window.prompt
   // ya no alcanza, asi que se muestra un mini-formulario inline en vez de
@@ -118,6 +146,14 @@ export default function Trabajadores() {
   const [fechaCese, setFechaCese] = useState("");
   const [motivoBaja, setMotivoBaja] = useState("");
   const [guardandoBaja, setGuardandoBaja] = useState(false);
+
+  // Historial de periodos de un trabajador (todos sus contratos, HABIL y
+  // CESADO) - GET /api/contratos?empleado_id=X ya devuelve todo sin filtrar
+  // por estado, no hace falta nada nuevo en el backend.
+  const [historialEmpleadoId, setHistorialEmpleadoId] = useState<number | null>(null);
+  const [historialNombre, setHistorialNombre] = useState("");
+  const [historialContratos, setHistorialContratos] = useState<Contrato[]>([]);
+  const [cargandoHistorial, setCargandoHistorial] = useState(false);
 
   async function cargar() {
     try {
@@ -230,9 +266,106 @@ export default function Trabajadores() {
 
   function cancelarEdicion() {
     setContratoEnEdicion(null);
+    setReingresoEmpleadoId(null);
     setForm(estadoVacio);
     setError(null);
     setOk(null);
+  }
+
+  async function verHistorial(empleadoId: number, nombre: string) {
+    setError(null);
+    setHistorialEmpleadoId(empleadoId);
+    setHistorialNombre(nombre);
+    setHistorialContratos([]);
+    setCargandoHistorial(true);
+    try {
+      const datos = await apiGet<Contrato[]>(`/contratos?empleado_id=${empleadoId}`);
+      setHistorialContratos(datos);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setCargandoHistorial(false);
+    }
+  }
+
+  function cerrarHistorial() {
+    setHistorialEmpleadoId(null);
+    setHistorialContratos([]);
+  }
+
+  function nombreMotivoBaja(codigo?: string | null): string {
+    if (!codigo) return "-";
+    return catalogos?.motivo_baja.find((m) => m.codigo === codigo)?.nombre ?? codigo;
+  }
+
+  // Reingreso: el trabajador ya existe (empleados no se borra al cesar un
+  // contrato), asi que solo hace falta un contrato NUEVO para el mismo
+  // empleado_id. Se precargan los datos personales (por si cambiaron, ej.
+  // domicilio o celular) y los datos laborales del ultimo contrato, pero
+  // se limpian fecha_ingreso/fecha_cese para que el usuario indique la
+  // fecha real de reingreso.
+  async function iniciarReingreso(contrato: Contrato) {
+    setError(null);
+    setOk(null);
+    try {
+      const empleado = await apiGet<Empleado>(`/empleados/${contrato.empleado_id}`);
+      setContratoEnEdicion(null);
+      setReingresoEmpleadoId(contrato.empleado_id);
+      setForm({
+        tipo_documento: empleado.tipo_documento ?? "01",
+        numero_documento: empleado.numero_documento,
+        apellidos_nombres: empleado.apellidos_nombres,
+        fecha_nacimiento: empleado.fecha_nacimiento?.slice(0, 10) ?? "",
+        sexo: empleado.sexo ?? "",
+        estado_civil: empleado.estado_civil ?? "",
+        nacionalidad_codigo: empleado.nacionalidad_codigo ?? "9589",
+        pais_emisor_documento_codigo: empleado.pais_emisor_documento_codigo ?? "",
+        grado_instruccion_codigo: empleado.grado_instruccion_codigo ?? "",
+        numero_hijos: String(empleado.numero_hijos ?? 0),
+        celular: empleado.celular ?? "",
+        correo: empleado.correo ?? "",
+        direccion: empleado.direccion ?? "",
+        segunda_direccion: empleado.segunda_direccion ?? "",
+        direccion_essalud: empleado.direccion_essalud ?? "",
+        ubigeo_departamento_codigo: empleado.ubigeo_departamento_codigo ?? "",
+        ubigeo_provincia_codigo: empleado.ubigeo_provincia_codigo ?? "",
+        ubigeo_distrito_codigo: empleado.ubigeo_distrito_codigo ?? "",
+        discapacidad: empleado.discapacidad ?? false,
+        entidad_bancaria_codigo: empleado.entidad_bancaria_codigo ?? "",
+        cuenta_bancaria: empleado.cuenta_bancaria ?? "",
+        proyecto: contrato.proyecto,
+        grupo: contrato.grupo ?? "",
+        ocupacion: contrato.ocupacion ?? "",
+        categoria_ocupacional: contrato.categoria_ocupacional,
+        categoria_ocupacional_sunat_codigo: contrato.categoria_ocupacional_sunat_codigo ?? "",
+        tipo_trabajador_codigo: contrato.tipo_trabajador_codigo ?? "27",
+        regimen_laboral_codigo: contrato.regimen_laboral_codigo ?? "21",
+        tipo_contrato_codigo: contrato.tipo_contrato_codigo ?? "",
+        sistema_pension: contrato.sistema_pension,
+        afp_nombre: contrato.afp_nombre ?? "",
+        cuspp: contrato.cuspp ?? "",
+        sistema_comision: contrato.sistema_comision ?? "",
+        fecha_ingreso: "",
+        fecha_cese: "",
+        sueldo_base: contrato.sueldo_base != null ? String(contrato.sueldo_base) : "",
+        viaticos: "0",
+        tipo_pago_codigo: contrato.tipo_pago_codigo ?? "",
+        periodicidad_codigo: contrato.periodicidad_codigo ?? "",
+        situacion_especial_codigo: contrato.situacion_especial_codigo ?? "0",
+        jornada_laboral: contrato.jornada_laboral ?? "",
+        regimen_salud_codigo: contrato.regimen_salud_codigo ?? "00",
+        eps_codigo: contrato.eps_codigo ?? "",
+        sindicalizado: contrato.sindicalizado,
+        poliza_seguro: contrato.poliza_seguro,
+        sctr_salud: contrato.sctr_salud,
+        essalud_vida: contrato.essalud_vida ?? false,
+        domiciliado: contrato.domiciliado ?? true,
+      });
+      cerrarHistorial();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e) {
+      setError((e as Error).message);
+    }
   }
 
   function iniciarBaja(contrato: Contrato) {
@@ -329,12 +462,17 @@ export default function Trabajadores() {
         await apiPut<Contrato>(`/contratos/${contratoEnEdicion.id}`, datosContrato);
         setOk(`Trabajador ${form.apellidos_nombres} actualizado correctamente.`);
         setContratoEnEdicion(null);
+      } else if (reingresoEmpleadoId) {
+        await apiPut<Empleado>(`/empleados/${reingresoEmpleadoId}`, datosEmpleado);
+        await crearContratoConConfirmacion({ empleado_id: reingresoEmpleadoId, ...datosContrato });
+        setOk(`Reingreso de ${form.apellidos_nombres} registrado correctamente.`);
+        setReingresoEmpleadoId(null);
       } else {
         const empleado = await apiPost<Empleado>("/empleados", {
           numero_documento: form.numero_documento,
           ...datosEmpleado,
         });
-        await apiPost<Contrato>("/contratos", { empleado_id: empleado.id, ...datosContrato });
+        await crearContratoConConfirmacion({ empleado_id: empleado.id, ...datosContrato });
         setOk(`Trabajador ${form.apellidos_nombres} registrado correctamente.`);
       }
 
@@ -350,7 +488,19 @@ export default function Trabajadores() {
   return (
     <div>
       <div className="card">
-        <h2>{contratoEnEdicion ? `Editar trabajador — ${form.apellidos_nombres}` : "Nuevo trabajador"}</h2>
+        <h2>
+          {contratoEnEdicion
+            ? `Editar trabajador — ${form.apellidos_nombres}`
+            : reingresoEmpleadoId
+            ? `Reingreso de trabajador — ${form.apellidos_nombres}`
+            : "Nuevo trabajador"}
+        </h2>
+        {reingresoEmpleadoId && (
+          <p style={{ color: "#5a6172", fontSize: "0.85rem", marginTop: -8 }}>
+            Este trabajador ya existe en el sistema. Se creará un contrato nuevo (indica la fecha de
+            reingreso); sus datos personales no se duplican.
+          </p>
+        )}
         {error && <div className="mensaje-error">{error}</div>}
         {ok && <div className="mensaje-ok">{ok}</div>}
         {!catalogos && <p style={{ color: "#5a6172" }}>Cargando catálogos SUNAT...</p>}
@@ -370,7 +520,7 @@ export default function Trabajadores() {
               N° de documento
               <input
                 required
-                disabled={!!contratoEnEdicion}
+                disabled={!!contratoEnEdicion || !!reingresoEmpleadoId}
                 value={form.numero_documento}
                 onChange={(e) => actualizarCampo("numero_documento", e.target.value)}
               />
@@ -760,9 +910,15 @@ export default function Trabajadores() {
 
           <div style={{ display: "flex", gap: 10 }}>
             <button className="primario" type="submit" disabled={guardando}>
-              {guardando ? "Guardando..." : contratoEnEdicion ? "Guardar cambios" : "Registrar trabajador"}
+              {guardando
+                ? "Guardando..."
+                : contratoEnEdicion
+                ? "Guardar cambios"
+                : reingresoEmpleadoId
+                ? "Registrar reingreso"
+                : "Registrar trabajador"}
             </button>
-            {contratoEnEdicion && (
+            {(contratoEnEdicion || reingresoEmpleadoId) && (
               <button type="button" onClick={cancelarEdicion} disabled={guardando}>
                 Cancelar
               </button>
@@ -798,6 +954,54 @@ export default function Trabajadores() {
             <button type="button" onClick={() => setCesando(null)} disabled={guardandoBaja}>
               Cancelar
             </button>
+          </div>
+        </div>
+      )}
+
+      {historialEmpleadoId !== null && (
+        <div className="card">
+          <h2>Historial de periodos — {historialNombre}</h2>
+          {error && <div className="mensaje-error">{error}</div>}
+          {cargandoHistorial && <p style={{ color: "#5a6172" }}>Cargando historial...</p>}
+          {!cargandoHistorial && historialContratos.length === 0 && (
+            <p style={{ color: "#5a6172" }}>Este trabajador no tiene periodos registrados.</p>
+          )}
+          {!cargandoHistorial && historialContratos.length > 0 && (
+            <table>
+              <thead>
+                <tr>
+                  <th>Proyecto</th>
+                  <th>Categoria</th>
+                  <th>Ingreso</th>
+                  <th>Cese</th>
+                  <th>Estado</th>
+                  <th>Motivo de baja</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {historialContratos.map((c) => (
+                  <tr key={c.id}>
+                    <td>{c.proyecto}</td>
+                    <td>{c.categoria_ocupacional}</td>
+                    <td>{c.fecha_ingreso?.slice(0, 10)}</td>
+                    <td>{c.fecha_cese ? c.fecha_cese.slice(0, 10) : "-"}</td>
+                    <td>{c.estado}</td>
+                    <td>{c.estado === "CESADO" ? nombreMotivoBaja(c.motivo_baja_codigo) : "-"}</td>
+                    <td>
+                      {c.estado === "CESADO" && (
+                        <button type="button" onClick={() => iniciarReingreso(c)}>
+                          Reingresar
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+            <button type="button" onClick={cerrarHistorial}>Cerrar</button>
           </div>
         </div>
       )}
@@ -838,6 +1042,9 @@ export default function Trabajadores() {
                 <td style={{ display: "flex", gap: 6 }}>
                   <button type="button" onClick={() => iniciarEdicion(c)}>Editar</button>
                   <button type="button" onClick={() => iniciarBaja(c)}>Dar de baja</button>
+                  <button type="button" onClick={() => verHistorial(c.empleado_id, c.apellidos_nombres ?? "")}>
+                    Historial
+                  </button>
                 </td>
               </tr>
             ))}

@@ -64,6 +64,25 @@ contratosRouter.post("/", requierePermiso("contratos.gestionar"), asyncHandler(a
       return res.status(403).json({ error: "No tienes acceso a ese proyecto" });
     }
 
+    // Aviso (no bloqueo) si el trabajador ya tiene otro contrato HABIL: en
+    // la mayoria de los casos es un descuido (se olvidaron de cesar el
+    // anterior), pero un trabajador SI puede legitimamente tener contratos
+    // activos en dos proyectos a la vez - por eso se deja seguir si el
+    // frontend confirma explicitamente con confirmar_duplicado=true.
+    if (!b.confirmar_duplicado) {
+      const habilExistente = await pool.query(
+        `SELECT id, proyecto, fecha_ingreso FROM contratos WHERE empleado_id = $1 AND estado = 'HABIL'`,
+        [b.empleado_id]
+      );
+      if ((habilExistente.rowCount ?? 0) > 0) {
+        return res.status(409).json({
+          error: "Este trabajador ya tiene otro contrato HABIL activo. ¿Deseas crear uno nuevo de todas formas?",
+          requiere_confirmacion: true,
+          contratos_habiles: habilExistente.rows,
+        });
+      }
+    }
+
     const categoria_ocupacional_sunat_codigo = codigoOpcional(b.categoria_ocupacional_sunat_codigo);
     const tipo_trabajador_codigo = codigoOpcional(b.tipo_trabajador_codigo) ?? "27"; // CONSTRUCCION CIVIL
     const regimen_laboral_codigo = codigoOpcional(b.regimen_laboral_codigo) ?? "21"; // CONSTRUCCION CIVIL

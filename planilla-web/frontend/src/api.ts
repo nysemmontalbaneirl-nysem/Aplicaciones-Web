@@ -32,6 +32,19 @@ function encabezadosAuth(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+// Error de una respuesta no-ok, con el status y el cuerpo JSON completo
+// disponibles (no solo el mensaje) para cuando una pantalla necesita
+// reaccionar a un campo especifico de la respuesta (ej. pedir confirmacion).
+export class ErrorApi extends Error {
+  status: number;
+  body: unknown;
+  constructor(mensaje: string, status: number, body: unknown) {
+    super(mensaje);
+    this.status = status;
+    this.body = body;
+  }
+}
+
 async function manejarRespuesta<T>(res: Response): Promise<T> {
   if (res.status === 401) {
     borrarToken();
@@ -39,13 +52,14 @@ async function manejarRespuesta<T>(res: Response): Promise<T> {
   }
   if (!res.ok) {
     let mensaje = `Error ${res.status}`;
+    let cuerpo: unknown;
     try {
-      const cuerpo = await res.json();
-      if (cuerpo?.error) mensaje = cuerpo.error;
+      cuerpo = await res.json();
+      if ((cuerpo as { error?: string })?.error) mensaje = (cuerpo as { error: string }).error;
     } catch {
       // sin cuerpo JSON, se deja el mensaje generico
     }
-    throw new Error(mensaje);
+    throw new ErrorApi(mensaje, res.status, cuerpo);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
