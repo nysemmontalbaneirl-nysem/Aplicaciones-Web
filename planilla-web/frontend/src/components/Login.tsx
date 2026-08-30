@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "../AuthContext";
 import logoJhcr from "../assets/logo-jhcr.jpg";
+import CampoPassword from "./CampoPassword";
 
 export default function Login() {
   const { iniciarSesion } = useAuth();
@@ -47,12 +48,7 @@ export default function Login() {
           </label>
           <label>
             Contraseña
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
+            <CampoPassword value={password} onChange={setPassword} required autoComplete="current-password" />
           </label>
           <button className="primario" type="submit" disabled={entrando} style={{ marginTop: 12, width: "100%" }}>
             {entrando ? "Ingresando..." : "Ingresar"}

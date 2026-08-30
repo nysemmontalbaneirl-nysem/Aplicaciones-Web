@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { apiPost } from "../api";
+import CampoPassword from "./CampoPassword";
 
 export default function CambiarPassword({ onListo }: { onListo: () => void }) {
   const [passwordActual, setPasswordActual] = useState("");
@@ -31,11 +32,11 @@ export default function CambiarPassword({ onListo }: { onListo: () => void }) {
       <form onSubmit={enviar}>
         <label>
           Contraseña actual
-          <input type="password" value={passwordActual} onChange={(e) => setPasswordActual(e.target.value)} required />
+          <CampoPassword value={passwordActual} onChange={setPasswordActual} required autoComplete="current-password" />
         </label>
         <label>
           Contraseña nueva (mínimo 8 caracteres)
-          <input type="password" value={passwordNueva} onChange={(e) => setPasswordNueva(e.target.value)} required minLength={8} />
+          <CampoPassword value={passwordNueva} onChange={setPasswordNueva} required minLength={8} autoComplete="new-password" />
         </label>
         <button className="primario" type="submit" disabled={guardando} style={{ marginTop: 12 }}>
           {guardando ? "Guardando..." : "Cambiar contraseña"}
