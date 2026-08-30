@@ -5,6 +5,7 @@ import { asyncHandler } from "../asyncHandler";
 import { requierePermiso } from "../authMiddleware";
 import { pool } from "../db";
 import { CategoriaOcupacional, SistemaPension } from "../tipos";
+import { validarEstadoCivil, validarSexo } from "../validaciones";
 
 export const importacionRouter = Router();
 
@@ -24,7 +25,16 @@ const CATEGORIAS_VALIDAS: CategoriaOcupacional[] = [
 ];
 const SISTEMAS_PENSION_VALIDOS: SistemaPension[] = ["AFP", "ONP"];
 
-// Columnas esperadas en el CSV (encabezado en la primera fila, en este orden o con estos nombres)
+// Columnas esperadas en el CSV (encabezado en la primera fila, en este orden o con estos nombres).
+// Las primeras son las historicas (obligatorias las que ya lo eran antes).
+// Las de la seccion "T-Registro (SUNAT)" son NUEVAS y OPCIONALES: si no se
+// incluyen en el CSV, la fila se procesa igual que antes (el dato SUNAT
+// queda vacio y se puede completar luego editando el trabajador uno por
+// uno). Reciben el CODIGO del catalogo (no el texto/nombre) - los mismos
+// codigos que se ven en GET /api/catalogos, ej. entidad_bancaria_codigo
+// "002" para BCP, ubigeo_distrito_codigo "190307" para SAN MIGUEL DE EL
+// FAIQUE. Un codigo que no exista en el catalogo se reporta como error de
+// esa fila (no detiene el resto de la importacion).
 const COLUMNAS = [
   "DNI",
   "APELLIDOS_NOMBRES",
@@ -54,6 +64,30 @@ const COLUMNAS = [
   "SCTR_SALUD",
   "ESSALUD_VIDA",
   "ESTADO",
+  // --- T-Registro (SUNAT) - opcionales, van por CODIGO de catalogo ---
+  "SEXO",
+  "ESTADO_CIVIL",
+  "NACIONALIDAD_CODIGO",
+  "PAIS_EMISOR_DOCUMENTO_CODIGO",
+  "GRADO_INSTRUCCION_CODIGO",
+  "ENTIDAD_BANCARIA_CODIGO",
+  "DISCAPACIDAD",
+  "SEGUNDA_DIRECCION",
+  "DIRECCION_ESSALUD",
+  "UBIGEO_DEPARTAMENTO_CODIGO",
+  "UBIGEO_PROVINCIA_CODIGO",
+  "UBIGEO_DISTRITO_CODIGO",
+  "CATEGORIA_OCUPACIONAL_SUNAT_CODIGO",
+  "TIPO_TRABAJADOR_CODIGO",
+  "REGIMEN_LABORAL_CODIGO",
+  "TIPO_CONTRATO_CODIGO",
+  "TIPO_PAGO_CODIGO",
+  "PERIODICIDAD_CODIGO",
+  "SITUACION_ESPECIAL_CODIGO",
+  "JORNADA_LABORAL",
+  "REGIMEN_SALUD_CODIGO",
+  "EPS_CODIGO",
+  "MOTIVO_BAJA_CODIGO",
 ] as const;
 
 interface FilaCSV {
@@ -89,6 +123,47 @@ function num(valor: string): number | null {
   if (!v) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+// Celda opcional del CSV -> string recortado o null (celda vacia/ausente).
+function opcional(valor: string | undefined): string | null {
+  return (valor ?? "").trim() || null;
+}
+
+// Mismo criterio que el alta individual (ver routes/empleados.ts): el texto
+// libre historico (grado_instruccion/entidad_bancaria/ubigeo) se deriva del
+// catalogo cuando el CSV manda el *_CODIGO pero no el texto directamente,
+// para no perder el dato en pantallas/reportes que aun leen el texto libre.
+async function resolverNombreCatalogo(tabla: string, codigo: string | null): Promise<string | null> {
+  if (!codigo) return null;
+  const r = await pool.query(`SELECT nombre FROM ${tabla} WHERE codigo = $1`, [codigo]);
+  return r.rows[0]?.nombre ?? null;
+}
+
+async function componerUbigeoTexto(
+  depCodigo: string | null,
+  provCodigo: string | null,
+  distCodigo: string | null
+): Promise<string | null> {
+  if (!depCodigo && !provCodigo && !distCodigo) return null;
+  const partes: string[] = [];
+  if (depCodigo) partes.push((await resolverNombreCatalogo("catalogo_ubigeo_departamento", depCodigo)) ?? depCodigo);
+  if (provCodigo) partes.push((await resolverNombreCatalogo("catalogo_ubigeo_provincia", provCodigo)) ?? provCodigo);
+  if (distCodigo) partes.push((await resolverNombreCatalogo("catalogo_ubigeo_distrito", distCodigo)) ?? distCodigo);
+  return partes.join(" / ");
+}
+
+// Traduce las FK/CHECK de catalogo violadas (codigo SUNAT inexistente) a un
+// mensaje legible para la columna "motivo" del reporte de errores por fila.
+function mensajeErrorFila(err: unknown): string {
+  const e = err as { code?: string; constraint?: string; message?: string };
+  if (e.code === "23503") {
+    return `Codigo de catalogo SUNAT inexistente (restriccion: ${e.constraint ?? "clave foranea"}). Revisa las columnas *_CODIGO de esta fila.`;
+  }
+  if (e.code === "23514") {
+    return `Un valor de esta fila no cumple el formato esperado (restriccion: ${e.constraint ?? "check"}).`;
+  }
+  return (err as Error).message;
 }
 
 // POST /api/empleados/importar-masivo  (multipart, campo "archivo" = CSV con encabezado)
@@ -157,6 +232,32 @@ importacionRouter.post("/importar-masivo", requierePermiso("importacion.masiva")
           throw new Error("SUELDO_BASE es obligatorio para la categoria EMPLEADO");
         }
 
+        // Campos T-Registro (SUNAT) del empleado - todos opcionales. sexo y
+        // estado_civil se validan con el mismo criterio que el alta
+        // individual para dar un mensaje de fila claro si vienen mal.
+        const sexo = validarSexo(fila.SEXO);
+        const estadoCivil = validarEstadoCivil(fila.ESTADO_CIVIL);
+        const nacionalidadCodigo = opcional(fila.NACIONALIDAD_CODIGO) ?? "9589"; // PERU por defecto
+        const paisEmisorCodigo = opcional(fila.PAIS_EMISOR_DOCUMENTO_CODIGO);
+        const gradoInstruccionCodigo = opcional(fila.GRADO_INSTRUCCION_CODIGO);
+        const entidadBancariaCodigo = opcional(fila.ENTIDAD_BANCARIA_CODIGO);
+        const discapacidad = esBooleano(fila.DISCAPACIDAD ?? "");
+        const segundaDireccion = opcional(fila.SEGUNDA_DIRECCION);
+        const direccionEssalud = opcional(fila.DIRECCION_ESSALUD);
+        const ubigeoDepartamentoCodigo = opcional(fila.UBIGEO_DEPARTAMENTO_CODIGO);
+        const ubigeoProvinciaCodigo = opcional(fila.UBIGEO_PROVINCIA_CODIGO);
+        const ubigeoDistritoCodigo = opcional(fila.UBIGEO_DISTRITO_CODIGO);
+
+        // El texto libre historico (grado_instruccion/entidad_bancaria/ubigeo)
+        // se completa desde el catalogo solo si el CSV no trae ya el texto
+        // en su columna de siempre.
+        const gradoInstruccionTexto =
+          opcional(fila.GRADO_INSTRUCCION) ?? (await resolverNombreCatalogo("catalogo_grado_instruccion", gradoInstruccionCodigo));
+        const entidadBancariaTexto =
+          opcional(fila.ENTIDAD_BANCARIA) ?? (await resolverNombreCatalogo("catalogo_banco", entidadBancariaCodigo));
+        const ubigeoTexto =
+          opcional(fila.UBIGEO) ?? (await componerUbigeoTexto(ubigeoDepartamentoCodigo, ubigeoProvinciaCodigo, ubigeoDistritoCodigo));
+
         // Upsert empleado por DNI
         const empleadoExistente = await cliente.query("SELECT id FROM empleados WHERE numero_documento = $1", [dni]);
         let empleadoId: number;
@@ -165,21 +266,37 @@ importacionRouter.post("/importar-masivo", requierePermiso("importacion.masiva")
           const r = await cliente.query(
             `INSERT INTO empleados
               (numero_documento, apellidos_nombres, fecha_nacimiento, grado_instruccion,
-               numero_hijos, celular, correo, direccion, ubigeo, entidad_bancaria, cuenta_bancaria)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+               numero_hijos, celular, correo, direccion, ubigeo, entidad_bancaria, cuenta_bancaria,
+               sexo, estado_civil, nacionalidad_codigo, pais_emisor_documento_codigo,
+               grado_instruccion_codigo, entidad_bancaria_codigo, discapacidad,
+               segunda_direccion, direccion_essalud,
+               ubigeo_departamento_codigo, ubigeo_provincia_codigo, ubigeo_distrito_codigo)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
              RETURNING id`,
             [
               dni,
               apellidosNombres,
               normalizarFecha(fila.FECHA_NACIMIENTO ?? ""),
-              (fila.GRADO_INSTRUCCION ?? "").trim() || null,
+              gradoInstruccionTexto,
               num(fila.NUMERO_HIJOS ?? "") ?? 0,
               (fila.CELULAR ?? "").trim() || null,
               (fila.CORREO ?? "").trim() || null,
               (fila.DIRECCION ?? "").trim() || null,
-              (fila.UBIGEO ?? "").trim() || null,
-              (fila.ENTIDAD_BANCARIA ?? "").trim() || null,
+              ubigeoTexto,
+              entidadBancariaTexto,
               (fila.CUENTA_BANCARIA ?? "").trim() || null,
+              sexo,
+              estadoCivil,
+              nacionalidadCodigo,
+              paisEmisorCodigo,
+              gradoInstruccionCodigo,
+              entidadBancariaCodigo,
+              discapacidad,
+              segundaDireccion,
+              direccionEssalud,
+              ubigeoDepartamentoCodigo,
+              ubigeoProvinciaCodigo,
+              ubigeoDistritoCodigo,
             ]
           );
           empleadoId = r.rows[0].id;
@@ -190,24 +307,58 @@ importacionRouter.post("/importar-masivo", requierePermiso("importacion.masiva")
             `UPDATE empleados SET
                apellidos_nombres = $1, fecha_nacimiento = $2, grado_instruccion = $3,
                numero_hijos = $4, celular = $5, correo = $6, direccion = $7, ubigeo = $8,
-               entidad_bancaria = $9, cuenta_bancaria = $10, actualizado_en = now()
-             WHERE id = $11`,
+               entidad_bancaria = $9, cuenta_bancaria = $10,
+               sexo = $11, estado_civil = $12, nacionalidad_codigo = $13,
+               pais_emisor_documento_codigo = $14, grado_instruccion_codigo = $15,
+               entidad_bancaria_codigo = $16, discapacidad = $17,
+               segunda_direccion = $18, direccion_essalud = $19,
+               ubigeo_departamento_codigo = $20, ubigeo_provincia_codigo = $21,
+               ubigeo_distrito_codigo = $22, actualizado_en = now()
+             WHERE id = $23`,
             [
               apellidosNombres,
               normalizarFecha(fila.FECHA_NACIMIENTO ?? ""),
-              (fila.GRADO_INSTRUCCION ?? "").trim() || null,
+              gradoInstruccionTexto,
               num(fila.NUMERO_HIJOS ?? "") ?? 0,
               (fila.CELULAR ?? "").trim() || null,
               (fila.CORREO ?? "").trim() || null,
               (fila.DIRECCION ?? "").trim() || null,
-              (fila.UBIGEO ?? "").trim() || null,
-              (fila.ENTIDAD_BANCARIA ?? "").trim() || null,
+              ubigeoTexto,
+              entidadBancariaTexto,
               (fila.CUENTA_BANCARIA ?? "").trim() || null,
+              sexo,
+              estadoCivil,
+              nacionalidadCodigo,
+              paisEmisorCodigo,
+              gradoInstruccionCodigo,
+              entidadBancariaCodigo,
+              discapacidad,
+              segundaDireccion,
+              direccionEssalud,
+              ubigeoDepartamentoCodigo,
+              ubigeoProvinciaCodigo,
+              ubigeoDistritoCodigo,
               empleadoId,
             ]
           );
           empleadosActualizados++;
         }
+
+        // Campos T-Registro (SUNAT) del contrato - opcionales. Los que
+        // tambien tienen un valor por defecto en el alta individual
+        // conservan el mismo default aqui (construccion civil).
+        const categoriaOcupacionalSunatCodigo = opcional(fila.CATEGORIA_OCUPACIONAL_SUNAT_CODIGO);
+        const tipoTrabajadorCodigo = opcional(fila.TIPO_TRABAJADOR_CODIGO) ?? "27"; // CONSTRUCCION CIVIL
+        const regimenLaboralCodigo = opcional(fila.REGIMEN_LABORAL_CODIGO) ?? "21"; // CONSTRUCCION CIVIL
+        const tipoContratoCodigo = opcional(fila.TIPO_CONTRATO_CODIGO);
+        const tipoPagoCodigo = opcional(fila.TIPO_PAGO_CODIGO);
+        const periodicidadCodigo = opcional(fila.PERIODICIDAD_CODIGO);
+        const situacionEspecialCodigo = opcional(fila.SITUACION_ESPECIAL_CODIGO) ?? "0"; // NINGUNA
+        const jornadaLaboral = opcional(fila.JORNADA_LABORAL);
+        const regimenSaludCodigo = opcional(fila.REGIMEN_SALUD_CODIGO) ?? "00"; // ESSALUD REGULAR
+        const epsCodigo = opcional(fila.EPS_CODIGO);
+        const estadoContrato = (fila.ESTADO ?? "").trim().toUpperCase() === "CESADO" ? "CESADO" : "HABIL";
+        const motivoBajaCodigo = estadoContrato === "CESADO" ? opcional(fila.MOTIVO_BAJA_CODIGO) : null;
 
         // Evitar duplicar el mismo contrato si ya existe uno identico (mismo empleado+proyecto+fecha_ingreso)
         const contratoExistente = await cliente.query(
@@ -219,8 +370,11 @@ importacionRouter.post("/importar-masivo", requierePermiso("importacion.masiva")
             `INSERT INTO contratos
               (empleado_id, proyecto, grupo, categoria_ocupacional, ocupacion, sistema_pension,
                afp_nombre, cuspp, sistema_comision, fecha_ingreso, fecha_cese, sueldo_base, viaticos,
-               sindicalizado, poliza_seguro, sctr_salud, essalud_vida, estado)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+               sindicalizado, poliza_seguro, sctr_salud, essalud_vida, estado,
+               categoria_ocupacional_sunat_codigo, tipo_trabajador_codigo, regimen_laboral_codigo,
+               tipo_contrato_codigo, tipo_pago_codigo, periodicidad_codigo, situacion_especial_codigo,
+               jornada_laboral, regimen_salud_codigo, eps_codigo, motivo_baja_codigo)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)`,
             [
               empleadoId,
               (fila.PROYECTO ?? "").trim(),
@@ -239,14 +393,25 @@ importacionRouter.post("/importar-masivo", requierePermiso("importacion.masiva")
               esBooleano(fila.POLIZA_SEGURO ?? ""),
               esBooleano(fila.SCTR_SALUD ?? ""),
               esBooleano(fila.ESSALUD_VIDA ?? ""),
-              (fila.ESTADO ?? "").trim().toUpperCase() === "CESADO" ? "CESADO" : "HABIL",
+              estadoContrato,
+              categoriaOcupacionalSunatCodigo,
+              tipoTrabajadorCodigo,
+              regimenLaboralCodigo,
+              tipoContratoCodigo,
+              tipoPagoCodigo,
+              periodicidadCodigo,
+              situacionEspecialCodigo,
+              jornadaLaboral,
+              regimenSaludCodigo,
+              epsCodigo,
+              motivoBajaCodigo,
             ]
           );
           contratosCreados++;
         }
       } catch (err) {
         await cliente.query(`ROLLBACK TO SAVEPOINT fila_${i}`);
-        errores.push({ fila: numeroFila, dni: dni || "(vacio)", motivo: (err as Error).message });
+        errores.push({ fila: numeroFila, dni: dni || "(vacio)", motivo: mensajeErrorFila(err) });
       }
     }
 

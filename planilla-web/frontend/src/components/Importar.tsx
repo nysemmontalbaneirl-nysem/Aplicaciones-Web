@@ -23,6 +23,21 @@ const COLUMNAS_ESPERADAS = [
   "SINDICALIZADO", "POLIZA_SEGURO", "SCTR_SALUD", "ESSALUD_VIDA", "ESTADO",
 ];
 
+// Columnas nuevas de T-Registro (SUNAT): opcionales, van por el CODIGO del
+// catalogo (el mismo que se ve en los desplegables del alta individual),
+// no por el nombre/texto. Si no se incluyen, la fila se procesa igual que
+// antes y esos datos se pueden completar despues editando el trabajador.
+const COLUMNAS_SUNAT_OPCIONALES = [
+  "SEXO", "ESTADO_CIVIL", "NACIONALIDAD_CODIGO", "PAIS_EMISOR_DOCUMENTO_CODIGO",
+  "GRADO_INSTRUCCION_CODIGO", "ENTIDAD_BANCARIA_CODIGO", "DISCAPACIDAD",
+  "SEGUNDA_DIRECCION", "DIRECCION_ESSALUD", "UBIGEO_DEPARTAMENTO_CODIGO",
+  "UBIGEO_PROVINCIA_CODIGO", "UBIGEO_DISTRITO_CODIGO",
+  "CATEGORIA_OCUPACIONAL_SUNAT_CODIGO", "TIPO_TRABAJADOR_CODIGO", "REGIMEN_LABORAL_CODIGO",
+  "TIPO_CONTRATO_CODIGO", "TIPO_PAGO_CODIGO", "PERIODICIDAD_CODIGO",
+  "SITUACION_ESPECIAL_CODIGO", "JORNADA_LABORAL", "REGIMEN_SALUD_CODIGO", "EPS_CODIGO",
+  "MOTIVO_BAJA_CODIGO",
+];
+
 export default function Importar() {
   const [archivo, setArchivo] = useState<File | null>(null);
   const [subiendo, setSubiendo] = useState(false);
@@ -77,6 +92,19 @@ export default function Importar() {
           </summary>
           <div style={{ marginTop: 8, fontSize: "0.82rem", color: "#5a6172" }}>
             {COLUMNAS_ESPERADAS.join(", ")}
+          </div>
+          <p style={{ marginTop: 12, marginBottom: 4, fontSize: "0.88rem" }}>
+            <strong>Columnas T-Registro (SUNAT) - opcionales:</strong>
+          </p>
+          <p style={{ marginTop: 0, marginBottom: 4, fontSize: "0.82rem", color: "#5a6172" }}>
+            Van por el CODIGO del catalogo (el mismo que se ve en los desplegables del alta
+            individual: Trabajadores → Nuevo trabajador), no por el nombre. Ej.
+            ENTIDAD_BANCARIA_CODIGO = "002" para BCP, UBIGEO_DISTRITO_CODIGO = "190307". Si no
+            incluyes estas columnas, la fila se procesa igual que antes y esos datos se pueden
+            completar después editando el trabajador uno por uno.
+          </p>
+          <div style={{ marginTop: 8, fontSize: "0.82rem", color: "#5a6172" }}>
+            {COLUMNAS_SUNAT_OPCIONALES.join(", ")}
           </div>
         </details>
       </div>
