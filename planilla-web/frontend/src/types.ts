@@ -62,7 +62,25 @@ export interface Empleado {
   numero_hijos: number;
   celular: string | null;
   correo: string | null;
+  direccion?: string | null;
+  ubigeo?: string | null;
+  entidad_bancaria?: string | null;
+  cuenta_bancaria?: string | null;
   estado: "ACTIVO" | "INACTIVO";
+  // Campos T-Registro (SUNAT) agregados en la migracion_016 - todos
+  // opcionales/nulables, se llenan de a poco desde el formulario de alta.
+  sexo?: "M" | "F" | null;
+  estado_civil?: string | null;
+  nacionalidad_codigo?: string | null;
+  pais_emisor_documento_codigo?: string | null;
+  grado_instruccion_codigo?: string | null;
+  entidad_bancaria_codigo?: string | null;
+  discapacidad?: boolean;
+  segunda_direccion?: string | null;
+  direccion_essalud?: string | null;
+  ubigeo_departamento_codigo?: string | null;
+  ubigeo_provincia_codigo?: string | null;
+  ubigeo_distrito_codigo?: string | null;
 }
 
 export interface Contrato {
@@ -72,17 +90,72 @@ export interface Contrato {
   numero_documento?: string;
   proyecto: string;
   grupo: string | null;
+  ocupacion?: string | null;
   categoria_ocupacional: CategoriaOcupacional;
   sistema_pension: "AFP" | "ONP";
   afp_nombre: string | null;
   cuspp?: string | null;
+  sistema_comision?: string | null;
   fecha_ingreso: string;
   fecha_cese: string | null;
   sueldo_base: number | null;
   sindicalizado: boolean;
   poliza_seguro: boolean;
   sctr_salud: boolean;
+  essalud_vida?: boolean;
+  domiciliado?: boolean;
   estado: "HABIL" | "CESADO";
+  // Campos T-Registro (SUNAT) agregados en la migracion_016.
+  categoria_ocupacional_sunat_codigo?: string | null;
+  tipo_trabajador_codigo?: string | null;
+  regimen_laboral_codigo?: string | null;
+  tipo_contrato_codigo?: string | null;
+  tipo_pago_codigo?: string | null;
+  periodicidad_codigo?: string | null;
+  motivo_baja_codigo?: string | null;
+  situacion_especial_codigo?: string | null;
+  jornada_laboral?: string | null;
+  regimen_salud_codigo?: string | null;
+  eps_codigo?: string | null;
+}
+
+// Un item generico de catalogo (codigo + nombre) tal como los devuelve
+// GET /api/catalogos - la mayoria de los catalogos SUNAT son solo esto.
+export interface CatalogoItem {
+  codigo: string;
+  nombre: string;
+}
+
+export interface CatalogoUbigeoProvincia extends CatalogoItem {
+  departamento_codigo: string;
+}
+
+export interface CatalogoUbigeoDistrito extends CatalogoItem {
+  provincia_codigo: string;
+}
+
+// Respuesta completa de GET /api/catalogos: todas las tablas catalogo_*
+// que agrego la migracion_016 (Anexo 2 SUNAT T-Registro), para armar los
+// desplegables del alta de trabajador.
+export interface Catalogos {
+  tipo_documento: CatalogoItem[];
+  nacionalidad: CatalogoItem[];
+  tipo_trabajador: CatalogoItem[];
+  grado_instruccion: CatalogoItem[];
+  regimen_pensionario: CatalogoItem[];
+  tipo_contrato: CatalogoItem[];
+  periodicidad: CatalogoItem[];
+  eps: CatalogoItem[];
+  tipo_pago: CatalogoItem[];
+  motivo_baja: CatalogoItem[];
+  categoria_ocupacional_sunat: CatalogoItem[];
+  regimen_salud: CatalogoItem[];
+  regimen_laboral: CatalogoItem[];
+  situacion_especial: CatalogoItem[];
+  banco: CatalogoItem[];
+  ubigeo_departamento: CatalogoItem[];
+  ubigeo_provincia: CatalogoUbigeoProvincia[];
+  ubigeo_distrito: CatalogoUbigeoDistrito[];
 }
 
 export interface PeriodoPlanilla {
@@ -224,6 +297,9 @@ export interface Proyecto {
   ubicacion: string | null;
   estado: "ACTIVO" | "CERRADO";
   cuota_sindical_semanal: number;
+  // Cada proyecto/obra es su propio establecimiento SUNAT (migracion_016).
+  codigo_establecimiento?: string | null;
+  tipo_establecimiento?: "DOMICILIO FISCAL" | "ESTABLECIMIENTO ANEXO";
 }
 
 export interface EntradaBitacora {
