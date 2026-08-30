@@ -7,7 +7,9 @@ el Perú, y para cada concepto de INGRESO indica si está afecto ("SI") o no
 Renta de 5ta, etc.). Es la fuente oficial para responder "¿a qué aportes o
 descuentos está afecto el concepto X?".
 
-- **Archivo fuente**: `TABLA22.xls` (proporcionado por el usuario, 25/08/2026).
+- **Archivo fuente**: [`TABLA22.xls`](./TABLA22.xls) (proporcionado por el
+  usuario, 25/08/2026 — el archivo original ya está guardado en esta misma
+  carpeta del repo, no solo su extracción).
 - **Extracción completa**: [`tabla22_plame.json`](./tabla22_plame.json) — los
   310 conceptos del catálogo, 225 de ellos con su matriz SI/NO completa por
   columna de tributo (los conceptos de las secciones 600/700/800 -
