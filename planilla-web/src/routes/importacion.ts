@@ -320,6 +320,7 @@ importacionRouter.post("/importar-masivo", requierePermiso("importacion.masiva")
   let empleadosCreados = 0;
   let empleadosActualizados = 0;
   let contratosCreados = 0;
+  let contratosActualizados = 0;
 
   const cliente = await pool.connect();
   try {
@@ -488,9 +489,16 @@ importacionRouter.post("/importar-masivo", requierePermiso("importacion.masiva")
         const estadoContrato = (fila.ESTADO ?? "").trim().toUpperCase() === "CESADO" ? "CESADO" : "HABIL";
         const motivoBajaCodigo = estadoContrato === "CESADO" ? opcional(fila.MOTIVO_BAJA_CODIGO) : null;
 
-        // Evitar duplicar el mismo contrato si ya existe uno identico (mismo empleado+proyecto+fecha_ingreso)
+        // Evitar duplicar el mismo contrato si ya existe uno identico (mismo empleado+proyecto+fecha_ingreso).
+        // Si ya existe Y la fila trae ESTADO=CESADO, la carga masiva tambien
+        // sirve para dar de baja (o corregir la fecha/motivo de una baja ya
+        // registrada) actualizando ese contrato en vez de intentarlo crear
+        // de nuevo. Nunca se hace lo contrario (revertir un contrato CESADO
+        // a HABIL desde una fila con ESTADO=HABIL o vacio) - eso se sigue
+        // ignorando en silencio, igual que antes, para evitar altas
+        // masivas accidentales de un cese ya hecho a proposito.
         const contratoExistente = await cliente.query(
-          `SELECT id FROM contratos WHERE empleado_id = $1 AND proyecto = $2 AND fecha_ingreso = $3`,
+          `SELECT id, estado FROM contratos WHERE empleado_id = $1 AND proyecto = $2 AND fecha_ingreso = $3`,
           [empleadoId, (fila.PROYECTO ?? "").trim(), fechaIngreso]
         );
         if (contratoExistente.rowCount === 0) {
@@ -536,6 +544,21 @@ importacionRouter.post("/importar-masivo", requierePermiso("importacion.masiva")
             ]
           );
           contratosCreados++;
+        } else if (estadoContrato === "CESADO") {
+          const fechaCeseNormalizada = normalizarFecha(fila.FECHA_CESE ?? "");
+          if (!fechaCeseNormalizada) {
+            throw new Error(
+              `FECHA_CESE es obligatoria cuando ESTADO = CESADO (fila con contrato ya existente para PROYECTO '${(fila.PROYECTO ?? "").trim()}')`
+            );
+          }
+          const resultado = await cliente.query(
+            `UPDATE contratos SET fecha_cese = $1, motivo_baja_codigo = $2, estado = 'CESADO'
+             WHERE id = $3`,
+            [fechaCeseNormalizada, motivoBajaCodigo, contratoExistente.rows[0].id]
+          );
+          if ((resultado.rowCount ?? 0) > 0) {
+            contratosActualizados++;
+          }
         }
       } catch (err) {
         await cliente.query(`ROLLBACK TO SAVEPOINT fila_${i}`);
@@ -549,6 +572,7 @@ importacionRouter.post("/importar-masivo", requierePermiso("importacion.masiva")
       empleados_creados: empleadosCreados,
       empleados_actualizados: empleadosActualizados,
       contratos_creados: contratosCreados,
+      contratos_actualizados: contratosActualizados,
       errores,
     });
   } catch (err) {

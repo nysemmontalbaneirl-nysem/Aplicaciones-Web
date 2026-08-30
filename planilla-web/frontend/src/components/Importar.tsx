@@ -12,6 +12,7 @@ interface ResultadoImportacion {
   empleados_creados: number;
   empleados_actualizados: number;
   contratos_creados: number;
+  contratos_actualizados: number;
   errores: ErrorFila[];
 }
 
@@ -70,6 +71,16 @@ export default function Importar() {
           Sube un archivo CSV con encabezado en la primera fila. Cada fila crea (o actualiza,
           si el DNI ya existe) un empleado y su contrato. Las filas con errores se reportan
           abajo sin detener la importación del resto.
+        </p>
+        <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
+          <strong>También puedes usar esta plantilla para dar de baja (cesar) trabajadores en
+          lote:</strong> en la fila del trabajador ya existente (mismo DNI, PROYECTO y
+          FECHA_INGRESO que su contrato actual), pon <strong>ESTADO = CESADO</strong>, completa{" "}
+          <strong>FECHA_CESE</strong> (obligatoria en ese caso) y, si aplica,{" "}
+          <strong>MOTIVO_BAJA_CODIGO</strong>. El sistema actualiza ese contrato en vez de crear
+          uno nuevo. Por seguridad, la carga masiva nunca revierte un cese ya registrado: si el
+          contrato ya está CESADO y la fila trae ESTADO=HABIL (o lo deja vacío), esa fila se
+          ignora sin generar error.
         </p>
 
         <div style={{ margin: "12px 0" }}>
@@ -135,7 +146,7 @@ export default function Importar() {
           <div className="mensaje-ok">
             {resultado.total_filas} filas procesadas — {resultado.empleados_creados} empleados
             nuevos, {resultado.empleados_actualizados} actualizados, {resultado.contratos_creados}{" "}
-            contratos creados.
+            contratos creados, {resultado.contratos_actualizados} contratos cesados/actualizados.
           </div>
 
           {resultado.errores.length > 0 && (

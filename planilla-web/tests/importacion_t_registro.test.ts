@@ -26,9 +26,9 @@ function auth() {
 
 afterAll(async () => {
   await pool.query(
-    "DELETE FROM contratos WHERE empleado_id IN (SELECT id FROM empleados WHERE numero_documento IN ('99990001','99990002'))"
+    "DELETE FROM contratos WHERE empleado_id IN (SELECT id FROM empleados WHERE numero_documento IN ('99990001','99990002','99990010'))"
   );
-  await pool.query("DELETE FROM empleados WHERE numero_documento IN ('99990001','99990002')");
+  await pool.query("DELETE FROM empleados WHERE numero_documento IN ('99990001','99990002','99990010')");
   await pool.end();
 });
 
@@ -136,6 +136,95 @@ describe("POST /api/empleados/importar-masivo con columnas T-Registro (SUNAT)", 
 
     await pool.query("DELETE FROM contratos WHERE empleado_id IN (SELECT id FROM empleados WHERE numero_documento = '99990003')");
     await pool.query("DELETE FROM empleados WHERE numero_documento = '99990003'");
+  });
+});
+
+const ENCABEZADO_CESE =
+  "DNI,APELLIDOS_NOMBRES,PROYECTO,CATEGORIA,SISTEMA_PENSION,FECHA_INGRESO,ESTADO,FECHA_CESE,MOTIVO_BAJA_CODIGO";
+
+describe("POST /api/empleados/importar-masivo - dar de baja (cese) por carga masiva", () => {
+  it("crea el contrato inicial en HABIL", async () => {
+    const fila = ["99990010", "PRUEBA CESE MASIVO", "Proyecto A", "PEON", "ONP", "2026-04-01", "HABIL", "", ""].join(",");
+    const r = await request(app)
+      .post("/api/empleados/importar-masivo")
+      .set(auth())
+      .attach("archivo", Buffer.from(`${ENCABEZADO_CESE}\n${fila}\n`, "utf-8"), "importar.csv");
+
+    expect(r.status).toBe(200);
+    expect(r.body.errores).toEqual([]);
+    expect(r.body.empleados_creados).toBe(1);
+    expect(r.body.contratos_creados).toBe(1);
+
+    const contrato = await pool.query(
+      `SELECT c.estado FROM contratos c JOIN empleados e ON e.id = c.empleado_id WHERE e.numero_documento = '99990010'`
+    );
+    expect(contrato.rows[0].estado).toBe("HABIL");
+  });
+
+  it("cesa el contrato existente al reimportar la misma fila con ESTADO=CESADO y FECHA_CESE", async () => {
+    const fila = [
+      "99990010", "PRUEBA CESE MASIVO", "Proyecto A", "PEON", "ONP", "2026-04-01", "CESADO", "2026-04-30", "01",
+    ].join(",");
+    const r = await request(app)
+      .post("/api/empleados/importar-masivo")
+      .set(auth())
+      .attach("archivo", Buffer.from(`${ENCABEZADO_CESE}\n${fila}\n`, "utf-8"), "importar.csv");
+
+    expect(r.status).toBe(200);
+    expect(r.body.errores).toEqual([]);
+    expect(r.body.contratos_creados).toBe(0);
+    expect(r.body.contratos_actualizados).toBe(1);
+
+    const contrato = await pool.query(
+      `SELECT c.estado, c.fecha_cese, c.motivo_baja_codigo FROM contratos c
+       JOIN empleados e ON e.id = c.empleado_id WHERE e.numero_documento = '99990010'`
+    );
+    expect(contrato.rows[0].estado).toBe("CESADO");
+    expect(contrato.rows[0].motivo_baja_codigo).toBe("01");
+    expect(new Date(contrato.rows[0].fecha_cese).toISOString().slice(0, 10)).toBe("2026-04-30");
+  });
+
+  it("nunca revierte un contrato ya CESADO a HABIL desde la carga masiva", async () => {
+    const fila = ["99990010", "PRUEBA CESE MASIVO", "Proyecto A", "PEON", "ONP", "2026-04-01", "HABIL", "", ""].join(",");
+    const r = await request(app)
+      .post("/api/empleados/importar-masivo")
+      .set(auth())
+      .attach("archivo", Buffer.from(`${ENCABEZADO_CESE}\n${fila}\n`, "utf-8"), "importar.csv");
+
+    expect(r.status).toBe(200);
+    expect(r.body.errores).toEqual([]);
+    expect(r.body.contratos_creados).toBe(0);
+    expect(r.body.contratos_actualizados).toBe(0);
+
+    const contrato = await pool.query(
+      `SELECT c.estado FROM contratos c JOIN empleados e ON e.id = c.empleado_id WHERE e.numero_documento = '99990010'`
+    );
+    expect(contrato.rows[0].estado).toBe("CESADO");
+  });
+
+  it("reporta error de fila si ESTADO=CESADO sobre un contrato existente pero falta FECHA_CESE", async () => {
+    // Se usa un proyecto distinto para que sea un contrato existente distinto (HABIL) al que le
+    // falta la fecha de cese al intentar cesarlo.
+    const filaAlta = ["99990010", "PRUEBA CESE MASIVO", "Proyecto B", "PEON", "ONP", "2026-05-01", "HABIL", "", ""].join(",");
+    await request(app)
+      .post("/api/empleados/importar-masivo")
+      .set(auth())
+      .attach("archivo", Buffer.from(`${ENCABEZADO_CESE}\n${filaAlta}\n`, "utf-8"), "importar.csv");
+
+    const filaCeseSinFecha = ["99990010", "PRUEBA CESE MASIVO", "Proyecto B", "PEON", "ONP", "2026-05-01", "CESADO", "", ""].join(",");
+    const r = await request(app)
+      .post("/api/empleados/importar-masivo")
+      .set(auth())
+      .attach("archivo", Buffer.from(`${ENCABEZADO_CESE}\n${filaCeseSinFecha}\n`, "utf-8"), "importar.csv");
+
+    expect(r.status).toBe(200);
+    expect(r.body.errores).toHaveLength(1);
+    expect(r.body.errores[0].motivo).toMatch(/FECHA_CESE es obligatoria/i);
+
+    const contrato = await pool.query(
+      `SELECT c.estado FROM contratos c JOIN empleados e ON e.id = c.empleado_id WHERE e.numero_documento = '99990010' AND c.proyecto = 'Proyecto B'`
+    );
+    expect(contrato.rows[0].estado).toBe("HABIL");
   });
 });
 
