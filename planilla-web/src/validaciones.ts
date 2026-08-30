@@ -59,6 +59,59 @@ export function validarFecha(valor: unknown, campo: string): string {
   return valor;
 }
 
+const SEXOS_VALIDOS = ["M", "F"];
+const ESTADOS_CIVILES_VALIDOS = ["SOLTERO", "CASADO", "VIUDO", "DIVORCIADO", "CONVIVIENTE"];
+
+// Los siguientes validan valores opcionales del alta de trabajador
+// (T-Registro): si no vienen, se guarda NULL. Si vienen, deben ser uno de
+// los valores permitidos por el CHECK correspondiente en la base de datos
+// - se valida aca tambien para devolver un mensaje 400 claro en vez de que
+// el error crudo de Postgres llegue al usuario.
+export function validarSexo(valor: unknown): string | null {
+  if (valor === undefined || valor === null || valor === "") return null;
+  if (typeof valor !== "string" || !SEXOS_VALIDOS.includes(valor)) {
+    throw new ErrorValidacion(`sexo invalido. Valores permitidos: ${SEXOS_VALIDOS.join(", ")}`);
+  }
+  return valor;
+}
+
+export function validarEstadoCivil(valor: unknown): string | null {
+  if (valor === undefined || valor === null || valor === "") return null;
+  if (typeof valor !== "string" || !ESTADOS_CIVILES_VALIDOS.includes(valor)) {
+    throw new ErrorValidacion(
+      `estado_civil invalido. Valores permitidos: ${ESTADOS_CIVILES_VALIDOS.join(", ")}`
+    );
+  }
+  return valor;
+}
+
+// Los codigos de catalogo (T3, T4, T8, T11, T12, etc.) llegan del
+// desplegable del frontend, ya validados visualmente contra la lista
+// oficial - aca solo se normaliza vacio/undefined a NULL. La existencia
+// real del codigo la garantiza la FK en la base de datos (ver
+// mensajeErrorCatalogo mas abajo para el mensaje amigable si de todas
+// formas llega un codigo que no existe, ej. por un catalogo desactualizado
+// en el navegador del usuario).
+export function codigoOpcional(valor: unknown): string | null {
+  if (valor === undefined || valor === null || valor === "") return null;
+  return String(valor);
+}
+
+// Traduce los errores de Postgres mas comunes al guardar campos con
+// catalogo (FK inexistente = 23503, CHECK violado = 23503/23514) a un
+// mensaje legible. Devuelve null si el error no es de este tipo (para que
+// el caller lo relance tal cual).
+export function mensajeErrorCatalogo(err: unknown): string | null {
+  const e = err as { code?: string; constraint?: string; message?: string };
+  if (e.code === "23503") {
+    return `El codigo de catalogo enviado no existe (restriccion: ${e.constraint ?? "clave foranea"}). Puede que el desplegable este desactualizado - recargue la pagina.`;
+  }
+  if (e.code === "23514") {
+    return `Un valor enviado no cumple el formato esperado (restriccion: ${e.constraint ?? "check"}).`;
+  }
+  return null;
+}
+
 export function validarMontoPositivo(valor: unknown, campo: string): number {
   const n = Number(valor);
   if (Number.isNaN(n) || n < 0) {

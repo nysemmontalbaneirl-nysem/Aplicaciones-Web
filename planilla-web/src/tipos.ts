@@ -31,6 +31,22 @@ export interface Empleado {
   entidad_bancaria: string | null;
   cuenta_bancaria: string | null;
   estado: "ACTIVO" | "INACTIVO";
+  // Campos T-Registro (migracion_016) - datos que exige SUNAT ademas de
+  // los que ya usaba el sistema. Todos opcionales/nulables: se llenan de a
+  // poco desde el formulario de alta, no son retroactivos a empleados ya
+  // cargados.
+  sexo?: "M" | "F" | null;
+  estado_civil?: string | null;
+  nacionalidad_codigo?: string | null;
+  pais_emisor_documento_codigo?: string | null;
+  grado_instruccion_codigo?: string | null;
+  entidad_bancaria_codigo?: string | null;
+  discapacidad?: boolean;
+  segunda_direccion?: string | null;
+  direccion_essalud?: string | null;
+  ubigeo_departamento_codigo?: string | null;
+  ubigeo_provincia_codigo?: string | null;
+  ubigeo_distrito_codigo?: string | null;
 }
 
 export interface Contrato {
@@ -54,6 +70,18 @@ export interface Contrato {
   essalud_vida: boolean;
   domiciliado: boolean;
   estado: "HABIL" | "CESADO";
+  // Campos T-Registro (migracion_016), ver nota en Empleado arriba.
+  categoria_ocupacional_sunat_codigo?: string | null;
+  tipo_trabajador_codigo?: string | null;
+  regimen_laboral_codigo?: string | null;
+  tipo_contrato_codigo?: string | null;
+  tipo_pago_codigo?: string | null;
+  periodicidad_codigo?: string | null;
+  motivo_baja_codigo?: string | null;
+  situacion_especial_codigo?: string | null;
+  jornada_laboral?: string | null;
+  regimen_salud_codigo?: string | null;
+  eps_codigo?: string | null;
 }
 
 export interface PeriodoPlanilla {
@@ -222,6 +250,9 @@ export interface Proyecto {
   ubicacion: string | null;
   estado: "ACTIVO" | "CERRADO";
   cuota_sindical_semanal: number;
+  // Cada proyecto/obra es su propio establecimiento SUNAT (migracion_016).
+  codigo_establecimiento?: string | null;
+  tipo_establecimiento?: "DOMICILIO FISCAL" | "ESTABLECIMIENTO ANEXO";
 }
 
 export interface DatosEmpresa {

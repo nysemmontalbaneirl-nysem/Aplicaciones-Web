@@ -24,6 +24,7 @@ import { bitacoraRouter } from "./routes/bitacora";
 import { rolesRouter } from "./routes/roles";
 import { dashboardRouter } from "./routes/dashboard";
 import { enviosRouter } from "./routes/envios";
+import { catalogosRouter } from "./routes/catalogos";
 
 // Construccion de la app Express, separada de server.ts (que la arranca
 // escuchando en un puerto real). Separarlas permite que las pruebas
@@ -91,6 +92,7 @@ app.use("/api/bitacora", bitacoraRouter);
 app.use("/api/roles", rolesRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/periodos", enviosRouter);
+app.use("/api/catalogos", catalogosRouter);
 
 // Manejador de errores centralizado
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
