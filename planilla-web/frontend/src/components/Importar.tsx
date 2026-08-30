@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { apiPostArchivo } from "../api";
+import { apiPostArchivo, BASE_URL, conToken } from "../api";
 
 interface ErrorFila {
   fila: number;
@@ -71,6 +71,24 @@ export default function Importar() {
           si el DNI ya existe) un empleado y su contrato. Las filas con errores se reportan
           abajo sin detener la importación del resto.
         </p>
+
+        <div style={{ margin: "12px 0" }}>
+          <a
+            href={conToken(`${BASE_URL}/empleados/importar-masivo/plantilla.xlsx`)}
+            className="primario"
+            style={{ display: "inline-block", textDecoration: "none" }}
+          >
+            Descargar plantilla en Excel
+          </a>
+          <p style={{ marginTop: 8, marginBottom: 0, fontSize: "0.82rem", color: "#5a6172" }}>
+            Trae todas las columnas (incluidas las de T-Registro/SUNAT) listas para llenar, más
+            una hoja de referencia por cada catálogo (código y nombre: banco, ubigeo, tipo de
+            contrato, EPS, etc.). Una vez llena, en Excel usa <strong>Archivo → Guardar como</strong>{" "}
+            y elige el formato <strong>CSV UTF-8 (delimitado por comas)</strong> antes de subirla
+            aquí — el sistema solo acepta CSV, no .xlsx.
+          </p>
+        </div>
+
         {error && <div className="mensaje-error">{error}</div>}
 
         <form onSubmit={subirArchivo}>

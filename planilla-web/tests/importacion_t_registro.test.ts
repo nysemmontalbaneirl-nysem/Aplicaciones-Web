@@ -3,6 +3,7 @@
 // misma app y base de datos de pruebas que autorizacion.test.ts (ver
 // tests/globalSetup.ts).
 import request from "supertest";
+import ExcelJS from "exceljs";
 import { app } from "../src/app";
 import { pool } from "../src/db";
 import { CLAVE_PRUEBA } from "./globalSetup";
@@ -135,5 +136,45 @@ describe("POST /api/empleados/importar-masivo con columnas T-Registro (SUNAT)", 
 
     await pool.query("DELETE FROM contratos WHERE empleado_id IN (SELECT id FROM empleados WHERE numero_documento = '99990003')");
     await pool.query("DELETE FROM empleados WHERE numero_documento = '99990003'");
+  });
+});
+
+describe("GET /api/empleados/importar-masivo/plantilla.xlsx", () => {
+  it("descarga un Excel con la hoja Trabajadores y hojas de referencia de catalogos", async () => {
+    const r = await request(app)
+      .get("/api/empleados/importar-masivo/plantilla.xlsx")
+      .set(auth())
+      .buffer()
+      .parse((res, callback) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => callback(null, Buffer.concat(chunks)));
+      });
+
+    expect(r.status).toBe(200);
+    expect(r.headers["content-type"]).toContain("spreadsheetml.sheet");
+
+    const workbook = new ExcelJS.Workbook();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await workbook.xlsx.load(r.body as any);
+
+    const nombresHojas = workbook.worksheets.map((h) => h.name);
+    expect(nombresHojas).toContain("Trabajadores");
+    expect(nombresHojas).toContain("Banco");
+    expect(nombresHojas).toContain("UbigeoDistrito");
+
+    const hojaTrabajadores = workbook.getWorksheet("Trabajadores")!;
+    const encabezados = (hojaTrabajadores.getRow(1).values as unknown[]).filter(Boolean);
+    expect(encabezados).toContain("DNI");
+    expect(encabezados).toContain("ENTIDAD_BANCARIA_CODIGO");
+    expect(encabezados).toContain("UBIGEO_DISTRITO_CODIGO");
+
+    const hojaBanco = workbook.getWorksheet("Banco")!;
+    expect(hojaBanco.rowCount).toBeGreaterThan(1); // encabezado + al menos un banco
+  });
+
+  it("requiere sesion activa (sin token -> 401)", async () => {
+    const r = await request(app).get("/api/empleados/importar-masivo/plantilla.xlsx");
+    expect(r.status).toBe(401);
   });
 });

@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
+import ExcelJS from "exceljs";
 import { parse } from "csv-parse/sync";
 import { asyncHandler } from "../asyncHandler";
 import { requierePermiso } from "../authMiddleware";
@@ -165,6 +166,67 @@ function mensajeErrorFila(err: unknown): string {
   }
   return (err as Error).message;
 }
+
+// Catalogos SUNAT que se incluyen como hojas de referencia en la plantilla
+// descargable, para que quien la llena no tenga que adivinar el codigo ni
+// volver a la pantalla de "Nuevo trabajador" para verlo. ubigeo_provincia y
+// ubigeo_distrito llevan ademas el codigo del padre (departamento/provincia)
+// para poder ubicar el codigo correcto en listas largas.
+const CATALOGOS_REFERENCIA: { hoja: string; tabla: string; columnas: string }[] = [
+  { hoja: "Nacionalidad", tabla: "catalogo_nacionalidad", columnas: "codigo, nombre" },
+  { hoja: "GradoInstruccion", tabla: "catalogo_grado_instruccion", columnas: "codigo, nombre" },
+  { hoja: "Banco", tabla: "catalogo_banco", columnas: "codigo, nombre" },
+  { hoja: "CategoriaOcupacionalSUNAT", tabla: "catalogo_categoria_ocupacional_sunat", columnas: "codigo, nombre" },
+  { hoja: "TipoTrabajador", tabla: "catalogo_tipo_trabajador", columnas: "codigo, nombre" },
+  { hoja: "RegimenLaboral", tabla: "catalogo_regimen_laboral", columnas: "codigo, nombre" },
+  { hoja: "TipoContrato", tabla: "catalogo_tipo_contrato", columnas: "codigo, nombre" },
+  { hoja: "TipoPago", tabla: "catalogo_tipo_pago", columnas: "codigo, nombre" },
+  { hoja: "Periodicidad", tabla: "catalogo_periodicidad", columnas: "codigo, nombre" },
+  { hoja: "SituacionEspecial", tabla: "catalogo_situacion_especial", columnas: "codigo, nombre" },
+  { hoja: "RegimenSalud", tabla: "catalogo_regimen_salud", columnas: "codigo, nombre" },
+  { hoja: "EPS", tabla: "catalogo_eps", columnas: "codigo, nombre" },
+  { hoja: "MotivoBaja", tabla: "catalogo_motivo_baja", columnas: "codigo, nombre" },
+  { hoja: "UbigeoDepartamento", tabla: "catalogo_ubigeo_departamento", columnas: "codigo, nombre" },
+  { hoja: "UbigeoProvincia", tabla: "catalogo_ubigeo_provincia", columnas: "codigo, nombre, departamento_codigo" },
+  { hoja: "UbigeoDistrito", tabla: "catalogo_ubigeo_distrito", columnas: "codigo, nombre, provincia_codigo" },
+];
+
+// GET /api/empleados/importar-masivo/plantilla.xlsx -> descarga un Excel
+// listo para llenar y volver a subir: la hoja "Trabajadores" trae todas las
+// columnas (las historicas y las T-Registro/SUNAT nuevas) como encabezado,
+// y una hoja de referencia por cada catalogo SUNAT con su codigo y nombre,
+// para no tener que adivinar el codigo ni volver a la pantalla de alta.
+importacionRouter.get(
+  "/importar-masivo/plantilla.xlsx",
+  requierePermiso("importacion.masiva"),
+  asyncHandler(async (_req: Request, res: Response) => {
+    const workbook = new ExcelJS.Workbook();
+
+    const hojaPrincipal = workbook.addWorksheet("Trabajadores");
+    hojaPrincipal.columns = COLUMNAS.map((nombre) => ({ header: nombre, key: nombre, width: 20 }));
+    hojaPrincipal.getRow(1).font = { bold: true };
+    hojaPrincipal.getColumn("DNI").numFmt = "@"; // texto, para no perder ceros a la izquierda
+
+    for (const { hoja, tabla, columnas } of CATALOGOS_REFERENCIA) {
+      const resultado = await pool.query(`SELECT ${columnas} FROM ${tabla} ORDER BY nombre`);
+      const hojaCat = workbook.addWorksheet(hoja);
+      const encabezados = columnas.split(",").map((c) => c.trim().toUpperCase());
+      hojaCat.columns = encabezados.map((nombre) => ({ header: nombre, key: nombre.toLowerCase(), width: 22 }));
+      hojaCat.getRow(1).font = { bold: true };
+      for (const fila of resultado.rows) {
+        hojaCat.addRow(fila);
+      }
+    }
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader("Content-Disposition", 'attachment; filename="plantilla_importar_trabajadores.xlsx"');
+    await workbook.xlsx.write(res);
+    res.end();
+  })
+);
 
 // POST /api/empleados/importar-masivo  (multipart, campo "archivo" = CSV con encabezado)
 importacionRouter.post("/importar-masivo", requierePermiso("importacion.masiva"), upload.single("archivo"), asyncHandler(async (req: Request, res: Response) => {
