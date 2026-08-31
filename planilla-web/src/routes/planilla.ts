@@ -11,8 +11,14 @@ import { tieneAccesoProyecto } from "../permisos";
 import { Contrato, ParametrosNormativos, TablaSalarialMensual, TasasAFPMensuales } from "../tipos";
 import { ErrorValidacion } from "../validaciones";
 import { registrarBitacora } from "../bitacora";
+import { generarPdfTabla } from "../pdfTabla";
 
 export const planillaRouter = Router();
+
+const MESES = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Setiembre", "Octubre", "Noviembre", "Diciembre",
+];
 
 const uploadTareo = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
@@ -73,26 +79,22 @@ export async function obtenerAfpTasas(anio: number, mes: number): Promise<TasasA
   return tasas;
 }
 
-// GET /api/periodos/:id/planilla?q=texto -> boletas ya calculadas de ese
-// periodo (usado por la pestana Boletas). q filtra por DNI o nombre.
-// TAREADOR no tiene acceso a boletas; RESPONSABLE_PLANILLA solo ve las de
-// sus proyectos asignados.
-planillaRouter.get(
-  "/:id/planilla",
-  requierePermiso("boletas.ver"),
-  asyncHandler(async (req: Request, res: Response) => {
-  const periodo = await obtenerPeriodo(req.params.id);
-  if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
+// Trae el periodo y sus boletas calculadas, con el mismo filtro de texto
+// (DNI o nombre) y el mismo recorte por proyectos del usuario que usa tanto
+// la vista en pantalla (Boletas.tsx) como las descargas de Excel/PDF, para
+// que "lo que ves es lo que exportas".
+async function obtenerDetallePeriodo(periodoId: string, q: string | undefined, usuario: NonNullable<Request["usuario"]>) {
+  const periodo = await obtenerPeriodo(periodoId);
+  if (!periodo) return null;
 
-  const q = (req.query.q as string | undefined)?.trim();
   const condiciones = ["d.periodo_id = $1"];
-  const valores: unknown[] = [req.params.id];
-  if (q) {
-    valores.push(`%${q}%`);
+  const valores: unknown[] = [periodoId];
+  if (q && q.trim()) {
+    valores.push(`%${q.trim()}%`);
     condiciones.push(`(e.numero_documento ILIKE $${valores.length} OR e.apellidos_nombres ILIKE $${valores.length})`);
   }
-  if (req.usuario!.rol !== "ADMIN") {
-    valores.push(req.usuario!.proyectos);
+  if (usuario.rol !== "ADMIN") {
+    valores.push(usuario.proyectos);
     condiciones.push(`c.proyecto = ANY($${valores.length}::text[])`);
   }
 
@@ -107,8 +109,147 @@ planillaRouter.get(
      ORDER BY e.apellidos_nombres ASC`,
     valores
   );
-  res.json({ periodo, detalle: resultado.rows });
+  return { periodo, detalle: resultado.rows };
+}
+
+function aportesEmpleadorDe(fila: Record<string, unknown>): number {
+  const json = fila.detalle_json as Record<string, unknown> | string | null | undefined;
+  const detalleJson = typeof json === "string" ? JSON.parse(json) : json ?? {};
+  return Number((detalleJson as { total_aportes_empleador?: number }).total_aportes_empleador ?? 0);
+}
+
+// GET /api/periodos/:id/planilla?q=texto -> boletas ya calculadas de ese
+// periodo (usado por la pestana Boletas). q filtra por DNI o nombre.
+// TAREADOR no tiene acceso a boletas; RESPONSABLE_PLANILLA solo ve las de
+// sus proyectos asignados.
+planillaRouter.get(
+  "/:id/planilla",
+  requierePermiso("boletas.ver"),
+  asyncHandler(async (req: Request, res: Response) => {
+  const datos = await obtenerDetallePeriodo(req.params.id, req.query.q as string | undefined, req.usuario!);
+  if (!datos) return res.status(404).json({ error: "Periodo no encontrado" });
+  res.json(datos);
 }));
+
+// Descargas del mismo listado de boletas de un periodo (resumen por
+// trabajador: ingresos, descuentos, aportes del empleador y neto), en Excel
+// y PDF - lo que el usuario llama "planilla de tal mes" para revisar quien
+// esta en ese periodo y sus totales, sin entrar boleta por boleta.
+planillaRouter.get(
+  "/:id/planilla/excel",
+  requierePermiso("boletas.ver"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const datos = await obtenerDetallePeriodo(req.params.id, req.query.q as string | undefined, req.usuario!);
+    if (!datos) return res.status(404).json({ error: "Periodo no encontrado" });
+    const { periodo, detalle } = datos;
+
+    const workbook = new ExcelJS.Workbook();
+    const hoja = workbook.addWorksheet(`Planilla ${MESES[periodo.mes - 1]} ${periodo.anio}`);
+    hoja.columns = [
+      { header: "DNI", key: "dni", width: 14 },
+      { header: "Apellidos y nombres", key: "nombres", width: 34 },
+      { header: "Categoria", key: "categoria", width: 14 },
+      { header: "Proyecto", key: "proyecto", width: 22 },
+      { header: "Total ingresos", key: "ingresos", width: 16 },
+      { header: "Total descuentos", key: "descuentos", width: 16 },
+      { header: "Total aportes", key: "aportes", width: 16 },
+      { header: "Neto a pagar", key: "neto", width: 16 },
+    ];
+    hoja.getRow(1).font = { bold: true };
+    hoja.getColumn("dni").numFmt = "@";
+    for (const col of ["ingresos", "descuentos", "aportes", "neto"]) {
+      hoja.getColumn(col).numFmt = "#,##0.00";
+    }
+
+    let totIngresos = 0, totDescuentos = 0, totAportes = 0, totNeto = 0;
+    for (const d of detalle) {
+      const aportes = aportesEmpleadorDe(d);
+      totIngresos += Number(d.total_ingresos);
+      totDescuentos += Number(d.total_descuentos);
+      totAportes += aportes;
+      totNeto += Number(d.neto_pagar);
+      hoja.addRow({
+        dni: d.numero_documento,
+        nombres: d.apellidos_nombres,
+        categoria: d.categoria_ocupacional,
+        proyecto: d.proyecto,
+        ingresos: Number(d.total_ingresos),
+        descuentos: Number(d.total_descuentos),
+        aportes,
+        neto: Number(d.neto_pagar),
+      });
+    }
+    const filaTotales = hoja.addRow({
+      nombres: "TOTALES",
+      ingresos: totIngresos,
+      descuentos: totDescuentos,
+      aportes: totAportes,
+      neto: totNeto,
+    });
+    filaTotales.font = { bold: true };
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="planilla_${periodo.mes}_${periodo.anio}.xlsx"`
+    );
+    await workbook.xlsx.write(res);
+    res.end();
+  })
+);
+
+planillaRouter.get(
+  "/:id/planilla/pdf",
+  requierePermiso("boletas.ver"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const datos = await obtenerDetallePeriodo(req.params.id, req.query.q as string | undefined, req.usuario!);
+    if (!datos) return res.status(404).json({ error: "Periodo no encontrado" });
+    const { periodo, detalle } = datos;
+
+    let totIngresos = 0, totDescuentos = 0, totAportes = 0, totNeto = 0;
+    const filas = detalle.map((d) => {
+      const aportes = aportesEmpleadorDe(d);
+      totIngresos += Number(d.total_ingresos);
+      totDescuentos += Number(d.total_descuentos);
+      totAportes += aportes;
+      totNeto += Number(d.neto_pagar);
+      return [
+        d.numero_documento,
+        d.apellidos_nombres,
+        d.categoria_ocupacional,
+        d.proyecto,
+        Number(d.total_ingresos).toFixed(2),
+        Number(d.total_descuentos).toFixed(2),
+        aportes.toFixed(2),
+        Number(d.neto_pagar).toFixed(2),
+      ];
+    });
+
+    const buffer = await generarPdfTabla({
+      titulo: `Planilla ${MESES[periodo.mes - 1]} ${periodo.anio}`,
+      subtitulo: `${detalle.length} trabajador(es) · Generado el ${new Date().toLocaleDateString("es-PE")}`,
+      columnas: [
+        { titulo: "DNI", ancho: 60 },
+        { titulo: "Apellidos y nombres", ancho: 150 },
+        { titulo: "Categoria", ancho: 70 },
+        { titulo: "Proyecto", ancho: 90 },
+        { titulo: "Ingresos", ancho: 65, align: "right" },
+        { titulo: "Descuentos", ancho: 65, align: "right" },
+        { titulo: "Aportes", ancho: 65, align: "right" },
+        { titulo: "Neto", ancho: 65, align: "right" },
+      ],
+      filas,
+      filaTotales: [
+        "", "TOTALES", "", "",
+        totIngresos.toFixed(2), totDescuentos.toFixed(2), totAportes.toFixed(2), totNeto.toFixed(2),
+      ],
+    });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="planilla_${periodo.mes}_${periodo.anio}.pdf"`);
+    res.send(buffer);
+  })
+);
 
 const COLUMNAS_TAREO = [
   "DNI",

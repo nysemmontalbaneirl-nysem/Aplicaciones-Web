@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiGet, apiPost } from "../api";
+import { apiGet, apiPost, BASE_URL, conToken } from "../api";
 import { DetallePlanilla, PeriodoPlanilla, tienePermiso } from "../types";
 import { useAuth } from "../AuthContext";
 import Boleta from "./Boleta";
@@ -70,10 +70,19 @@ export default function Boletas({ periodoInicial }: Props) {
     (acc, d) => ({
       ingresos: acc.ingresos + Number(d.total_ingresos),
       descuentos: acc.descuentos + Number(d.total_descuentos),
+      aportes: acc.aportes + Number(d.detalle_json?.total_aportes_empleador ?? 0),
       neto: acc.neto + Number(d.neto_pagar),
     }),
-    { ingresos: 0, descuentos: 0, neto: 0 }
+    { ingresos: 0, descuentos: 0, aportes: 0, neto: 0 }
   );
+
+  // URL de descarga (Excel/PDF) de este mismo listado: mismo periodo y
+  // mismo texto de busqueda que se ve en pantalla.
+  function urlExportar(formato: "excel" | "pdf"): string {
+    const params = new URLSearchParams();
+    if (busqueda.trim()) params.set("q", busqueda.trim());
+    return conToken(`${BASE_URL}/periodos/${periodoId}/planilla/${formato}?${params.toString()}`);
+  }
 
   function alternarSeleccion(id: number) {
     setSeleccionados((prev) => {
@@ -163,6 +172,12 @@ export default function Boletas({ periodoInicial }: Props) {
               >
                 Imprimir seleccionadas ({seleccionados.size})
               </button>
+              <a href={urlExportar("excel")}>
+                <button type="button">Exportar a Excel</button>
+              </a>
+              <a href={urlExportar("pdf")}>
+                <button type="button">Exportar a PDF</button>
+              </a>
             </div>
           </div>
 
@@ -200,6 +215,7 @@ export default function Boletas({ periodoInicial }: Props) {
                 <th>Proyecto</th>
                 <th>Total ingresos</th>
                 <th>Total descuentos</th>
+                <th>Total aportes</th>
                 <th>Neto a pagar</th>
                 <th></th>
               </tr>
@@ -220,6 +236,7 @@ export default function Boletas({ periodoInicial }: Props) {
                   <td>{d.proyecto}</td>
                   <td>S/ {Number(d.total_ingresos).toFixed(2)}</td>
                   <td>S/ {Number(d.total_descuentos).toFixed(2)}</td>
+                  <td>S/ {Number(d.detalle_json?.total_aportes_empleador ?? 0).toFixed(2)}</td>
                   <td>S/ {Number(d.neto_pagar).toFixed(2)}</td>
                   <td>
                     <button type="button" onClick={() => setBoletaSeleccionada(d)}>
@@ -230,7 +247,7 @@ export default function Boletas({ periodoInicial }: Props) {
               ))}
               {resultado.length === 0 && (
                 <tr>
-                  <td colSpan={9} style={{ textAlign: "center", color: "#5a6172" }}>
+                  <td colSpan={10} style={{ textAlign: "center", color: "#5a6172" }}>
                     No se encontraron boletas.
                   </td>
                 </tr>
@@ -240,6 +257,7 @@ export default function Boletas({ periodoInicial }: Props) {
                   <td colSpan={5}>Totales</td>
                   <td>S/ {totales.ingresos.toFixed(2)}</td>
                   <td>S/ {totales.descuentos.toFixed(2)}</td>
+                  <td>S/ {totales.aportes.toFixed(2)}</td>
                   <td>S/ {totales.neto.toFixed(2)}</td>
                   <td></td>
                 </tr>
