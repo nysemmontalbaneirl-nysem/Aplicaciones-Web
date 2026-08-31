@@ -26,6 +26,30 @@ async function crearContratoConConfirmacion(cuerpo: Record<string, unknown>): Pr
   }
 }
 
+// Anula un cese registrado por error (el contrato vuelve a HABIL). Mismo
+// patron de confirmacion: si el trabajador ya tiene otro contrato HABIL
+// (ej. ya hubo un reingreso despues de este cese), el backend responde 409
+// pidiendo confirmacion en vez de bloquear, porque reactivar este contrato
+// dejaria dos HABIL a la vez.
+async function anularCeseConConfirmacion(contratoId: number): Promise<Contrato> {
+  try {
+    return await apiPost<Contrato>(`/contratos/${contratoId}/anular-cese`, {});
+  } catch (e) {
+    if (e instanceof ErrorApi && e.status === 409 && (e.body as { requiere_confirmacion?: boolean })?.requiere_confirmacion) {
+      const habiles = (e.body as { contratos_habiles?: { proyecto: string; fecha_ingreso: string }[] }).contratos_habiles ?? [];
+      const detalle = habiles.map((h) => `${h.proyecto} (desde ${h.fecha_ingreso})`).join(", ");
+      const continuar = window.confirm(
+        `${e.message}${detalle ? `\n\nContrato(s) activo(s) actual(es): ${detalle}` : ""}`
+      );
+      if (!continuar) {
+        throw new Error("Anulacion cancelada.");
+      }
+      return await apiPost<Contrato>(`/contratos/${contratoId}/anular-cese`, { confirmar_duplicado: true });
+    }
+    throw e;
+  }
+}
+
 const CATEGORIAS: CategoriaOcupacional[] = [
   "OPERARIO",
   "OFICIAL",
@@ -153,6 +177,10 @@ export default function Trabajadores() {
   // ya no alcanza, asi que se muestra un mini-formulario inline en vez de
   // agregarle un segundo prompt encadenado (mala experiencia de uso).
   const [cesando, setCesando] = useState<Contrato | null>(null);
+  // Cuando es true, el mini-formulario de arriba esta corrigiendo la fecha
+  // o el motivo de un cese YA registrado (el contrato sigue CESADO), en vez
+  // de estar registrando un cese nuevo.
+  const [editandoCese, setEditandoCese] = useState(false);
   const [fechaCese, setFechaCese] = useState("");
   const [motivoBaja, setMotivoBaja] = useState("");
   const [guardandoBaja, setGuardandoBaja] = useState(false);
@@ -440,8 +468,22 @@ export default function Trabajadores() {
     setError(null);
     setOk(null);
     setCesando(contrato);
+    setEditandoCese(false);
     setFechaCese(new Date().toISOString().slice(0, 10));
     setMotivoBaja("");
+  }
+
+  // Corregir un cese YA registrado (fecha o motivo mal digitados) sin
+  // deshacerlo: el contrato sigue CESADO, solo se actualizan esos dos
+  // datos. Precarga los valores actuales para que el usuario solo cambie
+  // lo que este mal.
+  function iniciarEditarCese(contrato: Contrato) {
+    setError(null);
+    setOk(null);
+    setCesando(contrato);
+    setEditandoCese(true);
+    setFechaCese(contrato.fecha_cese?.slice(0, 10) ?? "");
+    setMotivoBaja(contrato.motivo_baja_codigo ?? "");
   }
 
   async function confirmarBaja() {
@@ -450,17 +492,44 @@ export default function Trabajadores() {
     setOk(null);
     setGuardandoBaja(true);
     try {
-      await apiPost(`/contratos/${cesando.id}/cese`, {
-        fecha_cese: fechaCese,
-        motivo_baja_codigo: motivoBaja || null,
-      });
-      setOk(`${cesando.apellidos_nombres} dado de baja correctamente.`);
+      const cuerpo = { fecha_cese: fechaCese, motivo_baja_codigo: motivoBaja || null };
+      if (editandoCese) {
+        await apiPut(`/contratos/${cesando.id}/cese`, cuerpo);
+        setOk(`Datos de cese de ${cesando.apellidos_nombres} corregidos correctamente.`);
+      } else {
+        await apiPost(`/contratos/${cesando.id}/cese`, cuerpo);
+        setOk(`${cesando.apellidos_nombres} dado de baja correctamente.`);
+      }
       setCesando(null);
+      setEditandoCese(false);
       await cargar();
+      if (historialEmpleadoId !== null) await verHistorial(historialEmpleadoId, historialNombre);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setGuardandoBaja(false);
+    }
+  }
+
+  // Anula por completo un cese registrado por error (el trabajador nunca
+  // debio ser dado de baja): el contrato vuelve a HABIL. Es un solo clic +
+  // confirmacion (no hay datos que pedir), a diferencia de "Editar cese".
+  async function anularCese(contrato: Contrato) {
+    if (
+      !window.confirm(
+        `¿Anular el cese de ${contrato.apellidos_nombres}? El contrato volverá a estar HABIL y se borrarán la fecha y el motivo de baja.`
+      )
+    )
+      return;
+    setError(null);
+    setOk(null);
+    try {
+      await anularCeseConConfirmacion(contrato.id);
+      setOk(`Cese de ${contrato.apellidos_nombres} anulado: el contrato vuelve a estar HABIL.`);
+      await cargar();
+      if (historialEmpleadoId !== null) await verHistorial(historialEmpleadoId, historialNombre);
+    } catch (e) {
+      setError((e as Error).message);
     }
   }
 
@@ -1014,7 +1083,15 @@ export default function Trabajadores() {
 
       {cesando && (
         <div className="card" ref={cesandoRef} style={{ order: 2 }}>
-          <h2>Dar de baja a {cesando.apellidos_nombres}</h2>
+          <h2>
+            {editandoCese ? `Corregir datos de cese — ${cesando.apellidos_nombres}` : `Dar de baja a ${cesando.apellidos_nombres}`}
+          </h2>
+          {editandoCese && (
+            <p style={{ color: "#5a6172", fontSize: "0.85rem", marginTop: -8 }}>
+              El contrato sigue CESADO - esto solo corrige la fecha o el motivo de baja ya registrados. Para
+              deshacer el cese por completo usa "Anular cese" desde la lista.
+            </p>
+          )}
           {error && <div className="mensaje-error">{error}</div>}
           <div className="form-grid">
             <label>
@@ -1033,9 +1110,16 @@ export default function Trabajadores() {
           </div>
           <div style={{ display: "flex", gap: 10 }}>
             <button className="primario" type="button" onClick={confirmarBaja} disabled={guardandoBaja || !fechaCese}>
-              {guardandoBaja ? "Guardando..." : "Confirmar baja"}
+              {guardandoBaja ? "Guardando..." : editandoCese ? "Guardar correccion" : "Confirmar baja"}
             </button>
-            <button type="button" onClick={() => setCesando(null)} disabled={guardandoBaja}>
+            <button
+              type="button"
+              onClick={() => {
+                setCesando(null);
+                setEditandoCese(false);
+              }}
+              disabled={guardandoBaja}
+            >
               Cancelar
             </button>
           </div>
@@ -1072,11 +1156,19 @@ export default function Trabajadores() {
                     <td>{c.fecha_cese ? c.fecha_cese.slice(0, 10) : "-"}</td>
                     <td>{c.estado}</td>
                     <td>{c.estado === "CESADO" ? nombreMotivoBaja(c.motivo_baja_codigo) : "-"}</td>
-                    <td>
+                    <td style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       {c.estado === "CESADO" && (
-                        <button type="button" onClick={() => iniciarReingreso(c)}>
-                          Reingresar
-                        </button>
+                        <>
+                          <button type="button" onClick={() => iniciarReingreso(c)}>
+                            Reingresar
+                          </button>
+                          <button type="button" onClick={() => iniciarEditarCese(c)}>
+                            Editar cese
+                          </button>
+                          <button type="button" onClick={() => anularCese(c)}>
+                            Anular cese
+                          </button>
+                        </>
                       )}
                     </td>
                   </tr>
@@ -1159,7 +1251,11 @@ export default function Trabajadores() {
                     <button type="button" onClick={() => iniciarBaja(c)}>Dar de baja</button>
                   )}
                   {c.estado === "CESADO" && (
-                    <button type="button" onClick={() => iniciarReingreso(c)}>Reingresar</button>
+                    <>
+                      <button type="button" onClick={() => iniciarReingreso(c)}>Reingresar</button>
+                      <button type="button" onClick={() => iniciarEditarCese(c)}>Editar cese</button>
+                      <button type="button" onClick={() => anularCese(c)}>Anular cese</button>
+                    </>
                   )}
                   <button type="button" onClick={() => verHistorial(c.empleado_id, c.apellidos_nombres ?? "")}>
                     Historial

@@ -388,3 +388,93 @@ contratosRouter.post("/:id/cese", requierePermiso("contratos.gestionar"), asyncH
     throw err;
   }
 }));
+
+// PUT /:id/cese - corrige la fecha o el motivo de un cese YA registrado (ej.
+// se digito mal la fecha o el motivo de baja), sin cambiar el estado: el
+// contrato sigue CESADO. Antes de esto no habia forma de corregir esos
+// datos una vez guardados. Para deshacer el cese por completo (el
+// trabajador nunca debio ser dado de baja) esta el POST /anular-cese.
+contratosRouter.put("/:id/cese", requierePermiso("contratos.gestionar"), asyncHandler(async (req: Request, res: Response) => {
+  try {
+    const fecha_cese = validarFecha(req.body.fecha_cese, "fecha_cese");
+    const actual = await pool.query("SELECT proyecto, estado FROM contratos WHERE id = $1", [req.params.id]);
+    if (actual.rowCount === 0) {
+      return res.status(404).json({ error: "Contrato no encontrado" });
+    }
+    if (!tieneAccesoProyecto(req.usuario!, actual.rows[0].proyecto)) {
+      return res.status(403).json({ error: "No tienes acceso a ese proyecto" });
+    }
+    if (actual.rows[0].estado !== "CESADO") {
+      return res.status(400).json({ error: "Este contrato no esta cesado - no hay datos de cese que corregir" });
+    }
+    const motivo_baja_codigo = codigoOpcional(req.body.motivo_baja_codigo);
+
+    const resultado = await pool.query(
+      `UPDATE contratos SET fecha_cese = $1, motivo_baja_codigo = $2 WHERE id = $3 RETURNING *`,
+      [fecha_cese, motivo_baja_codigo, req.params.id]
+    );
+    if (resultado.rowCount === 0) {
+      return res.status(404).json({ error: "Contrato no encontrado" });
+    }
+    await registrarBitacora(req.usuario!.id, "EDITAR_CESE", "contratos", resultado.rows[0].id, {
+      fecha_cese,
+      motivo_baja_codigo,
+      proyecto: resultado.rows[0].proyecto,
+    });
+    res.json(resultado.rows[0]);
+  } catch (err) {
+    if (err instanceof ErrorValidacion) {
+      return res.status(400).json({ error: err.message });
+    }
+    const mensajeCatalogo = mensajeErrorCatalogo(err);
+    if (mensajeCatalogo) {
+      return res.status(400).json({ error: mensajeCatalogo });
+    }
+    throw err;
+  }
+}));
+
+// POST /:id/anular-cese - deshace un cese registrado por error: el contrato
+// vuelve a HABIL y se borran fecha_cese/motivo_baja_codigo. Aviso (no
+// bloqueo) si el trabajador ya tiene OTRO contrato HABIL (ej. ya se hizo un
+// reingreso despues de este cese) - reactivar este dejaria dos contratos
+// HABIL a la vez, que probablemente no es lo que se quiere; el frontend
+// confirma explicitamente con confirmar_duplicado=true para seguir de
+// todas formas (mismo patron que crear un contrato duplicado).
+contratosRouter.post("/:id/anular-cese", requierePermiso("contratos.gestionar"), asyncHandler(async (req: Request, res: Response) => {
+  const actual = await pool.query("SELECT * FROM contratos WHERE id = $1", [req.params.id]);
+  if (actual.rowCount === 0) {
+    return res.status(404).json({ error: "Contrato no encontrado" });
+  }
+  const contrato = actual.rows[0];
+  if (!tieneAccesoProyecto(req.usuario!, contrato.proyecto)) {
+    return res.status(403).json({ error: "No tienes acceso a ese proyecto" });
+  }
+  if (contrato.estado !== "CESADO") {
+    return res.status(400).json({ error: "Este contrato no esta cesado" });
+  }
+
+  if (!req.body?.confirmar_duplicado) {
+    const habilExistente = await pool.query(
+      `SELECT id, proyecto, fecha_ingreso FROM contratos WHERE empleado_id = $1 AND estado = 'HABIL' AND id <> $2`,
+      [contrato.empleado_id, contrato.id]
+    );
+    if ((habilExistente.rowCount ?? 0) > 0) {
+      return res.status(409).json({
+        error:
+          "Este trabajador ya tiene otro contrato HABIL activo (posiblemente un reingreso posterior). ¿Deseas anular el cese de todas formas?",
+        requiere_confirmacion: true,
+        contratos_habiles: habilExistente.rows,
+      });
+    }
+  }
+
+  const resultado = await pool.query(
+    `UPDATE contratos SET fecha_cese = NULL, motivo_baja_codigo = NULL, estado = 'HABIL' WHERE id = $1 RETURNING *`,
+    [req.params.id]
+  );
+  await registrarBitacora(req.usuario!.id, "ANULAR_CESE", "contratos", resultado.rows[0].id, {
+    proyecto: resultado.rows[0].proyecto,
+  });
+  res.json(resultado.rows[0]);
+}));
