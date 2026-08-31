@@ -50,7 +50,10 @@ periodosRouter.post("/", requierePermiso("periodos.gestionar"), asyncHandler(asy
       return res.status(400).json({ error: err.message });
     }
     if ((err as { code?: string }).code === "23505") {
-      return res.status(409).json({ error: "Ya existe un periodo con ese anio/mes/quincena/tipo" });
+      // Cubre dos indices unicos distintos: el de anio/mes/tipo/quincena
+      // (MENSUAL y QUINCENAL) y el indice parcial por fechas para SEMANAL
+      // (migracion_018) - el mensaje se deja generico para ambos casos.
+      return res.status(409).json({ error: "Ya existe un periodo con esas mismas fechas/anio/mes/quincena/tipo" });
     }
     throw err;
   }

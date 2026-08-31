@@ -89,7 +89,7 @@ export interface PeriodoPlanilla {
   anio: number;
   mes: number;
   quincena: number | null;
-  tipo: "MENSUAL" | "QUINCENAL";
+  tipo: "MENSUAL" | "QUINCENAL" | "SEMANAL";
   fecha_inicio: string;
   fecha_fin: string;
   dias_periodo: number;

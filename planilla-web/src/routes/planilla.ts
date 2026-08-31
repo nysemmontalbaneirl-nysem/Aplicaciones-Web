@@ -5,7 +5,7 @@ import ExcelJS from "exceljs";
 import { asyncHandler } from "../asyncHandler";
 import { requierePermiso } from "../authMiddleware";
 import { pool } from "../db";
-import { calcularLineaPlanilla } from "../motorCalculo";
+import { calcularLineaPlanilla, esConstruccionCivil } from "../motorCalculo";
 import { obtenerConceptos } from "./conceptos";
 import { tieneAccesoProyecto } from "../permisos";
 import { Contrato, ParametrosNormativos, TablaSalarialMensual, TasasAFPMensuales } from "../tipos";
@@ -924,10 +924,34 @@ planillaRouter.post(
       dias_subsidio_maternidad: number;
       dias_licencia_paternidad: number;
     }> = [];
+    // Puramente informativo (migracion_018): un contrato de regimen general
+    // (EMPLEADO, no construccion civil) quedo con tareo en un periodo que
+    // NO es MENSUAL. El regimen general esta pensado para pagarse siempre
+    // por mes calendario completo - un periodo semanal/quincenal para ese
+    // regimen no ajusta el prorrateo de asignacion familiar ni la
+    // compuerta de gratificacion/CTS por mes (mes===7/12, mes===5/11), asi
+    // que el monto calculado podria no ser el correcto. No se bloquea ni
+    // se cambia ningun monto: solo se avisa para que se revise a mano.
+    const avisosRegimen: Array<{
+      contrato_id: number;
+      dni: string;
+      nombre: string;
+      mensaje: string;
+    }> = [];
 
     for (let i = 0; i < asistenciaResult.rows.length; i++) {
       const fila = asistenciaResult.rows[i];
       const contrato = fila as Contrato & { numero_hijos: number; numero_documento: string; apellidos_nombres: string };
+
+      if (!esConstruccionCivil(contrato.categoria_ocupacional) && periodo.tipo !== "MENSUAL") {
+        avisosRegimen.push({
+          contrato_id: contrato.id,
+          dni: contrato.numero_documento,
+          nombre: contrato.apellidos_nombres,
+          mensaje:
+            "Trabajador de regimen general en un periodo no mensual: revisar a mano la asignacion familiar, gratificacion y CTS de este periodo.",
+        });
+      }
 
       const diasSubsidioEnfermedad = Number(fila.dias_subsidio_enfermedad) || 0;
       const diasSubsidioMaternidad = Number(fila.dias_subsidio_maternidad) || 0;
@@ -1094,6 +1118,7 @@ planillaRouter.post(
       detalle: lineasCalculadas,
       errores: erroresCalculo,
       avisos_subsidio: avisosSubsidio,
+      avisos_regimen: avisosRegimen,
     });
   } catch (err) {
     await cliente.query("ROLLBACK");

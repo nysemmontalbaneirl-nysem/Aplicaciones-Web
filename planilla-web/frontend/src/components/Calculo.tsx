@@ -23,6 +23,13 @@ interface AvisoSubsidio {
   dias_licencia_paternidad: number;
 }
 
+interface AvisoRegimen {
+  contrato_id: number;
+  dni: string;
+  nombre: string;
+  mensaje: string;
+}
+
 export default function Calculo({ periodo, onVerBoletas }: Props) {
   const [cantidadTareo, setCantidadTareo] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -30,11 +37,13 @@ export default function Calculo({ periodo, onVerBoletas }: Props) {
   const [resultado, setResultado] = useState<{ trabajadores_calculados: number } | null>(null);
   const [erroresCalculo, setErroresCalculo] = useState<ErrorCalculo[]>([]);
   const [avisosSubsidio, setAvisosSubsidio] = useState<AvisoSubsidio[]>([]);
+  const [avisosRegimen, setAvisosRegimen] = useState<AvisoRegimen[]>([]);
 
   useEffect(() => {
     setResultado(null);
     setErroresCalculo([]);
     setAvisosSubsidio([]);
+    setAvisosRegimen([]);
     setError(null);
     apiGet<{ tareo: AsistenciaTareo[] }>(`/periodos/${periodo.id}/tareo`)
       .then((d) => setCantidadTareo(d.tareo.length))
@@ -45,16 +54,19 @@ export default function Calculo({ periodo, onVerBoletas }: Props) {
     setError(null);
     setErroresCalculo([]);
     setAvisosSubsidio([]);
+    setAvisosRegimen([]);
     setCalculando(true);
     try {
       const respuesta = await apiPost<{
         trabajadores_calculados: number;
         errores: ErrorCalculo[];
         avisos_subsidio: AvisoSubsidio[];
+        avisos_regimen: AvisoRegimen[];
       }>(`/periodos/${periodo.id}/calcular`, {});
       setResultado({ trabajadores_calculados: respuesta.trabajadores_calculados });
       setErroresCalculo(respuesta.errores ?? []);
       setAvisosSubsidio(respuesta.avisos_subsidio ?? []);
+      setAvisosRegimen(respuesta.avisos_regimen ?? []);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -151,6 +163,35 @@ export default function Calculo({ periodo, onVerBoletas }: Props) {
                     <td>{a.dias_subsidio_enfermedad}</td>
                     <td>{a.dias_subsidio_maternidad}</td>
                     <td>{a.dias_licencia_paternidad}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+
+        {avisosRegimen.length > 0 && (
+          <>
+            <h3>Trabajadores de regimen general en periodo no mensual ({avisosRegimen.length})</h3>
+            <div className="mensaje-advertencia" style={{ marginBottom: 12 }}>
+              El calculo NO ajusto la asignacion familiar ni la compuerta de gratificacion/CTS por
+              mes para estos casos — el regimen general esta pensado para periodos mensuales
+              completos. Revisa cada boleta a mano.
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>DNI</th>
+                  <th>Trabajador</th>
+                  <th>Aviso</th>
+                </tr>
+              </thead>
+              <tbody>
+                {avisosRegimen.map((a) => (
+                  <tr key={a.contrato_id}>
+                    <td>{a.dni}</td>
+                    <td>{a.nombre}</td>
+                    <td>{a.mensaje}</td>
                   </tr>
                 ))}
               </tbody>

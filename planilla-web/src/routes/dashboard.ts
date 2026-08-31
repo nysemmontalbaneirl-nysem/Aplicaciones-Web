@@ -78,6 +78,8 @@ dashboardRouter.get(
         mes: periodo.mes,
         quincena: periodo.quincena,
         tipo: periodo.tipo,
+        fecha_inicio: periodo.fecha_inicio,
+        fecha_fin: periodo.fecha_fin,
         estado: periodo.estado,
         trabajadores_con_tareo,
         costo_total_ingresos,

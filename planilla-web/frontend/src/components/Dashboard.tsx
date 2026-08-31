@@ -19,6 +19,8 @@ interface PeriodoActual {
   mes: number;
   quincena: number | null;
   tipo: string;
+  fecha_inicio: string;
+  fecha_fin: string;
   estado: string;
   trabajadores_con_tareo: number;
   costo_total_ingresos: number | null;
@@ -68,7 +70,14 @@ export default function Dashboard({ nombreUsuario }: { nombreUsuario: string }) 
   if (!resumen) return <p>Cargando...</p>;
 
   const p = resumen.periodo_actual;
-  const nombrePeriodo = p ? `${MESES[p.mes - 1]} ${p.anio}${p.quincena ? ` - Q${p.quincena}` : ""}` : null;
+  // Un periodo SEMANAL es solo una porcion del mes: mostrar "Mes Año" seria
+  // enganoso (parece un mes completo calculado). Para QUINCENAL se deja el
+  // label con "Q1"/"Q2" tal como antes.
+  const nombrePeriodo = p
+    ? p.tipo === "SEMANAL"
+      ? `${p.fecha_inicio?.slice(0, 10)} a ${p.fecha_fin?.slice(0, 10)}`
+      : `${MESES[p.mes - 1]} ${p.anio}${p.quincena ? ` - Q${p.quincena}` : ""}`
+    : null;
 
   return (
     <div>

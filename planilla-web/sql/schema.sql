@@ -294,7 +294,7 @@ CREATE TABLE periodos_planilla (
     anio           INT NOT NULL,
     mes            INT NOT NULL CHECK (mes BETWEEN 1 AND 12),
     quincena       INT CHECK (quincena IN (1,2)), -- NULL si es mensual
-    tipo           VARCHAR(20) NOT NULL DEFAULT 'MENSUAL', -- MENSUAL | QUINCENAL
+    tipo           VARCHAR(20) NOT NULL DEFAULT 'MENSUAL', -- MENSUAL | QUINCENAL | SEMANAL
     fecha_inicio   DATE NOT NULL,
     fecha_fin      DATE NOT NULL,
     dias_periodo   INT NOT NULL DEFAULT 30,
@@ -305,8 +305,20 @@ CREATE TABLE periodos_planilla (
 -- Indice unico en vez de un UNIQUE de columnas: en Postgres dos NULL nunca
 -- se consideran iguales, asi que un UNIQUE(anio,mes,quincena,tipo) normal
 -- no evita crear dos periodos MENSUAL (quincena NULL) del mismo mes.
+-- Parcial (WHERE tipo <> 'SEMANAL', migracion_018): solo tiene 3 huecos por
+-- mes (mensual, Q1, Q2), asi que no alcanza para los periodos SEMANALES de
+-- los obreros de jornal (puede haber varios por mes) - esos se controlan
+-- con el indice de fechas de abajo en vez de con este.
 CREATE UNIQUE INDEX periodos_planilla_periodo_unico
-    ON periodos_planilla (anio, mes, tipo, COALESCE(quincena, 0));
+    ON periodos_planilla (anio, mes, tipo, COALESCE(quincena, 0))
+    WHERE tipo <> 'SEMANAL';
+
+-- Indice unico parcial para tipo = 'SEMANAL' (migracion_018): evita crear
+-- dos veces el mismo rango exacto de fechas; no evita rangos superpuestos
+-- entre proyectos distintos (los periodos siguen siendo globales).
+CREATE UNIQUE INDEX periodos_planilla_semanal_unico
+    ON periodos_planilla (fecha_inicio, fecha_fin)
+    WHERE tipo = 'SEMANAL';
 
 -- -------------------------------------------------------------------------
 -- asistencia_periodo: tareo cargado (Excel/CSV o manual) de un periodo.
