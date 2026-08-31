@@ -246,6 +246,11 @@ export interface AsistenciaEntrada {
   horas_extra_25: number;
   horas_extra_35: number;
   horas_extra_100: number;
+  // Agregados desde el Tareo Diario (migracion 017) - solo informativos,
+  // no afectan ningun monto calculado todavia.
+  dias_subsidio_enfermedad?: number;
+  dias_subsidio_maternidad?: number;
+  dias_licencia_paternidad?: number;
 }
 
 export interface AsistenciaTareo extends AsistenciaEntrada {
@@ -253,6 +258,47 @@ export interface AsistenciaTareo extends AsistenciaEntrada {
   apellidos_nombres: string;
   proyecto: string;
   categoria_ocupacional: CategoriaOcupacional;
+}
+
+// ---------------------------------------------------------------------
+// Tareo Diario (migracion 017): registro dia por dia, ademas del Excel
+// agregado y la edicion manual de totales de arriba.
+// ---------------------------------------------------------------------
+export type TipoDiaEspecial =
+  | "FALTA"
+  | "SUBSIDIO_ENFERMEDAD"
+  | "SUBSIDIO_MATERNIDAD"
+  | "LICENCIA_PATERNIDAD";
+
+export interface TareoDiarioFila {
+  fecha: string; // YYYY-MM-DD
+  horas_normales: number;
+  minutos_normales: number;
+  horas_dominical: number;
+  minutos_dominical: number;
+  horas_feriado: number;
+  minutos_feriado: number;
+  horas_extra_tramo1: number;
+  minutos_extra_tramo1: number;
+  horas_extra_tramo2: number;
+  minutos_extra_tramo2: number;
+  horas_extra_tramo3: number;
+  minutos_extra_tramo3: number;
+  tipo_dia_especial: TipoDiaEspecial | null;
+}
+
+// GET /api/conceptos/horas-extra -> multiplicadores reales por regimen, para
+// etiquetar dinamicamente las columnas de horas extra (60%/100%/100% en
+// construccion civil, 25%/35%/100% en regimen general).
+export interface FactorHorasExtra {
+  factor1: number | null;
+  factor2: number | null;
+  factor3: number | null;
+}
+
+export interface FactoresHorasExtra {
+  construccion: FactorHorasExtra;
+  general: FactorHorasExtra;
 }
 
 // Codigo de rol (roles.codigo): ADMIN, RESPONSABLE_PLANILLA, TAREADOR, o
@@ -289,6 +335,32 @@ export interface PermisoCatalogo {
 
 export function tienePermiso(usuario: Usuario, codigo: string): boolean {
   return usuario.permisos.includes("*") || usuario.permisos.includes(codigo);
+}
+
+// Mismo criterio que motorCalculo.ts (backend) para saber si a un trabajador
+// le corresponde el regimen de construccion civil (60%/100%/100% en horas
+// extra) o el regimen general (25%/35%/100%). Se usa solo para mostrar la
+// etiqueta correcta en la pantalla de Tareo Diario - el monto real siempre
+// lo calcula el backend.
+const CATEGORIAS_CONSTRUCCION_CIVIL: CategoriaOcupacional[] = [
+  "OPERARIO",
+  "OFICIAL",
+  "PEON",
+  "OPERARIO_EP",
+  "OPERARIO_EM",
+  "OPERARIO_TP",
+];
+
+export function esConstruccionCivil(categoria: CategoriaOcupacional): boolean {
+  return CATEGORIAS_CONSTRUCCION_CIVIL.includes(categoria);
+}
+
+// Convierte un multiplicador (ej. 1.6) al % de recargo que se muestra al
+// usuario (ej. "60%"). Redondea porque los factores pueden venir como string
+// desde Postgres (NUMERIC).
+export function porcentajeRecargo(factor: number | null | undefined): string {
+  if (factor === null || factor === undefined) return "?";
+  return `${Math.round((Number(factor) - 1) * 100)}%`;
 }
 
 export interface Proyecto {

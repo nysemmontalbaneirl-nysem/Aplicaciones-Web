@@ -6,6 +6,7 @@ export type Pestana =
   | "importar"
   | "periodos"
   | "tareo"
+  | "tareoDiario"
   | "calculo"
   | "boletas"
   | "reportes"
@@ -91,6 +92,7 @@ export default function Sidebar({
       items: [
         { id: "periodos", etiqueta: "Periodos" },
         { id: "tareo", etiqueta: "Tareo", disabled: !periodoSeleccionado },
+        { id: "tareoDiario", etiqueta: "Registrar Tareo Diario", disabled: !periodoSeleccionado },
         ...(puedeCalcular ? [{ id: "calculo" as const, etiqueta: "Calcular", disabled: !periodoSeleccionado }] : []),
         ...(puedeVerBoletas ? [{ id: "boletas" as const, etiqueta: "Boletas" }] : []),
         ...(puedeVerReportes ? [{ id: "reportes" as const, etiqueta: "Reportes" }] : []),

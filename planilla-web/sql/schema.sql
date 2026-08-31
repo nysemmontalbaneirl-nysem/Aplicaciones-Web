@@ -12,6 +12,7 @@ DROP TABLE IF EXISTS conceptos_planilla CASCADE;
 DROP TABLE IF EXISTS boletas_vacaciones CASCADE;
 DROP TABLE IF EXISTS vacaciones_goce CASCADE;
 DROP TABLE IF EXISTS bitacora_planilla CASCADE;
+DROP TABLE IF EXISTS tareo_diario CASCADE;
 DROP TABLE IF EXISTS detalle_planilla CASCADE;
 DROP TABLE IF EXISTS periodos_planilla CASCADE;
 DROP TABLE IF EXISTS contratos CASCADE;
@@ -324,8 +325,48 @@ CREATE TABLE asistencia_periodo (
     horas_extra_25  NUMERIC(6,2) NOT NULL DEFAULT 0,
     horas_extra_35  NUMERIC(6,2) NOT NULL DEFAULT 0,
     horas_extra_100 NUMERIC(6,2) NOT NULL DEFAULT 0,
+    -- Agregados desde migracion 017 (tareo diario). Puramente informativos:
+    -- el motor de calculo (motorCalculo.ts) NO los lee ni cambia ningun
+    -- monto/aporte a partir de ellos todavia (ver migracion_017_tareo_diario.sql).
+    dias_subsidio_enfermedad NUMERIC(5,2) NOT NULL DEFAULT 0,
+    dias_subsidio_maternidad NUMERIC(5,2) NOT NULL DEFAULT 0,
+    dias_licencia_paternidad NUMERIC(5,2) NOT NULL DEFAULT 0,
     actualizado_en  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (periodo_id, contrato_id)
+);
+
+-- -------------------------------------------------------------------------
+-- tareo_diario: registro de asistencia dia por dia, por trabajador y
+-- periodo (migracion 017). Se suma hacia asistencia_periodo desde el
+-- backend (recalcularAsistenciaDesdeTareoDiario en routes/planilla.ts) -
+-- el motor de calculo sigue leyendo solo de asistencia_periodo, sin cambios.
+-- -------------------------------------------------------------------------
+CREATE TABLE tareo_diario (
+    id                   SERIAL PRIMARY KEY,
+    periodo_id           INT NOT NULL REFERENCES periodos_planilla(id) ON DELETE CASCADE,
+    contrato_id          INT NOT NULL REFERENCES contratos(id) ON DELETE RESTRICT,
+    fecha                DATE NOT NULL,
+    horas_normales       INT NOT NULL DEFAULT 0,
+    minutos_normales     INT NOT NULL DEFAULT 0,
+    horas_dominical      INT NOT NULL DEFAULT 0,
+    minutos_dominical    INT NOT NULL DEFAULT 0,
+    horas_feriado        INT NOT NULL DEFAULT 0,
+    minutos_feriado      INT NOT NULL DEFAULT 0,
+    horas_extra_tramo1   INT NOT NULL DEFAULT 0,
+    minutos_extra_tramo1 INT NOT NULL DEFAULT 0,
+    horas_extra_tramo2   INT NOT NULL DEFAULT 0,
+    minutos_extra_tramo2 INT NOT NULL DEFAULT 0,
+    horas_extra_tramo3   INT NOT NULL DEFAULT 0,
+    minutos_extra_tramo3 INT NOT NULL DEFAULT 0,
+    tipo_dia_especial    VARCHAR(20)
+                         CHECK (tipo_dia_especial IN (
+                           'FALTA',
+                           'SUBSIDIO_ENFERMEDAD',
+                           'SUBSIDIO_MATERNIDAD',
+                           'LICENCIA_PATERNIDAD'
+                         )),
+    actualizado_en       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (periodo_id, contrato_id, fecha)
 );
 
 -- -------------------------------------------------------------------------

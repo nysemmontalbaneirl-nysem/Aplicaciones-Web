@@ -319,6 +319,15 @@ button.primario:disabled {
   font-size: 0.88rem;
 }
 
+.mensaje-advertencia {
+  background: #fff8e6;
+  color: #8a6116;
+  padding: 10px 14px;
+  border-radius: 6px;
+  margin-bottom: 14px;
+  font-size: 0.88rem;
+}
+
 .chip-estado {
   display: inline-block;
   padding: 2px 8px;
@@ -344,6 +353,17 @@ button.primario:disabled {
 
 input[type="number"] {
   width: 90px;
+}
+
+/* Grilla del Tareo Diario: muchas columnas de horas/minutos por fila, se
+   necesitan inputs angostos y la tabla debe poder desplazarse horizontal
+   sin que la pagina completa se desborde. */
+.tabla-tareo-diario table {
+  white-space: nowrap;
+}
+
+.tabla-tareo-diario input[type="number"] {
+  width: 48px;
 }
 
 .lista-sugerencias {

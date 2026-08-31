@@ -312,14 +312,22 @@ interface FilaAsistencia {
   horas_extra_25: number;
   horas_extra_35: number;
   horas_extra_100: number;
+  // Agregados desde el Tareo Diario (migracion 017). Se dejan opcionales
+  // (undefined/null = "no tocar") para que la edicion manual de totales de
+  // /:id/tareo (que no conoce estos campos) nunca borre por accidente lo que
+  // ya se calculo desde tareo_diario - ver comentario en el INSERT/UPDATE.
+  dias_subsidio_enfermedad?: number | null;
+  dias_subsidio_maternidad?: number | null;
+  dias_licencia_paternidad?: number | null;
 }
 
 async function guardarAsistencia(periodoId: string, fila: FilaAsistencia) {
   await pool.query(
     `INSERT INTO asistencia_periodo (
        periodo_id, contrato_id, dias_trabajados, dias_dominical, dias_feriado,
-       dias_falta, horas_extra_25, horas_extra_35, horas_extra_100
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       dias_falta, horas_extra_25, horas_extra_35, horas_extra_100,
+       dias_subsidio_enfermedad, dias_subsidio_maternidad, dias_licencia_paternidad
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10,0),COALESCE($11,0),COALESCE($12,0))
      ON CONFLICT (periodo_id, contrato_id) DO UPDATE SET
        dias_trabajados = EXCLUDED.dias_trabajados,
        dias_dominical = EXCLUDED.dias_dominical,
@@ -328,6 +336,12 @@ async function guardarAsistencia(periodoId: string, fila: FilaAsistencia) {
        horas_extra_25 = EXCLUDED.horas_extra_25,
        horas_extra_35 = EXCLUDED.horas_extra_35,
        horas_extra_100 = EXCLUDED.horas_extra_100,
+       -- $10/$11/$12 en null = "no tocar" (lo manda la edicion manual de
+       -- totales, que no conoce estos campos); un numero explicito (incluido
+       -- 0) si viene, por ejemplo, del recalculo desde tareo_diario.
+       dias_subsidio_enfermedad = COALESCE($10, asistencia_periodo.dias_subsidio_enfermedad),
+       dias_subsidio_maternidad = COALESCE($11, asistencia_periodo.dias_subsidio_maternidad),
+       dias_licencia_paternidad = COALESCE($12, asistencia_periodo.dias_licencia_paternidad),
        actualizado_en = now()`,
     [
       periodoId,
@@ -339,6 +353,9 @@ async function guardarAsistencia(periodoId: string, fila: FilaAsistencia) {
       fila.horas_extra_25,
       fila.horas_extra_35,
       fila.horas_extra_100,
+      fila.dias_subsidio_enfermedad ?? null,
+      fila.dias_subsidio_maternidad ?? null,
+      fila.dias_licencia_paternidad ?? null,
     ]
   );
 }
@@ -419,6 +436,264 @@ planillaRouter.delete("/:id/tareo/:contratoId", asyncHandler(async (req: Request
   });
   res.status(204).send();
 }));
+
+// -----------------------------------------------------------------------
+// Tareo diario (migracion 017): registro dia por dia por trabajador, ademas
+// de la carga por Excel/CSV y la edicion manual de totales de arriba. Se
+// guarda en tareo_diario y desde ahi se recalculan los totales de
+// asistencia_periodo (dias_trabajados, horas_extra_25/35/100, dias_falta y
+// los 3 campos de subsidio/licencia) via recalcularAsistenciaDesdeTareoDiario,
+// reutilizando guardarAsistencia - el motor de calculo (motorCalculo.ts)
+// sigue leyendo solo de asistencia_periodo, sin ningun cambio.
+// -----------------------------------------------------------------------
+
+const TIPOS_DIA_ESPECIAL = [
+  "FALTA",
+  "SUBSIDIO_ENFERMEDAD",
+  "SUBSIDIO_MATERNIDAD",
+  "LICENCIA_PATERNIDAD",
+] as const;
+type TipoDiaEspecial = (typeof TIPOS_DIA_ESPECIAL)[number];
+
+interface FilaTareoDiario {
+  fecha: string;
+  horas_normales?: number;
+  minutos_normales?: number;
+  horas_dominical?: number;
+  minutos_dominical?: number;
+  horas_feriado?: number;
+  minutos_feriado?: number;
+  horas_extra_tramo1?: number;
+  minutos_extra_tramo1?: number;
+  horas_extra_tramo2?: number;
+  minutos_extra_tramo2?: number;
+  horas_extra_tramo3?: number;
+  minutos_extra_tramo3?: number;
+  tipo_dia_especial?: TipoDiaEspecial | null;
+}
+
+function redondear2(valor: number): number {
+  return Math.round(valor * 100) / 100;
+}
+
+/**
+ * Suma todas las filas de tareo_diario de un contrato en un periodo y
+ * actualiza asistencia_periodo con los totales resultantes, via la misma
+ * guardarAsistencia() que usan la carga por Excel y la edicion manual. Los
+ * conceptos que hoy se guardan en "dias" (jornal normal, dominical, feriado)
+ * se obtienen dividiendo el total de horas entre 8 (jornada estandar) -
+ * mismo criterio que ya tolera dias_trabajados fraccionario en el resto del
+ * sistema (ver comentarios de motorCalculo.ts sobre dias redondeados).
+ */
+async function recalcularAsistenciaDesdeTareoDiario(periodoId: string, contratoId: number) {
+  const r = await pool.query(
+    `SELECT horas_normales, minutos_normales, horas_dominical, minutos_dominical,
+            horas_feriado, minutos_feriado, horas_extra_tramo1, minutos_extra_tramo1,
+            horas_extra_tramo2, minutos_extra_tramo2, horas_extra_tramo3, minutos_extra_tramo3,
+            tipo_dia_especial
+     FROM tareo_diario WHERE periodo_id = $1 AND contrato_id = $2`,
+    [periodoId, contratoId]
+  );
+
+  let horasNormales = 0;
+  let horasDominical = 0;
+  let horasFeriado = 0;
+  let horasTramo1 = 0;
+  let horasTramo2 = 0;
+  let horasTramo3 = 0;
+  let diasFalta = 0;
+  let diasSubsidioEnfermedad = 0;
+  let diasSubsidioMaternidad = 0;
+  let diasLicenciaPaternidad = 0;
+
+  for (const fila of r.rows) {
+    switch (fila.tipo_dia_especial as TipoDiaEspecial | null) {
+      case "FALTA":
+        diasFalta += 1;
+        continue;
+      case "SUBSIDIO_ENFERMEDAD":
+        diasSubsidioEnfermedad += 1;
+        continue;
+      case "SUBSIDIO_MATERNIDAD":
+        diasSubsidioMaternidad += 1;
+        continue;
+      case "LICENCIA_PATERNIDAD":
+        diasLicenciaPaternidad += 1;
+        continue;
+    }
+    horasNormales += Number(fila.horas_normales) + Number(fila.minutos_normales) / 60;
+    horasDominical += Number(fila.horas_dominical) + Number(fila.minutos_dominical) / 60;
+    horasFeriado += Number(fila.horas_feriado) + Number(fila.minutos_feriado) / 60;
+    horasTramo1 += Number(fila.horas_extra_tramo1) + Number(fila.minutos_extra_tramo1) / 60;
+    horasTramo2 += Number(fila.horas_extra_tramo2) + Number(fila.minutos_extra_tramo2) / 60;
+    horasTramo3 += Number(fila.horas_extra_tramo3) + Number(fila.minutos_extra_tramo3) / 60;
+  }
+
+  await guardarAsistencia(periodoId, {
+    contrato_id: contratoId,
+    dias_trabajados: redondear2(horasNormales / 8),
+    dias_dominical: redondear2(horasDominical / 8),
+    dias_feriado: redondear2(horasFeriado / 8),
+    dias_falta: diasFalta,
+    horas_extra_25: redondear2(horasTramo1),
+    horas_extra_35: redondear2(horasTramo2),
+    horas_extra_100: redondear2(horasTramo3),
+    dias_subsidio_enfermedad: diasSubsidioEnfermedad,
+    dias_subsidio_maternidad: diasSubsidioMaternidad,
+    dias_licencia_paternidad: diasLicenciaPaternidad,
+  });
+}
+
+async function verificarAccesoContrato(req: Request, contratoId: string): Promise<string | null> {
+  const contratoResult = await pool.query("SELECT proyecto FROM contratos WHERE id = $1", [contratoId]);
+  if (contratoResult.rowCount === 0) return null;
+  return contratoResult.rows[0].proyecto as string;
+}
+
+// GET /api/periodos/:id/tareo-diario/:contratoId -> dias ya cargados para
+// ese trabajador en ese periodo (el frontend arma la grilla completa del
+// mes usando periodo.fecha_inicio/fecha_fin y rellena con esto).
+planillaRouter.get(
+  "/:id/tareo-diario/:contratoId",
+  asyncHandler(async (req: Request, res: Response) => {
+    const periodo = await obtenerPeriodo(req.params.id);
+    if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
+
+    const proyecto = await verificarAccesoContrato(req, req.params.contratoId);
+    if (proyecto === null) return res.status(404).json({ error: "El contrato no existe" });
+    if (!tieneAccesoProyecto(req.usuario!, proyecto)) {
+      return res.status(403).json({ error: "No tienes acceso a ese proyecto" });
+    }
+
+    const r = await pool.query(
+      `SELECT fecha, horas_normales, minutos_normales, horas_dominical, minutos_dominical,
+              horas_feriado, minutos_feriado, horas_extra_tramo1, minutos_extra_tramo1,
+              horas_extra_tramo2, minutos_extra_tramo2, horas_extra_tramo3, minutos_extra_tramo3,
+              tipo_dia_especial
+       FROM tareo_diario
+       WHERE periodo_id = $1 AND contrato_id = $2
+       ORDER BY fecha`,
+      [req.params.id, req.params.contratoId]
+    );
+    res.json({ periodo, dias: r.rows });
+  })
+);
+
+// PUT /api/periodos/:id/tareo-diario/:contratoId  body: { dias: FilaTareoDiario[] }
+// Guarda de una vez todos los dias editados de la grilla (evita 30+ llamadas
+// de red) y recalcula los totales de asistencia_periodo para ese trabajador.
+planillaRouter.put(
+  "/:id/tareo-diario/:contratoId",
+  asyncHandler(async (req: Request, res: Response) => {
+    const periodo = await obtenerPeriodo(req.params.id);
+    if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
+
+    const proyecto = await verificarAccesoContrato(req, req.params.contratoId);
+    if (proyecto === null) return res.status(404).json({ error: "El contrato no existe" });
+    if (!tieneAccesoProyecto(req.usuario!, proyecto)) {
+      return res.status(403).json({ error: "No tienes acceso a ese proyecto" });
+    }
+
+    const dias = (req.body?.dias ?? []) as FilaTareoDiario[];
+    if (!Array.isArray(dias)) {
+      return res.status(400).json({ error: "El campo 'dias' debe ser un arreglo" });
+    }
+    for (const d of dias) {
+      if (!d.fecha || Number.isNaN(Date.parse(d.fecha))) {
+        return res.status(400).json({ error: `Fecha invalida: ${d.fecha}` });
+      }
+      if (d.tipo_dia_especial && !TIPOS_DIA_ESPECIAL.includes(d.tipo_dia_especial)) {
+        return res.status(400).json({ error: `tipo_dia_especial invalido: ${d.tipo_dia_especial}` });
+      }
+    }
+
+    const cliente = await pool.connect();
+    try {
+      await cliente.query("BEGIN");
+      for (const d of dias) {
+        await cliente.query(
+          `INSERT INTO tareo_diario (
+             periodo_id, contrato_id, fecha, horas_normales, minutos_normales,
+             horas_dominical, minutos_dominical, horas_feriado, minutos_feriado,
+             horas_extra_tramo1, minutos_extra_tramo1, horas_extra_tramo2, minutos_extra_tramo2,
+             horas_extra_tramo3, minutos_extra_tramo3, tipo_dia_especial
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+           ON CONFLICT (periodo_id, contrato_id, fecha) DO UPDATE SET
+             horas_normales = EXCLUDED.horas_normales,
+             minutos_normales = EXCLUDED.minutos_normales,
+             horas_dominical = EXCLUDED.horas_dominical,
+             minutos_dominical = EXCLUDED.minutos_dominical,
+             horas_feriado = EXCLUDED.horas_feriado,
+             minutos_feriado = EXCLUDED.minutos_feriado,
+             horas_extra_tramo1 = EXCLUDED.horas_extra_tramo1,
+             minutos_extra_tramo1 = EXCLUDED.minutos_extra_tramo1,
+             horas_extra_tramo2 = EXCLUDED.horas_extra_tramo2,
+             minutos_extra_tramo2 = EXCLUDED.minutos_extra_tramo2,
+             horas_extra_tramo3 = EXCLUDED.horas_extra_tramo3,
+             minutos_extra_tramo3 = EXCLUDED.minutos_extra_tramo3,
+             tipo_dia_especial = EXCLUDED.tipo_dia_especial,
+             actualizado_en = now()`,
+          [
+            req.params.id,
+            req.params.contratoId,
+            d.fecha,
+            d.horas_normales ?? 0,
+            d.minutos_normales ?? 0,
+            d.horas_dominical ?? 0,
+            d.minutos_dominical ?? 0,
+            d.horas_feriado ?? 0,
+            d.minutos_feriado ?? 0,
+            d.horas_extra_tramo1 ?? 0,
+            d.minutos_extra_tramo1 ?? 0,
+            d.horas_extra_tramo2 ?? 0,
+            d.minutos_extra_tramo2 ?? 0,
+            d.horas_extra_tramo3 ?? 0,
+            d.minutos_extra_tramo3 ?? 0,
+            d.tipo_dia_especial ?? null,
+          ]
+        );
+      }
+      await cliente.query("COMMIT");
+    } catch (err) {
+      await cliente.query("ROLLBACK");
+      throw err;
+    } finally {
+      cliente.release();
+    }
+
+    await recalcularAsistenciaDesdeTareoDiario(req.params.id, Number(req.params.contratoId));
+    await registrarBitacora(req.usuario!.id, "TAREO_DIARIO", "tareo_diario", null, {
+      periodo_id: req.params.id,
+      contrato_id: req.params.contratoId,
+      dias_guardados: dias.length,
+    });
+    res.status(204).send();
+  })
+);
+
+// DELETE /api/periodos/:id/tareo-diario/:contratoId/:fecha -> borra un dia
+// puntual y recalcula los totales del trabajador para ese periodo.
+planillaRouter.delete(
+  "/:id/tareo-diario/:contratoId/:fecha",
+  asyncHandler(async (req: Request, res: Response) => {
+    const proyecto = await verificarAccesoContrato(req, req.params.contratoId);
+    if (proyecto === null) return res.status(404).json({ error: "El contrato no existe" });
+    if (!tieneAccesoProyecto(req.usuario!, proyecto)) {
+      return res.status(403).json({ error: "No tienes acceso a ese proyecto" });
+    }
+
+    const resultado = await pool.query(
+      "DELETE FROM tareo_diario WHERE periodo_id = $1 AND contrato_id = $2 AND fecha = $3 RETURNING id",
+      [req.params.id, req.params.contratoId, req.params.fecha]
+    );
+    if (resultado.rowCount === 0) {
+      return res.status(404).json({ error: "No hay tareo diario guardado para esa fecha" });
+    }
+
+    await recalcularAsistenciaDesdeTareoDiario(req.params.id, Number(req.params.contratoId));
+    res.status(204).send();
+  })
+);
 
 interface ErrorFilaTareo {
   fila: number;
@@ -594,6 +869,7 @@ planillaRouter.post(
     const asistenciaResult = await pool.query(
       `SELECT a.contrato_id, a.dias_trabajados, a.dias_dominical, a.dias_feriado, a.dias_falta,
               a.horas_extra_25, a.horas_extra_35, a.horas_extra_100,
+              a.dias_subsidio_enfermedad, a.dias_subsidio_maternidad, a.dias_licencia_paternidad,
               c.*, e.numero_hijos, e.numero_documento, e.apellidos_nombres,
               COALESCE(p.cuota_sindical_semanal, 0) AS cuota_sindical_semanal
        FROM asistencia_periodo a
@@ -636,10 +912,37 @@ planillaRouter.post(
 
     const lineasCalculadas = [];
     const erroresCalculo: Array<{ contrato_id: number; dni: string; nombre: string; motivo: string }> = [];
+    // Puramente informativo: dias de subsidio/licencia cargados via Tareo
+    // Diario para este periodo, que el motor de calculo (mas abajo) NO usa
+    // para ningun monto ni aporte todavia (ver migracion_017_tareo_diario.sql).
+    // Se avisa aqui para que el responsable los revise a mano.
+    const avisosSubsidio: Array<{
+      contrato_id: number;
+      dni: string;
+      nombre: string;
+      dias_subsidio_enfermedad: number;
+      dias_subsidio_maternidad: number;
+      dias_licencia_paternidad: number;
+    }> = [];
 
     for (let i = 0; i < asistenciaResult.rows.length; i++) {
       const fila = asistenciaResult.rows[i];
       const contrato = fila as Contrato & { numero_hijos: number; numero_documento: string; apellidos_nombres: string };
+
+      const diasSubsidioEnfermedad = Number(fila.dias_subsidio_enfermedad) || 0;
+      const diasSubsidioMaternidad = Number(fila.dias_subsidio_maternidad) || 0;
+      const diasLicenciaPaternidad = Number(fila.dias_licencia_paternidad) || 0;
+      if (diasSubsidioEnfermedad > 0 || diasSubsidioMaternidad > 0 || diasLicenciaPaternidad > 0) {
+        avisosSubsidio.push({
+          contrato_id: contrato.id,
+          dni: contrato.numero_documento,
+          nombre: contrato.apellidos_nombres,
+          dias_subsidio_enfermedad: diasSubsidioEnfermedad,
+          dias_subsidio_maternidad: diasSubsidioMaternidad,
+          dias_licencia_paternidad: diasLicenciaPaternidad,
+        });
+      }
+
       const asistencia = {
         contrato_id: fila.contrato_id,
         dias_trabajados: Number(fila.dias_trabajados),
@@ -790,6 +1093,7 @@ planillaRouter.post(
       trabajadores_calculados: lineasCalculadas.length,
       detalle: lineasCalculadas,
       errores: erroresCalculo,
+      avisos_subsidio: avisosSubsidio,
     });
   } catch (err) {
     await cliente.query("ROLLBACK");

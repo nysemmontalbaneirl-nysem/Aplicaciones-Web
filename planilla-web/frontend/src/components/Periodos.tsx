@@ -18,10 +18,11 @@ function ultimoDia(anio: number, mes: number): string {
 
 interface Props {
   onCargarTareo?: (p: PeriodoPlanilla) => void;
+  onTareoDiario?: (p: PeriodoPlanilla) => void;
   onCalcular?: (p: PeriodoPlanilla) => void;
 }
 
-export default function Periodos({ onCargarTareo, onCalcular }: Props) {
+export default function Periodos({ onCargarTareo, onTareoDiario, onCalcular }: Props) {
   const [periodos, setPeriodos] = useState<PeriodoPlanilla[]>([]);
   const [anio, setAnio] = useState(new Date().getFullYear());
   const [mes, setMes] = useState(new Date().getMonth() + 1);
@@ -133,6 +134,11 @@ export default function Periodos({ onCargarTareo, onCalcular }: Props) {
                   {onCargarTareo && (
                     <button className="primario" onClick={() => onCargarTareo(p)}>
                       Cargar tareo
+                    </button>
+                  )}
+                  {onTareoDiario && (
+                    <button type="button" onClick={() => onTareoDiario(p)}>
+                      Tareo diario
                     </button>
                   )}
                   {onCalcular && (

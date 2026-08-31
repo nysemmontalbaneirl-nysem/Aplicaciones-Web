@@ -56,6 +56,27 @@ conceptosRouter.get(
   })
 );
 
+// GET /api/conceptos/horas-extra -> solo los 3 multiplicadores de los dos
+// conceptos de horas extra (construccion civil / regimen general), sin el
+// permiso "conceptos.editar" (que un TAREADOR no tiene). Es de solo lectura
+// y no expone nada mas del catalogo - se usa para etiquetar dinamicamente
+// las columnas de horas extra en la pantalla de Tareo Diario segun la
+// categoria de cada trabajador (ver motorCalculo.ts: esConstruccionCivil).
+conceptosRouter.get(
+  "/horas-extra",
+  asyncHandler(async (_req: Request, res: Response) => {
+    const conceptos = await obtenerConceptos();
+    function factores(codigo: string) {
+      const c = conceptos[codigo];
+      return { factor1: c?.factor1 ?? null, factor2: c?.factor2 ?? null, factor3: c?.factor3 ?? null };
+    }
+    res.json({
+      construccion: factores("HORAS_EXTRA_CONSTRUCCION"),
+      general: factores("HORAS_EXTRA_GENERAL"),
+    });
+  })
+);
+
 const CAMPOS_AFECTO = [
   "afecto_essalud",
   "afecto_sctr",

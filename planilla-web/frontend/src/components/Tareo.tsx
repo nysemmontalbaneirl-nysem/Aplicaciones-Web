@@ -221,7 +221,9 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
           Solo aparecen aqui los trabajadores que ya tienen tareo cargado para este periodo (no
           toda la planilla). Descarga la plantilla, bórrale las filas de quienes no trabajaron
           ese periodo, llena los datos, y vuelve a subirla. Las horas extra se ingresan en
-          decimal (ej. 1 hora 30 min = 1.5).
+          decimal (ej. 1 hora 30 min = 1.5). Si prefieres registrar dia por dia (con horas y
+          minutos separados), usa "Registrar Tareo Diario" en el menu — se suma automaticamente
+          a estos mismos totales. Las columnas de subsidio/licencia son solo informativas.
         </p>
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <a href={conToken(`${BASE_URL}/periodos/${periodo.id}/tareo/plantilla`)}>
@@ -330,6 +332,9 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
               <th>H.E. 1</th>
               <th>H.E. 2</th>
               <th>H.E. 3</th>
+              <th title="Cargado desde Registrar Tareo Diario - solo informativo">Subs. enfermedad</th>
+              <th title="Cargado desde Registrar Tareo Diario - solo informativo">Subs. maternidad</th>
+              <th title="Cargado desde Registrar Tareo Diario - solo informativo">Lic. paternidad</th>
               <th></th>
             </tr>
           </thead>
@@ -356,6 +361,9 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
                     />
                   </td>
                 ))}
+                <td style={{ textAlign: "center", color: "#5a6172" }}>{fila.dias_subsidio_enfermedad ?? 0}</td>
+                <td style={{ textAlign: "center", color: "#5a6172" }}>{fila.dias_subsidio_maternidad ?? 0}</td>
+                <td style={{ textAlign: "center", color: "#5a6172" }}>{fila.dias_licencia_paternidad ?? 0}</td>
                 <td>
                   <button type="button" onClick={() => eliminarFila(fila.contrato_id)}>
                     Quitar
@@ -365,14 +373,14 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
             ))}
             {tareo.length === 0 && (
               <tr>
-                <td colSpan={11} style={{ textAlign: "center", color: "#5a6172" }}>
+                <td colSpan={14} style={{ textAlign: "center", color: "#5a6172" }}>
                   Todavia no hay tareo cargado para este periodo.
                 </td>
               </tr>
             )}
             {tareo.length > 0 && tareoFiltrado.length === 0 && (
               <tr>
-                <td colSpan={11} style={{ textAlign: "center", color: "#5a6172" }}>
+                <td colSpan={14} style={{ textAlign: "center", color: "#5a6172" }}>
                   Ningún trabajador cargado coincide con "{busquedaTareo}".
                 </td>
               </tr>

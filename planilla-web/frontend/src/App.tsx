@@ -7,6 +7,7 @@ import Sidebar, { Pestana } from "./components/Sidebar";
 import Trabajadores from "./components/Trabajadores";
 import Periodos from "./components/Periodos";
 import Tareo from "./components/Tareo";
+import TareoDiario from "./components/TareoDiario";
 import Calculo from "./components/Calculo";
 import Boletas from "./components/Boletas";
 import Reportes from "./components/Reportes";
@@ -36,6 +37,11 @@ export default function App() {
   function irACalculo(periodo: PeriodoPlanilla) {
     setPeriodoSeleccionado(periodo);
     setPestana("calculo");
+  }
+
+  function irATareoDiario(periodo: PeriodoPlanilla) {
+    setPeriodoSeleccionado(periodo);
+    setPestana("tareoDiario");
   }
 
   if (cargando) {
@@ -95,11 +101,16 @@ export default function App() {
           {pestana === "trabajadores" && <Trabajadores />}
           {pestana === "importar" && puedeImportarMasivo && <Importar />}
           {pestana === "periodos" && (
-            <Periodos onCargarTareo={irATareo} onCalcular={puedeCalcular ? irACalculo : undefined} />
+            <Periodos
+              onCargarTareo={irATareo}
+              onTareoDiario={irATareoDiario}
+              onCalcular={puedeCalcular ? irACalculo : undefined}
+            />
           )}
           {pestana === "tareo" && periodoSeleccionado && (
             <Tareo periodo={periodoSeleccionado} onIrACalcular={() => setPestana("calculo")} />
           )}
+          {pestana === "tareoDiario" && periodoSeleccionado && <TareoDiario periodo={periodoSeleccionado} />}
           {pestana === "calculo" && periodoSeleccionado && puedeCalcular && (
             <Calculo periodo={periodoSeleccionado} onVerBoletas={() => setPestana("boletas")} />
           )}
