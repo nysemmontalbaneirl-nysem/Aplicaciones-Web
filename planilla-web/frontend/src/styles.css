@@ -188,6 +188,26 @@ body {
   padding: 26px;
   box-shadow: 0 1px 2px rgba(20, 24, 33, 0.06);
   margin-bottom: 24px;
+  /* Sin esto, scrollIntoView() deja el titulo de la tarjeta tapado detras
+     del topbar (66px) y la barra de accesos rapidos (sticky, justo debajo)
+     cuando se hace scroll automatico hacia una tarjeta que aparece mas
+     abajo en la pagina (ej. el formulario de Trabajadores). */
+  scroll-margin-top: 140px;
+}
+
+/* Barra de accesos rapidos: queda pegada justo debajo del topbar (que mide
+   66px y tambien es sticky) mientras el usuario baja por una lista larga,
+   para no tener que volver a subir hasta arriba de todo para buscar o
+   registrar un trabajador nuevo. */
+.barra-accesos-rapidos {
+  position: sticky;
+  top: 66px;
+  z-index: 20;
+  display: flex;
+  gap: 10px;
+  background: #f4f5f7;
+  padding: 14px 0;
+  margin-bottom: 4px;
 }
 
 .card h2 {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { apiDelete, apiGet, apiPostArchivo, apiPut, BASE_URL, conToken } from "../api";
 import { AsistenciaTareo, Contrato, PeriodoPlanilla } from "../types";
 
@@ -35,6 +35,22 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
   const [busquedaTareo, setBusquedaTareo] = useState("");
   const [seleccionados, setSeleccionados] = useState<Set<number>>(new Set());
   const [eliminandoLote, setEliminandoLote] = useState(false);
+
+  // Con muchos trabajadores el tareo cargado puede ser una lista larga - estas
+  // referencias permiten volver directo al buscador correspondiente desde la
+  // barra de accesos rapidos, sin tener que desplazarse manualmente.
+  const buscadorAgregarRef = useRef<HTMLInputElement>(null);
+  const buscadorListaRef = useRef<HTMLInputElement>(null);
+
+  function irABuscadorAgregar() {
+    buscadorAgregarRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    buscadorAgregarRef.current?.focus();
+  }
+
+  function irABuscadorLista() {
+    buscadorListaRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    buscadorListaRef.current?.focus();
+  }
 
   async function cargarTareo() {
     const datos = await apiGet<{ tareo: AsistenciaTareo[] }>(`/periodos/${periodo.id}/tareo`);
@@ -186,6 +202,15 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
 
   return (
     <div>
+      <div className="barra-accesos-rapidos">
+        <button type="button" onClick={irABuscadorLista}>
+          Ir al buscador de la lista
+        </button>
+        <button type="button" onClick={irABuscadorAgregar}>
+          Agregar trabajador a mano
+        </button>
+      </div>
+
       {error && <div className="mensaje-error">{error}</div>}
 
       <div className="card">
@@ -239,6 +264,7 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
           <label>
             Agregar un trabajador a mano (por DNI o nombre)
             <input
+              ref={buscadorAgregarRef}
               type="text"
               value={busquedaAgregar}
               onChange={(e) => setBusquedaAgregar(e.target.value)}
@@ -276,6 +302,7 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
           <label>
             Buscar en esta lista (por DNI o nombre)
             <input
+              ref={buscadorListaRef}
               type="text"
               value={busquedaTareo}
               onChange={(e) => setBusquedaTareo(e.target.value)}

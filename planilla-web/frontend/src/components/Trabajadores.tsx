@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiPost, apiPut, BASE_URL, conToken, ErrorApi } from "../api";
 import { CategoriaOcupacional, Catalogos, CatalogoItem, Contrato, Empleado, Proyecto } from "../types";
 
@@ -141,6 +141,13 @@ export default function Trabajadores() {
   // trabajador que YA EXISTE (reingreso tras un cese) - no se crea un
   // empleado nuevo, solo un contrato adicional para este empleado_id.
   const [reingresoEmpleadoId, setReingresoEmpleadoId] = useState<number | null>(null);
+  // El formulario (Nuevo/Editar/Reingreso) esta oculto por defecto: con
+  // muchos trabajadores en la lista, obligar a desplazarse por todo el
+  // formulario para llegar al buscador era incomodo. Ahora la lista y el
+  // buscador van primero, y el formulario solo aparece al pedirlo.
+  const [mostrarFormulario, setMostrarFormulario] = useState(false);
+  const formularioRef = useRef<HTMLDivElement>(null);
+  const buscadorRef = useRef<HTMLInputElement>(null);
 
   // Dar de baja necesita pedir fecha Y motivo (T17) - un solo window.prompt
   // ya no alcanza, asi que se muestra un mini-formulario inline en vez de
@@ -149,6 +156,7 @@ export default function Trabajadores() {
   const [fechaCese, setFechaCese] = useState("");
   const [motivoBaja, setMotivoBaja] = useState("");
   const [guardandoBaja, setGuardandoBaja] = useState(false);
+  const cesandoRef = useRef<HTMLDivElement>(null);
 
   // Historial de periodos de un trabajador (todos sus contratos, HABIL y
   // CESADO) - GET /api/contratos?empleado_id=X ya devuelve todo sin filtrar
@@ -157,6 +165,24 @@ export default function Trabajadores() {
   const [historialNombre, setHistorialNombre] = useState("");
   const [historialContratos, setHistorialContratos] = useState<Contrato[]>([]);
   const [cargandoHistorial, setCargandoHistorial] = useState(false);
+  const historialRef = useRef<HTMLDivElement>(null);
+
+  // Con una lista larga, "Dar de baja" e "Historial" quedan renderados
+  // despues de TODA la tabla (aunque se vean "pegados" a la lista en la
+  // pantalla, en el documento van despues) - sin este scroll automatico,
+  // abrir cualquiera de los dos desde una fila de mas abajo los dejaria
+  // fuera de vista, debajo de toda la tabla.
+  useEffect(() => {
+    if (cesando) {
+      cesandoRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [cesando]);
+
+  useEffect(() => {
+    if (historialEmpleadoId !== null) {
+      historialRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [historialEmpleadoId]);
 
   async function cargar() {
     try {
@@ -177,6 +203,30 @@ export default function Trabajadores() {
     apiGet<Proyecto[]>("/proyectos").then(setProyectos).catch((e) => setError((e as Error).message));
     apiGet<Catalogos>("/catalogos").then(setCatalogos).catch((e) => setError((e as Error).message));
   }, []);
+
+  // Cuando se abre el formulario (Nuevo/Editar/Reingreso) hay que llevar al
+  // usuario hasta ahi, porque ahora el formulario aparece al final de la
+  // pagina. Tambien vuelve a dispararse si ya estaba abierto y el usuario
+  // hace clic en "Editar"/"Reingresar" de otro trabajador distinto.
+  useEffect(() => {
+    if (mostrarFormulario) {
+      formularioRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [mostrarFormulario, contratoEnEdicion, reingresoEmpleadoId]);
+
+  function abrirNuevoTrabajador() {
+    setContratoEnEdicion(null);
+    setReingresoEmpleadoId(null);
+    setForm(estadoVacio);
+    setError(null);
+    setOk(null);
+    setMostrarFormulario(true);
+  }
+
+  function irABuscador() {
+    buscadorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    buscadorRef.current?.focus();
+  }
 
   // URL de descarga (Excel/PDF) del listado actualmente visible: mismo
   // filtro de estado y mismo texto de busqueda que se ve en pantalla.
@@ -275,7 +325,7 @@ export default function Trabajadores() {
         essalud_vida: contrato.essalud_vida ?? false,
         domiciliado: contrato.domiciliado ?? true,
       });
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      setMostrarFormulario(true);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -287,6 +337,7 @@ export default function Trabajadores() {
     setForm(estadoVacio);
     setError(null);
     setOk(null);
+    setMostrarFormulario(false);
   }
 
   async function verHistorial(empleadoId: number, nombre: string) {
@@ -379,7 +430,7 @@ export default function Trabajadores() {
         domiciliado: contrato.domiciliado ?? true,
       });
       cerrarHistorial();
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      setMostrarFormulario(true);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -494,7 +545,9 @@ export default function Trabajadores() {
       }
 
       setForm(estadoVacio);
+      setMostrarFormulario(false);
       await cargar();
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -503,15 +556,30 @@ export default function Trabajadores() {
   }
 
   return (
-    <div>
-      <div className="card">
-        <h2>
-          {contratoEnEdicion
-            ? `Editar trabajador — ${form.apellidos_nombres}`
-            : reingresoEmpleadoId
-            ? `Reingreso de trabajador — ${form.apellidos_nombres}`
-            : "Nuevo trabajador"}
-        </h2>
+    <div style={{ display: "flex", flexDirection: "column" }}>
+      {/* Barra fija: siempre alcanzable aunque la lista de abajo sea larga,
+          para no tener que volver a subir hasta arriba de todo. */}
+      <div className="barra-accesos-rapidos">
+        <button type="button" onClick={irABuscador}>
+          Ir al buscador
+        </button>
+        <button type="button" className="primario" onClick={abrirNuevoTrabajador}>
+          + Nuevo trabajador
+        </button>
+      </div>
+
+      {mostrarFormulario && (
+      <div className="card" ref={formularioRef} style={{ order: 4 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 18 }}>
+          <h2 style={{ margin: 0 }}>
+            {contratoEnEdicion
+              ? `Editar trabajador — ${form.apellidos_nombres}`
+              : reingresoEmpleadoId
+              ? `Reingreso de trabajador — ${form.apellidos_nombres}`
+              : "Nuevo trabajador"}
+          </h2>
+          <button type="button" onClick={cancelarEdicion}>Cerrar</button>
+        </div>
         {reingresoEmpleadoId && (
           <p style={{ color: "#5a6172", fontSize: "0.85rem", marginTop: -8 }}>
             Este trabajador ya existe en el sistema. Se creará un contrato nuevo (indica la fecha de
@@ -935,18 +1003,17 @@ export default function Trabajadores() {
                 ? "Registrar reingreso"
                 : "Registrar trabajador"}
             </button>
-            {(contratoEnEdicion || reingresoEmpleadoId) && (
-              <button type="button" onClick={cancelarEdicion} disabled={guardando}>
-                Cancelar
-              </button>
-            )}
+            <button type="button" onClick={cancelarEdicion} disabled={guardando}>
+              Cancelar
+            </button>
           </div>
         </form>
         )}
       </div>
+      )}
 
       {cesando && (
-        <div className="card">
+        <div className="card" ref={cesandoRef} style={{ order: 2 }}>
           <h2>Dar de baja a {cesando.apellidos_nombres}</h2>
           {error && <div className="mensaje-error">{error}</div>}
           <div className="form-grid">
@@ -976,7 +1043,7 @@ export default function Trabajadores() {
       )}
 
       {historialEmpleadoId !== null && (
-        <div className="card">
+        <div className="card" ref={historialRef} style={{ order: 3 }}>
           <h2>Historial de periodos — {historialNombre}</h2>
           {error && <div className="mensaje-error">{error}</div>}
           {cargandoHistorial && <p style={{ color: "#5a6172" }}>Cargando historial...</p>}
@@ -1023,13 +1090,19 @@ export default function Trabajadores() {
         </div>
       )}
 
-      <div className="card">
+      <div className="card" style={{ order: 1 }}>
         <h2>
           {filtroEstado === "HABIL" && "Trabajadores hábiles"}
           {filtroEstado === "CESADO" && "Trabajadores cesados"}
           {filtroEstado === "TODOS" && "Todos los trabajadores"}
           {" "}({contratosFiltrados.length} de {contratos.length})
         </h2>
+        {!mostrarFormulario && !cesando && historialEmpleadoId === null && error && (
+          <div className="mensaje-error">{error}</div>
+        )}
+        {!mostrarFormulario && !cesando && historialEmpleadoId === null && ok && (
+          <div className="mensaje-ok">{ok}</div>
+        )}
         <div className="form-grid" style={{ maxWidth: 600, marginBottom: 12 }}>
           <label>
             Mostrar
@@ -1042,6 +1115,7 @@ export default function Trabajadores() {
           <label>
             Buscar (DNI, nombre o proyecto)
             <input
+              ref={buscadorRef}
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
               placeholder="Ej: 41480202 o Montalban"

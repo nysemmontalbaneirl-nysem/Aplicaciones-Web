@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiGet, apiPost, BASE_URL, conToken } from "../api";
 import { DetallePlanilla, PeriodoPlanilla, tienePermiso } from "../types";
 import { useAuth } from "../AuthContext";
@@ -38,6 +38,15 @@ export default function Boletas({ periodoInicial }: Props) {
   const [imprimiendoLote, setImprimiendoLote] = useState(false);
   const [enviandoCorreo, setEnviandoCorreo] = useState(false);
   const [resultadoEnvio, setResultadoEnvio] = useState<ResultadoEnvio | null>(null);
+
+  // Con muchas boletas en el periodo la tabla puede ser larga - este boton de
+  // acceso rapido permite volver directo al buscador/filtro sin desplazarse
+  // manualmente por toda la lista.
+  const buscadorRef = useRef<HTMLInputElement>(null);
+  function irABuscador() {
+    buscadorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    buscadorRef.current?.focus();
+  }
 
   useEffect(() => {
     apiGet<PeriodoPlanilla[]>("/periodos")
@@ -120,6 +129,12 @@ export default function Boletas({ periodoInicial }: Props) {
 
   return (
     <div>
+      <div className="barra-accesos-rapidos">
+        <button type="button" onClick={irABuscador}>
+          Ir al buscador
+        </button>
+      </div>
+
       {error && <div className="mensaje-error">{error}</div>}
 
       <div className="card">
@@ -139,6 +154,7 @@ export default function Boletas({ periodoInicial }: Props) {
           <label>
             Buscar (DNI o nombre)
             <input
+              ref={buscadorRef}
               type="text"
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
