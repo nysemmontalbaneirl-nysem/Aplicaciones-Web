@@ -21,7 +21,9 @@ export interface OpcionesPdfTabla {
   orientacion?: "portrait" | "landscape";
 }
 
-const ALTO_FILA = 16;
+const ALTO_MINIMO_FILA = 16;
+const ALTO_MINIMO_ENCABEZADO = 14;
+const ESPACIO_ENTRE_FILAS = 3;
 
 export async function generarPdfTabla(opciones: OpcionesPdfTabla): Promise<Buffer> {
   const { titulo, subtitulo, columnas, filas, filaTotales, orientacion = "landscape" } = opciones;
@@ -51,19 +53,38 @@ export async function generarPdfTabla(opciones: OpcionesPdfTabla): Promise<Buffe
     dibujarFilaEncabezadoColumnas();
   }
 
+  // Calcula la altura real que va a ocupar una fila segun el ancho de cada
+  // columna, porque pdfkit envuelve automaticamente el texto que no cabe
+  // (ej. un nombre largo) a varias lineas. Sin esto, se avanzaba siempre
+  // una altura fija y una fila con texto envuelto quedaba montada sobre la
+  // siguiente ("amontonada").
+  function alturaFila(valores: (string | number)[], negrita: boolean, minimo: number): number {
+    doc.font(negrita ? "Helvetica-Bold" : "Helvetica").fontSize(8.5);
+    let alto = minimo;
+    columnas.forEach((col, i) => {
+      const texto = String(valores[i] ?? "");
+      const h = doc.heightOfString(texto, { width: col.ancho - 4 });
+      if (h > alto) alto = h;
+    });
+    return alto;
+  }
+
   function dibujarFilaEncabezadoColumnas() {
     const y = doc.y;
+    const titulos = columnas.map((c) => c.titulo);
+    const alto = alturaFila(titulos, true, ALTO_MINIMO_ENCABEZADO);
     doc.font("Helvetica-Bold").fontSize(8.5);
     columnas.forEach((col, i) => {
       doc.text(col.titulo, xColumna(i), y, { width: col.ancho - 4, align: col.align ?? "left" });
     });
-    doc.y = y + ALTO_FILA;
+    doc.y = y + alto + 4;
     doc.moveTo(xInicio, doc.y).lineTo(xColumna(columnas.length), doc.y).strokeColor("#cccccc").stroke();
     doc.moveDown(0.2);
   }
 
   function dibujarFila(valores: (string | number)[], negrita = false) {
-    if (doc.y + ALTO_FILA > yLimite) {
+    const alto = alturaFila(valores, negrita, ALTO_MINIMO_FILA);
+    if (doc.y + alto > yLimite) {
       doc.addPage();
       doc.y = doc.page.margins.top;
       dibujarFilaEncabezadoColumnas();
@@ -74,7 +95,7 @@ export async function generarPdfTabla(opciones: OpcionesPdfTabla): Promise<Buffe
       const valor = valores[i] ?? "";
       doc.text(String(valor), xColumna(i), y, { width: col.ancho - 4, align: col.align ?? "left" });
     });
-    doc.y = y + ALTO_FILA;
+    doc.y = y + alto + ESPACIO_ENTRE_FILAS;
   }
 
   dibujarEncabezadoPagina();

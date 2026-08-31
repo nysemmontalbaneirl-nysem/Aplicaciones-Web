@@ -196,7 +196,7 @@ function fechaTexto(valor: string | Date | null | undefined): string {
 }
 
 async function generarPdfConstanciaVacaciones(record: RecordVacacionalPdf): Promise<Buffer> {
-  const doc = new PDFDocument({ margin: 45, size: "A4" });
+  const doc = new PDFDocument({ margin: 45, size: "A4", layout: "landscape" });
   const trozos: Buffer[] = [];
   doc.on("data", (trozo: Buffer) => trozos.push(trozo));
   const listo = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(trozos))));
@@ -227,17 +227,32 @@ async function generarPdfConstanciaVacaciones(record: RecordVacacionalPdf): Prom
   doc.font("Helvetica-Bold").text(`Saldo pendiente: ${record.saldo_pendiente} dias`, xInicio);
   doc.moveDown(0.8);
 
+  // Igual que en pdfTabla.ts: la altura de cada fila se calcula segun el
+  // contenido real (pdfkit envuelve el texto que no cabe en el ancho de la
+  // columna), en vez de usar una altura fija que hacia que las filas con
+  // texto envuelto (ej. observaciones largas) quedaran amontonadas.
+  function alturaFilaTabla(valores: (string | number)[], anchos: number[], negrita: boolean, minimo: number): number {
+    doc.font(negrita ? "Helvetica-Bold" : "Helvetica").fontSize(8.5);
+    let alto = minimo;
+    valores.forEach((valor, i) => {
+      const h = doc.heightOfString(String(valor), { width: anchos[i] - 4 });
+      if (h > alto) alto = h;
+    });
+    return alto;
+  }
+
   function tabla(titulo: string, encabezados: string[], anchos: number[], filas: (string | number)[][]) {
     doc.font("Helvetica-Bold").fontSize(11).text(titulo, xInicio);
     doc.moveDown(0.2);
     const y0 = doc.y;
+    const altoEncabezado = alturaFilaTabla(encabezados, anchos, true, 14);
     doc.font("Helvetica-Bold").fontSize(8.5);
     let x = xInicio;
     encabezados.forEach((h, i) => {
       doc.text(h, x, y0, { width: anchos[i] - 4 });
       x += anchos[i];
     });
-    doc.y = y0 + 14;
+    doc.y = y0 + altoEncabezado + 4;
     doc.moveTo(xInicio, doc.y).lineTo(xInicio + anchoUtil, doc.y).strokeColor("#cccccc").stroke();
     doc.moveDown(0.15);
     doc.font("Helvetica").fontSize(8.5);
@@ -246,28 +261,31 @@ async function generarPdfConstanciaVacaciones(record: RecordVacacionalPdf): Prom
       doc.fillColor("#000000");
     }
     for (const fila of filas) {
+      const alto = alturaFilaTabla(fila, anchos, false, 14);
       const y = doc.y;
       x = xInicio;
       fila.forEach((valor, i) => {
         doc.text(String(valor), x, y, { width: anchos[i] - 4 });
         x += anchos[i];
       });
-      doc.y = y + 14;
+      doc.y = y + alto + 3;
     }
     doc.moveDown(0.6);
   }
 
+  // Anchos ajustados para aprovechar el ancho extra del formato horizontal
+  // (landscape) y dar mas espacio a las columnas de texto largo.
   tabla(
     "Periodos vacacionales",
     ["Desde", "Hasta", "Dias computables", `Cumplio record (${record.umbral_dias_record})`, "Dias ganados"],
-    [75, 75, 100, 140, 80],
+    [90, 90, 130, 170, 100],
     record.periodos.map((p) => [p.fecha_inicio, p.fecha_fin, p.dias_computables, p.cumplio_record ? "Si" : "No", p.dias_ganados])
   );
 
   tabla(
     "Historial de vacaciones tomadas",
     ["Desde", "Hasta", "Dias", "Neto pagado", "Observaciones"],
-    [75, 75, 50, 80, 190],
+    [90, 90, 60, 100, 300],
     record.goces.map((g) => [
       fechaTexto(g.fecha_inicio),
       fechaTexto(g.fecha_fin),
