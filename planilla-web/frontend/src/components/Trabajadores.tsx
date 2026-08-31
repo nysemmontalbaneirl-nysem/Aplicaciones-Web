@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { apiGet, apiPost, apiPut, ErrorApi } from "../api";
+import { apiGet, apiPost, apiPut, BASE_URL, conToken, ErrorApi } from "../api";
 import { CategoriaOcupacional, Catalogos, CatalogoItem, Contrato, Empleado, Proyecto } from "../types";
 
 // Crea un contrato; si el trabajador ya tiene otro contrato HABIL, el
@@ -128,6 +128,9 @@ export default function Trabajadores() {
   const [proyectos, setProyectos] = useState<Proyecto[]>([]);
   const [catalogos, setCatalogos] = useState<Catalogos | null>(null);
   const [busqueda, setBusqueda] = useState("");
+  // Que trabajadores mostrar: solo los que siguen activos (por defecto, igual
+  // que antes), solo los dados de baja, o todos sin filtrar por estado.
+  const [filtroEstado, setFiltroEstado] = useState<"HABIL" | "CESADO" | "TODOS">("HABIL");
   const [form, setForm] = useState<FormularioTrabajador>(estadoVacio);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -157,7 +160,8 @@ export default function Trabajadores() {
 
   async function cargar() {
     try {
-      const datos = await apiGet<Contrato[]>("/contratos?estado=HABIL");
+      const filtro = filtroEstado === "TODOS" ? "" : `?estado=${filtroEstado}`;
+      const datos = await apiGet<Contrato[]>(`/contratos${filtro}`);
       setContratos(datos);
     } catch (e) {
       setError((e as Error).message);
@@ -166,9 +170,22 @@ export default function Trabajadores() {
 
   useEffect(() => {
     cargar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtroEstado]);
+
+  useEffect(() => {
     apiGet<Proyecto[]>("/proyectos").then(setProyectos).catch((e) => setError((e as Error).message));
     apiGet<Catalogos>("/catalogos").then(setCatalogos).catch((e) => setError((e as Error).message));
   }, []);
+
+  // URL de descarga (Excel/PDF) del listado actualmente visible: mismo
+  // filtro de estado y mismo texto de busqueda que se ve en pantalla.
+  function urlExportar(formato: "excel" | "pdf"): string {
+    const params = new URLSearchParams();
+    if (filtroEstado !== "TODOS") params.set("estado", filtroEstado);
+    if (busqueda.trim()) params.set("q", busqueda.trim());
+    return conToken(`${BASE_URL}/contratos/exportar/${formato}?${params.toString()}`);
+  }
 
   const contratosFiltrados = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
@@ -1007,8 +1024,21 @@ export default function Trabajadores() {
       )}
 
       <div className="card">
-        <h2>Trabajadores hábiles ({contratosFiltrados.length} de {contratos.length})</h2>
-        <div className="form-grid" style={{ maxWidth: 340, marginBottom: 12 }}>
+        <h2>
+          {filtroEstado === "HABIL" && "Trabajadores hábiles"}
+          {filtroEstado === "CESADO" && "Trabajadores cesados"}
+          {filtroEstado === "TODOS" && "Todos los trabajadores"}
+          {" "}({contratosFiltrados.length} de {contratos.length})
+        </h2>
+        <div className="form-grid" style={{ maxWidth: 600, marginBottom: 12 }}>
+          <label>
+            Mostrar
+            <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value as typeof filtroEstado)}>
+              <option value="HABIL">Hábiles</option>
+              <option value="CESADO">Cesados</option>
+              <option value="TODOS">Todos</option>
+            </select>
+          </label>
           <label>
             Buscar (DNI, nombre o proyecto)
             <input
@@ -1017,6 +1047,14 @@ export default function Trabajadores() {
               placeholder="Ej: 41480202 o Montalban"
             />
           </label>
+        </div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+          <a href={urlExportar("excel")}>
+            <button type="button">Exportar a Excel</button>
+          </a>
+          <a href={urlExportar("pdf")}>
+            <button type="button">Exportar a PDF</button>
+          </a>
         </div>
         <table>
           <thead>
@@ -1027,6 +1065,7 @@ export default function Trabajadores() {
               <th>Categoria</th>
               <th>Pension</th>
               <th>Ingreso</th>
+              <th>Estado</th>
               <th></th>
             </tr>
           </thead>
@@ -1039,9 +1078,15 @@ export default function Trabajadores() {
                 <td>{c.categoria_ocupacional}</td>
                 <td>{c.sistema_pension === "AFP" ? c.afp_nombre : "ONP"}</td>
                 <td>{c.fecha_ingreso?.slice(0, 10)}</td>
-                <td style={{ display: "flex", gap: 6 }}>
+                <td>{c.estado}</td>
+                <td style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   <button type="button" onClick={() => iniciarEdicion(c)}>Editar</button>
-                  <button type="button" onClick={() => iniciarBaja(c)}>Dar de baja</button>
+                  {c.estado === "HABIL" && (
+                    <button type="button" onClick={() => iniciarBaja(c)}>Dar de baja</button>
+                  )}
+                  {c.estado === "CESADO" && (
+                    <button type="button" onClick={() => iniciarReingreso(c)}>Reingresar</button>
+                  )}
                   <button type="button" onClick={() => verHistorial(c.empleado_id, c.apellidos_nombres ?? "")}>
                     Historial
                   </button>

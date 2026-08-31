@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import ExcelJS from "exceljs";
 import { asyncHandler } from "../asyncHandler";
 import { requierePermiso } from "../authMiddleware";
 import { pool } from "../db";
@@ -12,11 +13,16 @@ import {
   validarSistemaPension,
 } from "../validaciones";
 import { registrarBitacora } from "../bitacora";
+import { generarPdfTabla } from "../pdfTabla";
 
 export const contratosRouter = Router();
 
-contratosRouter.get("/", asyncHandler(async (req: Request, res: Response) => {
-  const { empleado_id, estado } = req.query;
+// Arma el WHERE + valores compartido entre el listado en pantalla y las
+// descargas de Excel/PDF, para que "lo que ves es lo que exportas": mismo
+// filtro de estado, mismo texto de busqueda (DNI/nombre/proyecto) y mismo
+// recorte de proyectos segun el rol del usuario.
+function condicionesContratos(req: Request): { where: string; valores: unknown[] } {
+  const { empleado_id, estado, q } = req.query;
   const condiciones: string[] = [];
   const valores: unknown[] = [];
 
@@ -28,12 +34,22 @@ contratosRouter.get("/", asyncHandler(async (req: Request, res: Response) => {
     valores.push(estado);
     condiciones.push(`c.estado = $${valores.length}`);
   }
+  if (q && String(q).trim()) {
+    valores.push(`%${String(q).trim()}%`);
+    condiciones.push(
+      `(e.numero_documento ILIKE $${valores.length} OR e.apellidos_nombres ILIKE $${valores.length} OR c.proyecto ILIKE $${valores.length})`
+    );
+  }
   if (req.usuario!.rol !== "ADMIN") {
     valores.push(req.usuario!.proyectos);
     condiciones.push(`c.proyecto = ANY($${valores.length}::text[])`);
   }
   const where = condiciones.length ? `WHERE ${condiciones.join(" AND ")}` : "";
+  return { where, valores };
+}
 
+contratosRouter.get("/", asyncHandler(async (req: Request, res: Response) => {
+  const { where, valores } = condicionesContratos(req);
   const resultado = await pool.query(
     `SELECT c.*, e.apellidos_nombres, e.numero_documento
      FROM contratos c JOIN empleados e ON e.id = c.empleado_id
@@ -42,6 +58,103 @@ contratosRouter.get("/", asyncHandler(async (req: Request, res: Response) => {
     valores
   );
   res.json(resultado.rows);
+}));
+
+function fechaCortaOTexto(v: unknown): string {
+  if (!v) return "-";
+  return new Date(v as string).toISOString().slice(0, 10);
+}
+
+async function obtenerFilasExportacion(req: Request) {
+  const { where, valores } = condicionesContratos(req);
+  const resultado = await pool.query(
+    `SELECT c.*, e.apellidos_nombres, e.numero_documento
+     FROM contratos c JOIN empleados e ON e.id = c.empleado_id
+     ${where}
+     ORDER BY e.apellidos_nombres ASC`,
+    valores
+  );
+  return resultado.rows;
+}
+
+// Descarga en Excel del listado de trabajadores actualmente visible en
+// pantalla (respeta el mismo filtro de estado y el mismo texto de busqueda).
+contratosRouter.get("/exportar/excel", asyncHandler(async (req: Request, res: Response) => {
+  const filas = await obtenerFilasExportacion(req);
+
+  const workbook = new ExcelJS.Workbook();
+  const hoja = workbook.addWorksheet("Trabajadores");
+  hoja.columns = [
+    { header: "DNI", key: "dni", width: 14 },
+    { header: "Apellidos y nombres", key: "nombres", width: 34 },
+    { header: "Proyecto", key: "proyecto", width: 22 },
+    { header: "Categoria", key: "categoria", width: 14 },
+    { header: "Pension", key: "pension", width: 14 },
+    { header: "Fecha ingreso", key: "ingreso", width: 14 },
+    { header: "Fecha cese", key: "cese", width: 14 },
+    { header: "Estado", key: "estado", width: 12 },
+    { header: "Motivo de baja", key: "motivo", width: 14 },
+  ];
+  hoja.getRow(1).font = { bold: true };
+
+  const codigosMotivo = new Map<string, string>();
+  const catalogoMotivo = await pool.query("SELECT codigo, nombre FROM catalogo_motivo_baja");
+  for (const m of catalogoMotivo.rows) codigosMotivo.set(m.codigo, m.nombre);
+
+  for (const c of filas) {
+    hoja.addRow({
+      dni: c.numero_documento,
+      nombres: c.apellidos_nombres,
+      proyecto: c.proyecto,
+      categoria: c.categoria_ocupacional,
+      pension: c.sistema_pension === "AFP" ? `AFP ${c.afp_nombre ?? ""}` : "ONP",
+      ingreso: fechaCortaOTexto(c.fecha_ingreso),
+      cese: c.fecha_cese ? fechaCortaOTexto(c.fecha_cese) : "-",
+      estado: c.estado,
+      motivo: c.motivo_baja_codigo ? codigosMotivo.get(c.motivo_baja_codigo) ?? c.motivo_baja_codigo : "-",
+    });
+  }
+  hoja.getColumn("dni").numFmt = "@"; // texto, no perder ceros a la izquierda
+
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="trabajadores.xlsx"`);
+  await workbook.xlsx.write(res);
+  res.end();
+}));
+
+// Descarga en PDF del mismo listado (tabla simple, para imprimir o adjuntar).
+contratosRouter.get("/exportar/pdf", asyncHandler(async (req: Request, res: Response) => {
+  const filas = await obtenerFilasExportacion(req);
+
+  const filtroEstado = (req.query.estado as string | undefined) ?? "TODOS";
+  const buffer = await generarPdfTabla({
+    titulo: "Listado de trabajadores",
+    subtitulo: `Estado: ${filtroEstado} · ${filas.length} trabajador(es) · Generado el ${new Date().toLocaleDateString("es-PE")}`,
+    columnas: [
+      { titulo: "DNI", ancho: 60 },
+      { titulo: "Apellidos y nombres", ancho: 170 },
+      { titulo: "Proyecto", ancho: 110 },
+      { titulo: "Categoria", ancho: 75 },
+      { titulo: "Pension", ancho: 75 },
+      { titulo: "Ingreso", ancho: 60 },
+      { titulo: "Cese", ancho: 60 },
+      { titulo: "Estado", ancho: 55 },
+    ],
+    filas: filas.map((c) => [
+      c.numero_documento,
+      c.apellidos_nombres,
+      c.proyecto,
+      c.categoria_ocupacional,
+      c.sistema_pension === "AFP" ? `AFP ${c.afp_nombre ?? ""}` : "ONP",
+      fechaCortaOTexto(c.fecha_ingreso),
+      c.fecha_cese ? fechaCortaOTexto(c.fecha_cese) : "-",
+      c.estado,
+    ]),
+  });
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="trabajadores.pdf"`);
+  res.send(buffer);
 }));
 
 contratosRouter.post("/", requierePermiso("contratos.gestionar"), asyncHandler(async (req: Request, res: Response) => {
