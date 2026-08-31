@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { apiDelete, apiGet, apiPost } from "../api";
+import { apiDelete, apiGet, apiPost, BASE_URL, conToken } from "../api";
 import { BoletaVacacionesRespuesta, Contrato, RecordVacacional } from "../types";
 import BoletaVacaciones from "./BoletaVacaciones";
 
@@ -137,9 +137,14 @@ export default function Vacaciones() {
 
       {record && !cargando && (
         <>
-          <h3 className="seccion-titulo">
-            {record.contrato.apellidos_nombres} — {record.contrato.numero_documento}
-          </h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
+            <h3 className="seccion-titulo" style={{ margin: 0 }}>
+              {record.contrato.apellidos_nombres} — {record.contrato.numero_documento}
+            </h3>
+            <a href={conToken(`${BASE_URL}/vacaciones/${record.contrato.id}/constancia.pdf`)}>
+              <button type="button">Descargar constancia en PDF</button>
+            </a>
+          </div>
           <p style={{ color: "#5a6172" }}>
             Proyecto: {record.contrato.proyecto} · Fecha de ingreso:{" "}
             {new Date(record.contrato.fecha_ingreso).toLocaleDateString("es-PE")}

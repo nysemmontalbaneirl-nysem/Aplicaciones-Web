@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import PDFDocument from "pdfkit";
 import { asyncHandler } from "../asyncHandler";
 import { requierePermiso } from "../authMiddleware";
 import { tieneAccesoProyecto } from "../permisos";
@@ -51,6 +52,74 @@ async function obtenerContratoOFallar(contratoId: string) {
   return r.rows[0];
 }
 
+// Arma el record vacacional completo de un contrato (periodos, totales y
+// goces). Compartido entre la vista JSON en pantalla y la descarga en PDF,
+// para que la constancia diga exactamente lo mismo que se ve en pantalla.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function armarRecordVacacional(contratoId: string, contrato: any) {
+  const fechaIngreso = new Date(contrato.fecha_ingreso);
+  const fechaCorte = contrato.fecha_cese ? new Date(contrato.fecha_cese) : new Date();
+
+  const asistenciaResult = await pool.query(
+    `SELECT a.dias_trabajados, a.dias_dominical, a.dias_feriado, p.fecha_inicio
+     FROM asistencia_periodo a
+     JOIN periodos_planilla p ON p.id = a.periodo_id
+     WHERE a.contrato_id = $1
+     ORDER BY p.fecha_inicio ASC`,
+    [contratoId]
+  );
+
+  const periodosVacacionales = generarPeriodosVacacionales(fechaIngreso, fechaCorte);
+  const periodos = periodosVacacionales.map(({ inicio, fin }) => {
+    let diasComputables = 0;
+    for (const fila of asistenciaResult.rows) {
+      const fechaTareo = new Date(fila.fecha_inicio);
+      if (fechaTareo >= inicio && fechaTareo <= fin) {
+        diasComputables += Number(fila.dias_trabajados) + Number(fila.dias_dominical) + Number(fila.dias_feriado);
+      }
+    }
+    const diasGanados = redondear(
+      Math.min(DIAS_POR_ANIO_COMPLETO, (DIAS_POR_ANIO_COMPLETO * Math.min(diasComputables, UMBRAL_DIAS_RECORD)) / UMBRAL_DIAS_RECORD)
+    );
+    return {
+      fecha_inicio: inicio.toISOString().slice(0, 10),
+      fecha_fin: fin.toISOString().slice(0, 10),
+      dias_computables: redondear(diasComputables),
+      dias_ganados: diasGanados,
+      cumplio_record: diasComputables >= UMBRAL_DIAS_RECORD,
+    };
+  });
+
+  const totalGanado = redondear(periodos.reduce((suma, p) => suma + p.dias_ganados, 0));
+
+  const goceResult = await pool.query(
+    `SELECT g.*, b.id AS boleta_id, b.remuneracion_vacacional, b.neto_pagar AS boleta_neto_pagar
+     FROM vacaciones_goce g
+     LEFT JOIN boletas_vacaciones b ON b.goce_id = g.id
+     WHERE g.contrato_id = $1
+     ORDER BY g.fecha_inicio DESC`,
+    [contratoId]
+  );
+  const totalGozado = goceResult.rows.reduce((suma, g) => suma + Number(g.dias), 0);
+
+  return {
+    contrato: {
+      id: contrato.id,
+      numero_documento: contrato.numero_documento,
+      apellidos_nombres: contrato.apellidos_nombres,
+      proyecto: contrato.proyecto,
+      fecha_ingreso: contrato.fecha_ingreso,
+      fecha_cese: contrato.fecha_cese,
+    },
+    umbral_dias_record: UMBRAL_DIAS_RECORD,
+    periodos,
+    total_ganado: totalGanado,
+    total_gozado: totalGozado,
+    saldo_pendiente: redondear(totalGanado - totalGozado),
+    goces: goceResult.rows,
+  };
+}
+
 // GET /api/vacaciones/:contratoId -> record vacacional completo: periodos
 // anuales con dias computables/ganados, total ganado, total gozado, saldo
 // pendiente, y el historial de goces registrados.
@@ -68,69 +137,149 @@ vacacionesRouter.get(
       return res.status(403).json({ error: "No tienes acceso a este proyecto" });
     }
 
-    const fechaIngreso = new Date(contrato.fecha_ingreso);
-    const fechaCorte = contrato.fecha_cese ? new Date(contrato.fecha_cese) : new Date();
-
-    const asistenciaResult = await pool.query(
-      `SELECT a.dias_trabajados, a.dias_dominical, a.dias_feriado, p.fecha_inicio
-       FROM asistencia_periodo a
-       JOIN periodos_planilla p ON p.id = a.periodo_id
-       WHERE a.contrato_id = $1
-       ORDER BY p.fecha_inicio ASC`,
-      [req.params.contratoId]
-    );
-
-    const periodosVacacionales = generarPeriodosVacacionales(fechaIngreso, fechaCorte);
-    const periodos = periodosVacacionales.map(({ inicio, fin }) => {
-      let diasComputables = 0;
-      for (const fila of asistenciaResult.rows) {
-        const fechaTareo = new Date(fila.fecha_inicio);
-        if (fechaTareo >= inicio && fechaTareo <= fin) {
-          diasComputables += Number(fila.dias_trabajados) + Number(fila.dias_dominical) + Number(fila.dias_feriado);
-        }
-      }
-      const diasGanados = redondear(
-        Math.min(DIAS_POR_ANIO_COMPLETO, (DIAS_POR_ANIO_COMPLETO * Math.min(diasComputables, UMBRAL_DIAS_RECORD)) / UMBRAL_DIAS_RECORD)
-      );
-      return {
-        fecha_inicio: inicio.toISOString().slice(0, 10),
-        fecha_fin: fin.toISOString().slice(0, 10),
-        dias_computables: redondear(diasComputables),
-        dias_ganados: diasGanados,
-        cumplio_record: diasComputables >= UMBRAL_DIAS_RECORD,
-      };
-    });
-
-    const totalGanado = redondear(periodos.reduce((suma, p) => suma + p.dias_ganados, 0));
-
-    const goceResult = await pool.query(
-      `SELECT g.*, b.id AS boleta_id, b.remuneracion_vacacional, b.neto_pagar AS boleta_neto_pagar
-       FROM vacaciones_goce g
-       LEFT JOIN boletas_vacaciones b ON b.goce_id = g.id
-       WHERE g.contrato_id = $1
-       ORDER BY g.fecha_inicio DESC`,
-      [req.params.contratoId]
-    );
-    const totalGozado = goceResult.rows.reduce((suma, g) => suma + Number(g.dias), 0);
-
-    res.json({
-      contrato: {
-        id: contrato.id,
-        numero_documento: contrato.numero_documento,
-        apellidos_nombres: contrato.apellidos_nombres,
-        proyecto: contrato.proyecto,
-        fecha_ingreso: contrato.fecha_ingreso,
-        fecha_cese: contrato.fecha_cese,
-      },
-      umbral_dias_record: UMBRAL_DIAS_RECORD,
-      periodos,
-      total_ganado: totalGanado,
-      total_gozado: totalGozado,
-      saldo_pendiente: redondear(totalGanado - totalGozado),
-      goces: goceResult.rows,
-    });
+    res.json(await armarRecordVacacional(req.params.contratoId, contrato));
   })
 );
+
+// GET /api/vacaciones/:contratoId/constancia.pdf -> el mismo record
+// vacacional de arriba, como documento de una pagina para imprimir o
+// entregar al trabajador (constancia de dias ganados/gozados/pendientes).
+vacacionesRouter.get(
+  "/:contratoId/constancia.pdf",
+  requierePermiso("vacaciones.gestionar"),
+  asyncHandler(async (req: Request, res: Response) => {
+    let contrato;
+    try {
+      contrato = await obtenerContratoOFallar(req.params.contratoId);
+    } catch (err) {
+      return res.status(404).json({ error: "Contrato no encontrado" });
+    }
+    if (!tieneAccesoProyecto(req.usuario!, contrato.proyecto)) {
+      return res.status(403).json({ error: "No tienes acceso a este proyecto" });
+    }
+
+    const record = await armarRecordVacacional(req.params.contratoId, contrato);
+    const buffer = await generarPdfConstanciaVacaciones(record);
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="vacaciones_${record.contrato.numero_documento}.pdf"`
+    );
+    res.send(buffer);
+  })
+);
+
+interface RecordVacacionalPdf {
+  contrato: {
+    numero_documento: string;
+    apellidos_nombres: string;
+    proyecto: string;
+    fecha_ingreso: string | Date;
+    fecha_cese: string | Date | null;
+  };
+  umbral_dias_record: number;
+  periodos: { fecha_inicio: string; fecha_fin: string; dias_computables: number; dias_ganados: number; cumplio_record: boolean }[];
+  total_ganado: number;
+  total_gozado: number;
+  saldo_pendiente: number;
+  goces: { fecha_inicio: string | Date; fecha_fin: string | Date; dias: number; boleta_neto_pagar: number | null; observaciones: string | null }[];
+}
+
+// pg devuelve las columnas DATE como objetos Date (no como texto) cuando se
+// consultan directo desde el backend - a diferencia de la ruta JSON, que
+// las recibe ya convertidas a texto por Express al serializar la respuesta.
+function fechaTexto(valor: string | Date | null | undefined): string {
+  if (!valor) return "-";
+  const iso = valor instanceof Date ? valor.toISOString() : valor;
+  return iso.slice(0, 10);
+}
+
+async function generarPdfConstanciaVacaciones(record: RecordVacacionalPdf): Promise<Buffer> {
+  const doc = new PDFDocument({ margin: 45, size: "A4" });
+  const trozos: Buffer[] = [];
+  doc.on("data", (trozo: Buffer) => trozos.push(trozo));
+  const listo = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(trozos))));
+
+  const xInicio = doc.page.margins.left;
+  const anchoUtil = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+
+  doc.font("Helvetica-Bold").fontSize(16).text("Constancia de vacaciones", xInicio);
+  doc.font("Helvetica").fontSize(9.5).fillColor("#5a6172").text(`Generado el ${new Date().toLocaleDateString("es-PE")}`, xInicio);
+  doc.fillColor("#000000");
+  doc.moveDown(0.8);
+
+  doc.font("Helvetica").fontSize(10);
+  doc.text(`Trabajador: ${record.contrato.apellidos_nombres}`, xInicio);
+  doc.text(`DNI: ${record.contrato.numero_documento}`, xInicio);
+  doc.text(`Proyecto: ${record.contrato.proyecto}`, xInicio);
+  doc.text(`Fecha de ingreso: ${fechaTexto(record.contrato.fecha_ingreso)}`, xInicio);
+  if (record.contrato.fecha_cese) {
+    doc.text(`Fecha de cese: ${fechaTexto(record.contrato.fecha_cese)}`, xInicio);
+  }
+  doc.moveDown(0.8);
+
+  doc.font("Helvetica-Bold").fontSize(11).text("Resumen", xInicio);
+  doc.moveDown(0.2);
+  doc.font("Helvetica").fontSize(10);
+  doc.text(`Total ganado: ${record.total_ganado} dias`, xInicio);
+  doc.text(`Total gozado: ${record.total_gozado} dias`, xInicio);
+  doc.font("Helvetica-Bold").text(`Saldo pendiente: ${record.saldo_pendiente} dias`, xInicio);
+  doc.moveDown(0.8);
+
+  function tabla(titulo: string, encabezados: string[], anchos: number[], filas: (string | number)[][]) {
+    doc.font("Helvetica-Bold").fontSize(11).text(titulo, xInicio);
+    doc.moveDown(0.2);
+    const y0 = doc.y;
+    doc.font("Helvetica-Bold").fontSize(8.5);
+    let x = xInicio;
+    encabezados.forEach((h, i) => {
+      doc.text(h, x, y0, { width: anchos[i] - 4 });
+      x += anchos[i];
+    });
+    doc.y = y0 + 14;
+    doc.moveTo(xInicio, doc.y).lineTo(xInicio + anchoUtil, doc.y).strokeColor("#cccccc").stroke();
+    doc.moveDown(0.15);
+    doc.font("Helvetica").fontSize(8.5);
+    if (filas.length === 0) {
+      doc.fillColor("#5a6172").text("Sin registros.", xInicio, doc.y);
+      doc.fillColor("#000000");
+    }
+    for (const fila of filas) {
+      const y = doc.y;
+      x = xInicio;
+      fila.forEach((valor, i) => {
+        doc.text(String(valor), x, y, { width: anchos[i] - 4 });
+        x += anchos[i];
+      });
+      doc.y = y + 14;
+    }
+    doc.moveDown(0.6);
+  }
+
+  tabla(
+    "Periodos vacacionales",
+    ["Desde", "Hasta", "Dias computables", `Cumplio record (${record.umbral_dias_record})`, "Dias ganados"],
+    [75, 75, 100, 140, 80],
+    record.periodos.map((p) => [p.fecha_inicio, p.fecha_fin, p.dias_computables, p.cumplio_record ? "Si" : "No", p.dias_ganados])
+  );
+
+  tabla(
+    "Historial de vacaciones tomadas",
+    ["Desde", "Hasta", "Dias", "Neto pagado", "Observaciones"],
+    [75, 75, 50, 80, 190],
+    record.goces.map((g) => [
+      fechaTexto(g.fecha_inicio),
+      fechaTexto(g.fecha_fin),
+      g.dias,
+      g.boleta_neto_pagar != null ? `S/ ${Number(g.boleta_neto_pagar).toFixed(2)}` : "-",
+      g.observaciones ?? "-",
+    ])
+  );
+
+  doc.end();
+  return listo;
+}
 
 // POST /api/vacaciones/:contratoId/goce  body: { fecha_inicio, fecha_fin, observaciones? }
 vacacionesRouter.post(
