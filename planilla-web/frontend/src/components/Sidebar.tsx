@@ -46,7 +46,18 @@ interface Props {
   puedeVerProyectos: boolean;
   puedeVerEmpresa: boolean;
   puedeVerBitacora: boolean;
+  colapsada: boolean;
+  onCambiarColapsada: (colapsada: boolean) => void;
 }
+
+// Icono (unicode, sin dependencias nuevas) para representar cada grupo
+// cuando la barra lateral esta contraida a "solo iconos".
+const ICONOS_GRUPO: Record<string, string> = {
+  inicio: "🏠",
+  trabajadores: "👷",
+  planillas: "📋",
+  administracion: "⚙️",
+};
 
 export default function Sidebar({
   pestana,
@@ -63,6 +74,8 @@ export default function Sidebar({
   puedeVerProyectos,
   puedeVerEmpresa,
   puedeVerBitacora,
+  colapsada,
+  onCambiarColapsada,
 }: Props) {
   const puedeVerAdministracion =
     puedeVerParametros ||
@@ -121,9 +134,33 @@ export default function Sidebar({
   const grupoDeLaPestanaActiva = grupos.find((g) => g.items.some((i) => i.id === pestana))?.id;
   const [grupoAbierto, setGrupoAbierto] = useState<string | null>(grupoDeLaPestanaActiva ?? "inicio");
 
+  // Con la barra contraida no se muestran los submenus (no hay espacio para
+  // el texto de los items). Al hacer clic en el icono de un grupo, primero
+  // se expande la barra completa y se abre ese grupo, para que el usuario
+  // elija el item exacto con el texto visible.
+  function alClicGrupo(grupoId: string, abierto: boolean) {
+    if (colapsada) {
+      onCambiarColapsada(false);
+      setGrupoAbierto(grupoId);
+    } else {
+      setGrupoAbierto(abierto ? null : grupoId);
+    }
+  }
+
   return (
-    <div className="sidebar">
-      <div className="sidebar-titulo">Menú</div>
+    <div className={`sidebar ${colapsada ? "colapsada" : ""}`}>
+      <div className="sidebar-toggle-fila">
+        <button
+          type="button"
+          className="sidebar-toggle"
+          onClick={() => onCambiarColapsada(!colapsada)}
+          title={colapsada ? "Expandir menú" : "Contraer menú"}
+        >
+          {colapsada ? "»" : "«"}
+        </button>
+      </div>
+
+      {!colapsada && <div className="sidebar-titulo">Menú</div>}
 
       <nav className="sidebar-nav">
         {grupos.map((grupo) => {
@@ -132,13 +169,20 @@ export default function Sidebar({
             <div key={grupo.id} className="sidebar-grupo">
               <button
                 type="button"
-                className={`sidebar-grupo-boton ${abierto ? "abierto" : ""}`}
-                onClick={() => setGrupoAbierto(abierto ? null : grupo.id)}
+                className={`sidebar-grupo-boton ${abierto && !colapsada ? "abierto" : ""}`}
+                onClick={() => alClicGrupo(grupo.id, abierto)}
+                title={colapsada ? grupo.etiqueta : undefined}
               >
-                <span>{grupo.etiqueta}</span>
-                <span className="sidebar-flecha">{abierto ? "▾" : "▸"}</span>
+                {colapsada ? (
+                  <span className="sidebar-icono-grupo">{ICONOS_GRUPO[grupo.id] ?? "•"}</span>
+                ) : (
+                  <>
+                    <span>{grupo.etiqueta}</span>
+                    <span className="sidebar-flecha">{abierto ? "▾" : "▸"}</span>
+                  </>
+                )}
               </button>
-              {abierto && (
+              {!colapsada && abierto && (
                 <div className="sidebar-submenu">
                   {grupo.items.map((item) => (
                     <button

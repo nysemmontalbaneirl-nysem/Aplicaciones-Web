@@ -23,11 +23,32 @@ import Roles from "./components/Roles";
 import Dashboard from "./components/Dashboard";
 import { PeriodoPlanilla, tienePermiso } from "./types";
 
+// Recuerda la preferencia de barra lateral contraida/expandida entre
+// recargas de pagina (por usuario del navegador). Si localStorage no esta
+// disponible (modo privado, etc.) simplemente se ignora y arranca expandida.
+function leerPreferenciaSidebarColapsada(): boolean {
+  try {
+    return localStorage.getItem("sidebarColapsada") === "1";
+  } catch {
+    return false;
+  }
+}
+
 export default function App() {
   const { usuario, cargando, cerrarSesion } = useAuth();
   const [pestana, setPestana] = useState<Pestana>("inicio");
   const [periodoSeleccionado, setPeriodoSeleccionado] = useState<PeriodoPlanilla | null>(null);
   const [cambiandoPassword, setCambiandoPassword] = useState(false);
+  const [sidebarColapsada, setSidebarColapsada] = useState<boolean>(leerPreferenciaSidebarColapsada);
+
+  function cambiarSidebarColapsada(colapsada: boolean) {
+    setSidebarColapsada(colapsada);
+    try {
+      localStorage.setItem("sidebarColapsada", colapsada ? "1" : "0");
+    } catch {
+      // Ignorado: solo afecta si se recuerda la preferencia entre recargas.
+    }
+  }
 
   function irATareo(periodo: PeriodoPlanilla) {
     setPeriodoSeleccionado(periodo);
@@ -92,6 +113,8 @@ export default function App() {
           puedeVerProyectos={puedeVerProyectos}
           puedeVerEmpresa={puedeVerEmpresa}
           puedeVerBitacora={puedeVerBitacora}
+          colapsada={sidebarColapsada}
+          onCambiarColapsada={cambiarSidebarColapsada}
         />
 
         <div className="main-content">

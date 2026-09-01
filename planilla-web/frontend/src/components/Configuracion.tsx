@@ -156,7 +156,7 @@ export default function Configuracion() {
       {cargando && <p>Cargando...</p>}
 
       {!cargando && (
-        <div style={{ overflowX: "auto" }}>
+        <div className="tabla-scroll-horizontal">
           <table>
             <thead>
               <tr>

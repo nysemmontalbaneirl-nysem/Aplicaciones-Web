@@ -218,7 +218,7 @@ export default function TareoDiario({ periodo }: Props) {
           {cargando ? (
             <p>Cargando...</p>
           ) : (
-            <div className="tabla-tareo-diario" style={{ overflowX: "auto" }}>
+            <div className="tabla-tareo-diario tabla-scroll-horizontal">
               <table>
                 <thead>
                   <tr>

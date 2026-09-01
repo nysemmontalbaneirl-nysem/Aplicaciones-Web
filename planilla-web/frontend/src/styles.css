@@ -95,6 +95,52 @@ body {
   display: flex;
   flex-direction: column;
   padding: 20px 0;
+  transition: width 0.15s ease;
+}
+
+/* Barra lateral contraida: solo iconos, para ganar espacio de pantalla en
+   pantallas con tablas largas (ej. Tareo Diario). El contenido central
+   (.main-content, flex: 1) crece solo al encogerse el ancho fijo aqui. */
+.sidebar.colapsada {
+  width: 64px;
+}
+
+.sidebar-toggle-fila {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 14px 14px;
+}
+
+.sidebar.colapsada .sidebar-toggle-fila {
+  justify-content: center;
+}
+
+.sidebar-toggle {
+  background: transparent;
+  border: 1px solid #3a4152;
+  color: #c3c7d1;
+  border-radius: 6px;
+  width: 30px;
+  height: 28px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.sidebar-toggle:hover {
+  color: #fff;
+  border-color: #6b7280;
+}
+
+.sidebar.colapsada .sidebar-grupo-boton {
+  justify-content: center;
+  padding: 12px 0;
+}
+
+.sidebar-icono-grupo {
+  font-size: 1.2rem;
+  line-height: 1;
 }
 
 .sidebar-titulo {
@@ -247,6 +293,47 @@ th {
   color: #5a6172;
   font-weight: 600;
   background: #fafbfc;
+}
+
+/* Encabezados de tabla fijos (sticky) en toda la aplicacion, para no perder
+   de vista los titulos de columna al desplazarse por listas largas (ej.
+   Tareo Diario con muchos trabajadores). El offset por defecto (66px) es la
+   altura del topbar, que tambien es sticky. En las 3 pantallas que ademas
+   tienen la barra de accesos rapidos pegada debajo del topbar (Trabajadores,
+   Tareo, Boletas) se usa 140px: el mismo valor ya usado en
+   ".card { scroll-margin-top }" para esa misma combinacion de barras.
+   No afecta tablas que ya definen su propio "position: sticky" por estilo
+   en linea (ej. Reportes.tsx, con su propio contenedor con scroll interno):
+   un estilo en linea siempre tiene mas prioridad que esta regla. */
+table thead th {
+  position: sticky;
+  top: 66px;
+  z-index: 5;
+}
+
+.barra-accesos-rapidos ~ .card table thead th {
+  top: 140px;
+}
+
+/* Tablas con su propio scroll horizontal (grillas anchas: Tareo Diario, y
+   las tablas de categorias/conceptos en Parametros y Configuracion). El
+   "overflow-x: auto" de estos contenedores hace que el navegador trate su
+   "overflow-y" tambien como "auto" (regla del propio CSS: si un eje no es
+   "visible" el otro se comporta como "auto"), convirtiendo al contenedor
+   -y no a la pagina completa- en el punto de referencia del "position:
+   sticky" de su encabezado. Como ese contenedor no tenia una altura
+   maxima, el resultado era un encabezado fijo a mitad de la tabla, tapando
+   filas, en vez de pegado arriba. La solucion es darle su propio scroll
+   vertical acotado (mismo patron ya usado en Reportes.tsx) y hacer que su
+   encabezado se pegue arriba de ESE panel ("top: 0"), no de la pagina. */
+.tabla-scroll-horizontal {
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 70vh;
+}
+
+.tabla-scroll-horizontal table thead th {
+  top: 0 !important;
 }
 
 tr:hover td {

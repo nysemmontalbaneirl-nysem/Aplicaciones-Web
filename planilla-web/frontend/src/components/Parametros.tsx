@@ -391,7 +391,7 @@ function SeccionMensual() {
             El recargo de hora extra depende del régimen: construcción civil usa 60%/100% y
             el resto (PEON_A, R_GENERAL) usa 25%/35%.
           </p>
-          <div style={{ overflowX: "auto" }}>
+          <div className="tabla-scroll-horizontal">
             <table style={{ marginBottom: 20 }}>
               <thead>
                 <tr>
