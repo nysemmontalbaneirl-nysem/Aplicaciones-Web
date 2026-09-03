@@ -332,4 +332,59 @@ describe("GET /api/empleados/importar-masivo/plantilla.xlsx", () => {
     const r = await request(app).get("/api/empleados/importar-masivo/plantilla.xlsx");
     expect(r.status).toBe(401);
   });
+
+  it("incluye las hojas Instrucciones y Macro (opcional), y resalta las columnas obligatorias", async () => {
+    const r = await request(app)
+      .get("/api/empleados/importar-masivo/plantilla.xlsx")
+      .set(auth())
+      .buffer()
+      .parse((res, callback) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => callback(null, Buffer.concat(chunks)));
+      });
+
+    expect(r.status).toBe(200);
+    const workbook = new ExcelJS.Workbook();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await workbook.xlsx.load(r.body as any);
+
+    const nombresHojas = workbook.worksheets.map((h) => h.name);
+    expect(nombresHojas).toContain("Instrucciones");
+    expect(nombresHojas).toContain("Macro (opcional)");
+
+    // El texto del encabezado NUNCA cambia (solo el color), para no romper
+    // la conversion a CSV al reabrir en Excel.
+    const hojaTrabajadores = workbook.getWorksheet("Trabajadores")!;
+    const columnaPorNombre = new Map<string, number>();
+    hojaTrabajadores.getRow(1).eachCell((celda, numeroColumna) => {
+      columnaPorNombre.set(String(celda.value), numeroColumna);
+    });
+    const celdaDni = hojaTrabajadores.getRow(1).getCell(columnaPorNombre.get("DNI")!);
+    expect(celdaDni.value).toBe("DNI");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((celdaDni.fill as any)?.fgColor?.argb).toBeTruthy();
+
+    const celdaSueldoBase = hojaTrabajadores.getRow(1).getCell(columnaPorNombre.get("SUELDO_BASE")!);
+    expect(celdaSueldoBase.value).toBe("SUELDO_BASE");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((celdaSueldoBase.fill as any)?.fgColor?.argb).toBeTruthy();
+    expect(celdaSueldoBase.note).toContain("EMPLEADO");
+
+    // El codigo VBA del boton opcional viaja completo en una sola celda de
+    // la hoja "Macro (opcional)", listo para copiar y pegar en el editor
+    // de VBA de Excel.
+    const hojaMacro = workbook.getWorksheet("Macro (opcional)")!;
+    let celdaConCodigo: string | null = null;
+    hojaMacro.eachRow((fila) => {
+      const valor = fila.getCell(1).value;
+      if (typeof valor === "string" && valor.startsWith("Option Explicit")) {
+        celdaConCodigo = valor;
+      }
+    });
+    expect(celdaConCodigo).not.toBeNull();
+    expect(celdaConCodigo).toContain("Sub ValidarYExportarCSV()");
+    expect(celdaConCodigo).toContain("GetSaveAsFilename");
+    expect(celdaConCodigo).toContain('Format(Date, "yyyy-mm-dd")');
+  });
 });

@@ -10,6 +10,240 @@ import { validarEstadoCivil, validarSexo } from "../validaciones";
 
 export const importacionRouter = Router();
 
+// Codigo VBA para el boton opcional "Validar y exportar" que se puede
+// agregar a la plantilla (ver hoja "Macro (opcional)" en el .xlsx
+// descargable). No se puede incrustar como macro real desde este backend
+// (Node no compila VBA) - se entrega como texto para pegar una sola vez en
+// el editor de VBA de Excel (Alt+F11), y desde ahi Excel mismo la guarda
+// como macro-habilitada (.xlsm). Valida los mismos campos obligatorios que
+// el POST /importar-masivo de mas abajo, pregunta donde guardar y arma el
+// CSV a mano separando siempre por coma, para eliminar de raiz el problema
+// del separador de Excel en espanol/Peru.
+const CODIGO_VBA_VALIDAR_EXPORTAR = `Option Explicit
+
+' ============================================================================
+' Macro: Validar y exportar trabajadores al formato que pide el sistema
+' ----------------------------------------------------------------------------
+' - Valida en la hoja "Trabajadores" los mismos campos obligatorios que
+'   exige el sistema (ver src/routes/importacion.ts en el proyecto).
+' - Si hay errores, los lista y NO exporta nada.
+' - Si todo esta bien, pregunta donde guardar (cuadro "Guardar como") y
+'   arma el CSV a mano, separando SIEMPRE por coma sin importar la
+'   configuracion regional de Windows - esa es la causa del problema que
+'   esta macro evita para siempre.
+' - Sugiere el nombre "trabajadores_AAAA-MM-DD.csv" con la fecha de hoy
+'   (fecha de la carga/lote), para llevar control de lo que vas subiendo.
+' ============================================================================
+
+Sub ValidarYExportarCSV()
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Sheets("Trabajadores")
+    On Error GoTo 0
+    If ws Is Nothing Then
+        MsgBox "No se encontro la hoja ""Trabajadores"" en este archivo.", vbCritical
+        Exit Sub
+    End If
+
+    Dim ultimaFila As Long
+    ultimaFila = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    If ultimaFila < 2 Then
+        MsgBox "No hay filas de trabajadores para validar.", vbExclamation
+        Exit Sub
+    End If
+
+    Dim ultimaColumna As Long
+    ultimaColumna = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+
+    ' Mapa NOMBRE_COLUMNA -> numero de columna, leyendo el encabezado real
+    ' (para no depender de que el orden de columnas no haya cambiado).
+    Dim col As Object
+    Set col = CreateObject("Scripting.Dictionary")
+    Dim c As Long
+    For c = 1 To ultimaColumna
+        col(Trim(ws.Cells(1, c).Text)) = c
+    Next c
+
+    Dim requeridas As Variant
+    requeridas = Array("DNI", "APELLIDOS_NOMBRES", "CATEGORIA", "SISTEMA_PENSION", "FECHA_INGRESO", "ESTADO")
+    Dim nombreReq As Variant
+    For Each nombreReq In requeridas
+        If Not col.Exists(CStr(nombreReq)) Then
+            MsgBox "Esta plantilla no tiene la columna """ & nombreReq & """. No se puede validar/exportar.", vbCritical
+            Exit Sub
+        End If
+    Next nombreReq
+
+    Dim errores As String
+    Dim filasValidas As Long
+    Dim i As Long
+
+    For i = 2 To ultimaFila
+        Dim dni As String
+        dni = Trim(ws.Cells(i, col("DNI")).Text)
+
+        ' Saltar la fila de ejemplo resaltada (DNI = 00000000) y las filas
+        ' completamente vacias.
+        If dni = "00000000" Then GoTo SiguienteFila
+        If dni = "" And Trim(ws.Cells(i, col("APELLIDOS_NOMBRES")).Text) = "" Then GoTo SiguienteFila
+
+        Dim motivo As String
+        motivo = ""
+
+        If Not EsDniValido(dni) Then
+            motivo = motivo & "DNI invalido (debe tener 8 a 15 digitos); "
+        End If
+
+        If Len(Trim(ws.Cells(i, col("APELLIDOS_NOMBRES")).Text)) < 3 Then
+            motivo = motivo & "APELLIDOS_NOMBRES vacio o muy corto; "
+        End If
+
+        Dim categoria As String
+        categoria = UCase(Trim(ws.Cells(i, col("CATEGORIA")).Text))
+        If Not EsCategoriaValida(categoria) Then
+            motivo = motivo & "CATEGORIA '" & categoria & "' no reconocida; "
+        End If
+
+        Dim sistemaPension As String
+        sistemaPension = UCase(Trim(ws.Cells(i, col("SISTEMA_PENSION")).Text))
+        If sistemaPension <> "AFP" And sistemaPension <> "ONP" Then
+            motivo = motivo & "SISTEMA_PENSION debe ser AFP u ONP; "
+        End If
+
+        If sistemaPension = "AFP" And col.Exists("AFP_NOMBRE") Then
+            If Trim(ws.Cells(i, col("AFP_NOMBRE")).Text) = "" Then
+                motivo = motivo & "AFP_NOMBRE es obligatorio cuando SISTEMA_PENSION = AFP; "
+            End If
+        End If
+
+        If Trim(ws.Cells(i, col("FECHA_INGRESO")).Text) = "" Then
+            motivo = motivo & "FECHA_INGRESO es obligatoria; "
+        End If
+
+        If categoria = "EMPLEADO" And col.Exists("SUELDO_BASE") Then
+            If Trim(ws.Cells(i, col("SUELDO_BASE")).Text) = "" Then
+                motivo = motivo & "SUELDO_BASE es obligatorio para la categoria EMPLEADO; "
+            End If
+        End If
+
+        Dim estado As String
+        estado = UCase(Trim(ws.Cells(i, col("ESTADO")).Text))
+        If estado = "CESADO" And col.Exists("FECHA_CESE") Then
+            If Trim(ws.Cells(i, col("FECHA_CESE")).Text) = "" Then
+                motivo = motivo & "FECHA_CESE es obligatoria cuando ESTADO = CESADO; "
+            End If
+        End If
+
+        If motivo <> "" Then
+            errores = errores & "Fila " & i & " (DNI " & dni & "): " & motivo & vbCrLf
+        Else
+            filasValidas = filasValidas + 1
+        End If
+SiguienteFila:
+    Next i
+
+    If errores <> "" Then
+        MsgBox "Se encontraron errores. Corrigelos antes de exportar:" & vbCrLf & vbCrLf & errores, _
+            vbCritical, "No se exporto: hay filas con datos obligatorios faltantes"
+        Exit Sub
+    End If
+
+    If filasValidas = 0 Then
+        MsgBox "No hay trabajadores para exportar (solo esta la fila de ejemplo o filas vacias).", vbExclamation
+        Exit Sub
+    End If
+
+    Dim nombreSugerido As String
+    nombreSugerido = "trabajadores_" & Format(Date, "yyyy-mm-dd") & ".csv"
+
+    Dim rutaDestino As Variant
+    rutaDestino = Application.GetSaveAsFilename( _
+        InitialFileName:=nombreSugerido, _
+        FileFilter:="Archivo CSV (*.csv), *.csv", _
+        Title:="Guardar CSV para subir al Sistema de Planillas")
+
+    If rutaDestino = False Then Exit Sub ' el usuario cancelo el cuadro de dialogo
+
+    GuardarComoCSV ws, ultimaFila, ultimaColumna, CStr(rutaDestino)
+
+    MsgBox "Listo. Se exportaron " & filasValidas & " trabajador(es) a:" & vbCrLf & rutaDestino & _
+        vbCrLf & vbCrLf & "Ya puedes subir ese archivo en Trabajadores > Importar masivo.", vbInformation
+End Sub
+
+Private Function EsDniValido(ByVal dni As String) As Boolean
+    Dim i As Integer
+    If Len(dni) < 8 Or Len(dni) > 15 Then
+        EsDniValido = False
+        Exit Function
+    End If
+    For i = 1 To Len(dni)
+        If Mid(dni, i, 1) < "0" Or Mid(dni, i, 1) > "9" Then
+            EsDniValido = False
+            Exit Function
+        End If
+    Next i
+    EsDniValido = True
+End Function
+
+Private Function EsCategoriaValida(ByVal categoria As String) As Boolean
+    Dim validas As Variant
+    validas = Array("OPERARIO", "OFICIAL", "PEON", "EMPLEADO", "EVENTUAL", _
+                     "OPERARIO_EP", "OPERARIO_EM", "OPERARIO_TP", "PEON_A", "R_GENERAL")
+    Dim v As Variant
+    For Each v In validas
+        If categoria = v Then
+            EsCategoriaValida = True
+            Exit Function
+        End If
+    Next v
+    EsCategoriaValida = False
+End Function
+
+Private Sub GuardarComoCSV(ByVal ws As Worksheet, ByVal ultimaFila As Long, ByVal ultimaColumna As Long, ByVal ruta As String)
+    ' Escribe el CSV a mano (columna por columna, fila por fila) en vez de
+    ' usar Workbook.SaveAs, para garantizar que el separador SIEMPRE sea una
+    ' coma, sin importar la configuracion regional de Windows - esa es la
+    ' causa de que la importacion fallara antes con "DNI vacio o invalido".
+    Dim stream As Object
+    Set stream = CreateObject("ADODB.Stream")
+    stream.Type = 2 ' texto
+    stream.Charset = "utf-8"
+    stream.Open
+
+    Dim fila As Long, columna As Long
+    Dim linea As String
+    Dim valor As String
+
+    For fila = 1 To ultimaFila
+        If fila > 1 Then
+            Dim dniFila As String
+            dniFila = Trim(ws.Cells(fila, 1).Text)
+            ' Saltar la fila de ejemplo (DNI 00000000) y filas vacias al exportar.
+            If dniFila = "00000000" Then GoTo SiguienteFilaExport
+            If dniFila = "" And Trim(ws.Cells(fila, 2).Text) = "" Then GoTo SiguienteFilaExport
+        End If
+
+        linea = ""
+        For columna = 1 To ultimaColumna
+            valor = ws.Cells(fila, columna).Text
+            valor = Replace(valor, """", """""")
+            If InStr(valor, ",") > 0 Or InStr(valor, """") > 0 Or InStr(valor, vbLf) > 0 Then
+                valor = """" & valor & """"
+            End If
+            If columna > 1 Then linea = linea & ","
+            linea = linea & valor
+        Next columna
+        stream.WriteText linea, 1 ' 1 = adWriteLine
+
+SiguienteFilaExport:
+    Next fila
+
+    stream.SaveToFile ruta, 2 ' 2 = adSaveCreateOverWrite
+    stream.Close
+End Sub
+`;
+
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 const CATEGORIAS_VALIDAS: CategoriaOcupacional[] = [
@@ -333,6 +567,53 @@ importacionRouter.get(
         fila.font = { bold: !!negrita, size: tamano ?? 11 };
       }
     }
+
+    // Hoja opcional con el codigo de una macro para quien quiera un boton
+    // que valide los datos obligatorios y exporte el CSV automaticamente
+    // (preguntando donde guardar y agregando la fecha al nombre del
+    // archivo). No se puede entregar ya funcionando: Node no compila
+    // macros VBA, asi que esta hoja trae el codigo listo para copiar y el
+    // paso a paso para instalarlo una sola vez (a partir de ahi, quien lo
+    // instale reutiliza SU PROPIA copia .xlsm con el boton, no hace falta
+    // volver a hacerlo en cada descarga).
+    const hojaMacro = workbook.addWorksheet("Macro (opcional)");
+    hojaMacro.getColumn(1).width = 115;
+    const pasosMacro = [
+      "BOTON OPCIONAL: VALIDAR Y EXPORTAR AUTOMATICAMENTE (una sola vez para instalarlo)",
+      "",
+      "Este boton valida los campos obligatorios de la hoja Trabajadores, y si todo esta bien te",
+      "pregunta donde guardar el archivo y arma el CSV el mismo (separado siempre por coma, sin",
+      "importar la configuracion regional de Windows), sugiriendo el nombre",
+      "\"trabajadores_AAAA-MM-DD.csv\" con la fecha del dia en que exportas, para llevar control de",
+      "las cargas masivas que vas haciendo.",
+      "",
+      "Como instalarlo (una sola vez):",
+      "1. Ficha Programador (si no la ves: Archivo > Opciones > Personalizar cinta > marca",
+      "   \"Programador\") > Visual Basic (o Alt+F11).",
+      "2. Clic derecho en \"VBAProject (este archivo)\" > Insertar > Modulo.",
+      "3. Copia TODO el codigo de la celda de mas abajo en esta misma hoja y pegalo en ese modulo",
+      "   nuevo.",
+      "4. Cierra el editor de VBA. En la ficha Programador > Insertar > elige el primer boton",
+      "   (Controles de formulario) y dibuja un boton en la hoja Trabajadores.",
+      "5. En el cuadro que aparece, elige la macro \"ValidarYExportarCSV\" > Aceptar. Puedes",
+      "   renombrar el boton, ej. \"Validar y exportar\".",
+      "6. Archivo > Guardar como > elige \"Libro de Excel habilitado para macros (*.xlsm)\" y",
+      "   guardalo donde quieras (ya no necesitas volver a descargar la plantilla del sistema:",
+      "   reutiliza este archivo .xlsm de aqui en adelante, es tu plantilla con boton).",
+      "7. La primera vez que lo abras, Excel puede mostrar una advertencia de seguridad de",
+      "   macros (\"Habilitar contenido\") - es normal, dale clic para poder usar el boton.",
+      "",
+      "El codigo completo esta en la celda de abajo (selecciona esa celda y copia con Ctrl+C).",
+    ];
+    pasosMacro.forEach((texto, i) => {
+      const fila = hojaMacro.addRow([texto]);
+      if (i === 0) fila.font = { bold: true, size: 13 };
+    });
+    hojaMacro.addRow([]);
+    const filaCodigo = hojaMacro.addRow([CODIGO_VBA_VALIDAR_EXPORTAR]);
+    filaCodigo.font = { name: "Consolas", size: 10 };
+    filaCodigo.alignment = { wrapText: true, vertical: "top" };
+    filaCodigo.height = 300;
 
     const hojaPrincipal = workbook.addWorksheet("Trabajadores");
     hojaPrincipal.columns = COLUMNAS.map((nombre) => ({ header: nombre, key: nombre, width: 20 }));
