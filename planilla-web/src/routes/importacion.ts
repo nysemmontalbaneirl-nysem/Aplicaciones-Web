@@ -95,6 +95,48 @@ interface FilaCSV {
   [columna: string]: string;
 }
 
+// Columnas que SIEMPRE son obligatorias, y columnas que lo son solo bajo
+// cierta condicion (ver las validaciones mas abajo, en el POST de
+// importar-masivo, que son la fuente de verdad real de estos requisitos).
+// Se usan para resaltar el encabezado en la plantilla descargable y para
+// mostrar la misma lista en la pantalla de Importar, sin duplicar a mano el
+// criterio en dos sitios que se puedan desincronizar con el tiempo.
+const COLUMNAS_OBLIGATORIAS: readonly string[] = [
+  "DNI",
+  "APELLIDOS_NOMBRES",
+  "CATEGORIA",
+  "SISTEMA_PENSION",
+  "FECHA_INGRESO",
+];
+const COLUMNAS_CONDICIONALES: Record<string, string> = {
+  AFP_NOMBRE: "Obligatorio solo si SISTEMA_PENSION = AFP",
+  SUELDO_BASE: "Obligatorio solo si CATEGORIA = EMPLEADO",
+  FECHA_CESE: "Obligatorio solo si ESTADO = CESADO y el trabajador ya tenia un contrato registrado (para cesarlo)",
+};
+
+// Excel exporta CSV separado por punto y coma en vez de coma cuando la
+// configuracion regional de Windows usa la coma como separador decimal
+// (comun en instalaciones en espanol/Peru) - incluso al elegir la opcion
+// "CSV UTF-8 (delimitado por comas)". Si no se detecta esto, csv-parse lee
+// cada fila entera como una sola columna y todas las validaciones (DNI,
+// APELLIDOS_NOMBRES, etc.) fallan por "vacio", con un mensaje que no deja
+// ver la causa real. Para evitar depender de la configuracion de Excel del
+// usuario, se detecta el separador real mirando solo el encabezado (linea
+// 1): si al partirlo por coma aparece la columna "DNI" tal cual, el archivo
+// viene separado por comas; si no, se asume punto y coma. Se usa el
+// encabezado (y no todo el archivo) porque es la unica linea de la que se
+// conoce el contenido exacto de antemano (COLUMNAS) - los datos libres
+// (direcciones, nombres) podrian traer comas propias y confundir una
+// deteccion automatica genérica.
+function detectarDelimitadorCSV(buffer: Buffer): "," | ";" {
+  const primeraLinea = buffer
+    .toString("utf-8")
+    .replace(/^\uFEFF/, "") // BOM UTF-8, si esta presente
+    .split(/\r?\n/, 1)[0];
+  const columnasConComa = (primeraLinea ?? "").split(",").map((c) => c.trim().toUpperCase());
+  return columnasConComa.includes("DNI") ? "," : ";";
+}
+
 interface ErrorFila {
   fila: number;
   dni: string;
@@ -262,10 +304,56 @@ importacionRouter.get(
   asyncHandler(async (_req: Request, res: Response) => {
     const workbook = new ExcelJS.Workbook();
 
+    // Hoja de instrucciones primero, para que sea lo primero que se ve al
+    // abrir el archivo (incluye el aviso del separador de Excel, la causa
+    // mas comun de que la importacion falle con "DNI vacio o invalido"
+    // aunque el DNI este bien escrito).
+    const hojaInstrucciones = workbook.addWorksheet("Instrucciones");
+    hojaInstrucciones.getColumn(1).width = 105;
+    const lineasInstrucciones: { texto: string; negrita?: boolean; tamano?: number }[] = [
+      { texto: "COMO USAR ESTA PLANTILLA", negrita: true, tamano: 13 },
+      { texto: "" },
+      { texto: "1. Completa la hoja \"Trabajadores\" (una fila por trabajador) y borra la fila de ejemplo resaltada en amarillo antes de importar." },
+      { texto: "2. Guarda el archivo eligiendo exactamente el formato \"CSV UTF-8 (delimitado por comas) (*.csv)\" al hacer Guardar como." },
+      { texto: "   Ojo: la opcion \"CSV (delimitado por comas)\", sin decir UTF-8, en Excel configurado en espanol/Peru en realidad separa las", negrita: false },
+      { texto: "   columnas con punto y coma (;) en vez de coma, aunque diga \"comas\" en el nombre. Si usas esa, la importacion falla." },
+      { texto: "3. Sube ese .csv en Trabajadores > Importar masivo." },
+      { texto: "" },
+      { texto: "CAMPOS SIEMPRE OBLIGATORIOS (resaltados en rojo en el encabezado de la hoja Trabajadores):", negrita: true },
+      ...COLUMNAS_OBLIGATORIAS.map((c) => ({ texto: `   - ${c}` })),
+      { texto: "" },
+      { texto: "CAMPOS OBLIGATORIOS SOLO EN ALGUNOS CASOS (resaltados en naranja):", negrita: true },
+      ...Object.entries(COLUMNAS_CONDICIONALES).map(([c, motivo]) => ({ texto: `   - ${c}: ${motivo}` })),
+      { texto: "" },
+      { texto: "El resto de columnas son opcionales: si se dejan vacias, el trabajador se crea igual y se completan despues editandolo uno por uno." },
+    ];
+    for (const { texto, negrita, tamano } of lineasInstrucciones) {
+      const fila = hojaInstrucciones.addRow([texto]);
+      if (negrita || tamano) {
+        fila.font = { bold: !!negrita, size: tamano ?? 11 };
+      }
+    }
+
     const hojaPrincipal = workbook.addWorksheet("Trabajadores");
     hojaPrincipal.columns = COLUMNAS.map((nombre) => ({ header: nombre, key: nombre, width: 20 }));
     hojaPrincipal.getRow(1).font = { bold: true };
     hojaPrincipal.getColumn("DNI").numFmt = "@"; // texto, para no perder ceros a la izquierda
+
+    // Resalta en el encabezado las columnas obligatorias (siempre u
+    // obligatorias-condicionales), con una nota emergente al pasar el mouse.
+    // Solo se cambia el formato/color de la celda, nunca el texto del
+    // encabezado, para que siga coincidiendo exactamente con COLUMNAS al
+    // convertir el archivo a CSV.
+    hojaPrincipal.getRow(1).eachCell((celda) => {
+      const nombreCol = String(celda.value ?? "");
+      if (COLUMNAS_OBLIGATORIAS.includes(nombreCol)) {
+        celda.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8CBAD" } };
+        celda.note = "Obligatorio";
+      } else if (nombreCol in COLUMNAS_CONDICIONALES) {
+        celda.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFCE4D6" } };
+        celda.note = `Obligatorio condicional: ${COLUMNAS_CONDICIONALES[nombreCol]}`;
+      }
+    });
 
     const filaEjemplo = hojaPrincipal.addRow(FILA_EJEMPLO);
     filaEjemplo.eachCell((celda) => {
@@ -307,6 +395,7 @@ importacionRouter.post("/importar-masivo", requierePermiso("importacion.masiva")
       skip_empty_lines: true,
       trim: true,
       bom: true,
+      delimiter: detectarDelimitadorCSV(req.file.buffer),
     });
   } catch (err) {
     return res.status(400).json({ error: `No se pudo leer el CSV: ${(err as Error).message}` });
@@ -585,5 +674,9 @@ importacionRouter.post("/importar-masivo", requierePermiso("importacion.masiva")
 
 // Referencia de columnas esperadas, para que el frontend pueda mostrar ayuda
 importacionRouter.get("/importar-masivo/plantilla", (_req: Request, res: Response) => {
-  res.json({ columnas: COLUMNAS });
+  res.json({
+    columnas: COLUMNAS,
+    obligatorias: COLUMNAS_OBLIGATORIAS,
+    condicionales: COLUMNAS_CONDICIONALES,
+  });
 });

@@ -24,6 +24,16 @@ const COLUMNAS_ESPERADAS = [
   "SINDICALIZADO", "POLIZA_SEGURO", "SCTR_SALUD", "ESSALUD_VIDA", "ESTADO",
 ];
 
+// Mismo criterio que valida el backend en POST /empleados/importar-masivo
+// (routes/importacion.ts) - se repite aqui para mostrarlo en esta pantalla
+// sin depender de una llamada adicional a la API.
+const COLUMNAS_OBLIGATORIAS = ["DNI", "APELLIDOS_NOMBRES", "CATEGORIA", "SISTEMA_PENSION", "FECHA_INGRESO"];
+const COLUMNAS_CONDICIONALES: { columna: string; motivo: string }[] = [
+  { columna: "AFP_NOMBRE", motivo: "solo si SISTEMA_PENSION = AFP" },
+  { columna: "SUELDO_BASE", motivo: "solo si CATEGORIA = EMPLEADO" },
+  { columna: "FECHA_CESE", motivo: "solo si ESTADO = CESADO y el trabajador ya tenía un contrato registrado (para cesarlo)" },
+];
+
 // Columnas nuevas de T-Registro (SUNAT): opcionales, van por el CODIGO del
 // catalogo (el mismo que se ve en los desplegables del alta individual),
 // no por el nombre/texto. Si no se incluyen, la fila se procesa igual que
@@ -95,10 +105,31 @@ export default function Importar() {
             Trae todas las columnas (incluidas las de T-Registro/SUNAT) listas para llenar, una
             <strong> fila de ejemplo resaltada</strong> con datos ficticios (DNI 00000000) que
             muestra el formato correcto de cada columna — <strong>bórrala antes de importar</strong>{" "}
-            — y una hoja de referencia por cada catálogo (código y nombre: banco, ubigeo, tipo de
-            contrato, EPS, etc.). Una vez llena, en Excel usa <strong>Archivo → Guardar como</strong>{" "}
-            y elige el formato <strong>CSV UTF-8 (delimitado por comas)</strong> antes de subirla
-            aquí — el sistema solo acepta CSV, no .xlsx.
+            — el encabezado de las columnas obligatorias resaltado en rojo/naranja (ver detalle
+            abajo), y una hoja de referencia por cada catálogo (código y nombre: banco, ubigeo,
+            tipo de contrato, EPS, etc.), además de una hoja "Instrucciones" con este mismo texto.
+          </p>
+          <p style={{ marginTop: 10, marginBottom: 0, fontSize: "0.82rem", color: "#8a1f11", background: "#fdecea", padding: "8px 10px", borderRadius: 6 }}>
+            <strong>Importante al guardar el CSV:</strong> en Excel usa <strong>Archivo → Guardar
+            como</strong> y elige exactamente <strong>"CSV UTF-8 (delimitado por comas) (*.csv)"</strong>.
+            La opción normal "CSV (delimitado por comas)" (sin decir UTF-8) en Excel configurado en
+            español/Perú en realidad separa las columnas con <strong>punto y coma (;)</strong>, no con
+            coma, aunque diga "comas" en el nombre — si subes un archivo así, la importación falla
+            con un error de "DNI vacío o inválido" aunque el DNI esté bien escrito, porque el
+            sistema no reconoce ninguna columna.
+          </p>
+          <p style={{ marginTop: 10, marginBottom: 0, fontSize: "0.82rem", color: "#5a6172" }}>
+            <strong>Columnas siempre obligatorias:</strong> {COLUMNAS_OBLIGATORIAS.join(", ")}.
+          </p>
+          <p style={{ marginTop: 4, marginBottom: 0, fontSize: "0.82rem", color: "#5a6172" }}>
+            <strong>Obligatorias solo en algunos casos:</strong>{" "}
+            {COLUMNAS_CONDICIONALES.map((c, idx) => (
+              <span key={c.columna}>
+                {idx > 0 && "; "}
+                <strong>{c.columna}</strong> ({c.motivo})
+              </span>
+            ))}
+            . El resto de columnas son opcionales.
           </p>
         </div>
 

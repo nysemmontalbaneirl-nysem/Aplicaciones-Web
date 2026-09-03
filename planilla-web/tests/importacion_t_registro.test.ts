@@ -228,6 +228,58 @@ describe("POST /api/empleados/importar-masivo - dar de baja (cese) por carga mas
   });
 });
 
+describe("POST /api/empleados/importar-masivo - separador de columnas", () => {
+  afterAll(async () => {
+    await pool.query(
+      "DELETE FROM contratos WHERE empleado_id IN (SELECT id FROM empleados WHERE numero_documento = '99990020')"
+    );
+    await pool.query("DELETE FROM empleados WHERE numero_documento = '99990020'");
+  });
+
+  it("acepta un CSV separado por punto y coma, como lo exporta Excel en español/Perú al elegir mal el formato", async () => {
+    // Mismo contenido que filaValida(), pero con ";" en vez de ",": este es
+    // el caso real que rompia la importacion (ver diagnostico con el
+    // usuario) - Excel en esa configuracion regional exporta CSV con ";"
+    // aunque se elija la opcion de "comas", y sin detectar el separador el
+    // sistema leia la fila entera como una sola columna y reportaba "DNI
+    // vacio o invalido" con un DNI que en realidad estaba bien escrito.
+    const encabezadoPuntoYComa = ENCABEZADO.replace(/,/g, ";");
+    const filaPuntoYComa = filaValida("99990020").replace(/,/g, ";");
+    const csv = `${encabezadoPuntoYComa}\n${filaPuntoYComa}\n`;
+
+    const r = await request(app)
+      .post("/api/empleados/importar-masivo")
+      .set(auth())
+      .attach("archivo", Buffer.from(csv, "utf-8"), "importar.csv");
+
+    expect(r.status).toBe(200);
+    expect(r.body.errores).toEqual([]);
+    expect(r.body.empleados_creados).toBe(1);
+    expect(r.body.contratos_creados).toBe(1);
+
+    const empleado = await pool.query("SELECT * FROM empleados WHERE numero_documento = '99990020'");
+    expect(empleado.rows[0].apellidos_nombres).toBe("PRUEBA IMPORTACION SUNAT");
+  });
+});
+
+describe("GET /api/empleados/importar-masivo/plantilla (metadatos JSON)", () => {
+  it("incluye las columnas obligatorias y las condicionales, para que el frontend las muestre", async () => {
+    const r = await request(app)
+      .get("/api/empleados/importar-masivo/plantilla")
+      .set(auth());
+
+    expect(r.status).toBe(200);
+    expect(r.body.columnas).toContain("DNI");
+    expect(r.body.obligatorias).toEqual(
+      expect.arrayContaining(["DNI", "APELLIDOS_NOMBRES", "CATEGORIA", "SISTEMA_PENSION", "FECHA_INGRESO"])
+    );
+    expect(r.body.condicionales).toMatchObject({
+      SUELDO_BASE: expect.stringContaining("EMPLEADO"),
+      AFP_NOMBRE: expect.stringContaining("AFP"),
+    });
+  });
+});
+
 describe("GET /api/empleados/importar-masivo/plantilla.xlsx", () => {
   it("descarga un Excel con la hoja Trabajadores y hojas de referencia de catalogos", async () => {
     const r = await request(app)
