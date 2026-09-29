@@ -406,3 +406,82 @@ de la función que guarda y cambia de trabajador dentro de ese formulario
 en este árbol). Los 309 tests existentes siguen pasando (este parche no
 trae tests propios - "Cambio 100% frontend" según su propio mensaje de
 commit).
+
+## 14. Parche #29/46 (`d8781540`, migración 041 "AFPnet Excel oficial" + migración 042 "Planilla Mensual: períodos incluidos, historial y aviso") — patrón de "éxito parcial de hunks" recurrente, sin brechas nuevas
+
+Archivo combinado tipo mbox con 7 sub-parches de `git format-patch`. A
+diferencia de los patches anteriores, aquí NO apareció ninguna
+funcionalidad genuinamente faltante (no hay nada nuevo que agregar a las
+brechas #1/#4/#5/#8 de arriba) — todo lo que trae este parche se pudo
+reconstruir completo. El trabajo fue enteramente de reconciliación manual
+por el mismo patrón de "éxito parcial de hunks" ya visto en parches
+anteriores, mucho más marcado aquí por tratarse de un archivo combinado
+(varios sub-parches tocando los mismos archivos en momentos distintos):
+
+- `src/afpnet.ts`: el sub-parche 2/7 ("Corregir mapeo de tipo de documento
+  ... bug de producción") esperaba que `construirCSVAFPnet` llamara a la
+  función ya extraída `calcularRemuneracionAfectaAfp(f)` (agregada por el
+  sub-parche 1/7), pero el hunk que hacía ese reemplazo falló por contexto;
+  se aplicó a mano.
+- `src/routes/planillaMensual.ts`: el sub-parche 1/7 crea la ruta
+  `GET /:id/exportar/afpnet-excel` completa, y el sub-parche 3/7 ("Nunca
+  entregar el Excel de AFPnet vacío en silencio") la modifica para agregar
+  el guard de 400 con `advertencias` ANTES de armar el workbook. Ambos
+  grupos de hunks fallidos quedaron acumulados en el mismo `.rej` (mismo
+  archivo, tocado por 2 sub-parches distintos) — se fusionaron a mano en
+  una sola versión final (la ruta ya nace con el guard de `advertencias`,
+  nunca existió una versión intermedia sin él en este árbol).
+- `frontend/src/components/PlanillaMensual.tsx`: el caso más marcado de
+  "éxito parcial" de todo el proceso de reconstrucción hasta ahora — 3
+  sub-parches distintos (1/7 botón de descarga del Excel oficial, 5/7
+  corrección del mensaje de error invisible, 7/7 UI de períodos
+  incluidos/historial) tocan el mismo archivo, y en los 3 casos el patch
+  tool aplicó la mitad "de adelante" (los usos/JSX que dependían de nuevo
+  estado) sin haber aplicado la mitad "de atrás" (la declaración de ese
+  mismo estado), dejando el árbol en un estado que no compila hasta
+  reconciliar a mano:
+  - El botón "Descargar AFPnet (Excel oficial)" y el tipo `"afpnet-excel"`
+    del estado `descargando`/la firma de `descargar()` NUNCA se habían
+    aplicado (0 de los hunks del sub-parche 1/7 para este archivo tuvo
+    éxito) — se agregaron completos a mano.
+  - El estado `errorDescarga` (con su comentario explicando el bug real de
+    UI de producción del 19/09/2026: el mensaje de error de una descarga
+    quedaba guardado en el mismo estado `error` de la tarjeta de arriba,
+    invisible si el usuario ya había bajado hasta los botones de
+    descarga) NUNCA se había declarado, pero el bloque JSX que lo
+    renderiza (`{errorDescarga && (...)}`) SÍ se había aplicado solo,
+    dejando una referencia a una variable inexistente. Se agregó la
+    declaración del estado y se cambiaron `setError`/`setError(null)` por
+    `setErrorDescarga`/`setErrorDescarga(null)` en `cargar()` y
+    `descargar()`, a mano.
+  - El estado/efectos de `historial`/`cargandoHistorial`/
+    `errorHistorial`/`mostrarHistorial` (migración 042) y la función
+    `cargarHistorial()` SÍ se habían aplicado solos, igual que el botón
+    "Ver historial de meses consolidados" y la tabla de
+    `periodosIncluidos`/`avisosPeriodosNoCalculados` — pero la tarjeta
+    `<div className="card"><h2>Historial de meses consolidados</h2>...`
+    que efectivamente RENDERIZA la lista de `historial` con sus columnas
+    (Período/Proyecto/Trabajadores/Última consolidación/Por/Ver) nunca se
+    había insertado, ni el array `MESES_CORTO` que usa, ni los imports de
+    los tipos `FilaHistorialConsolidacion`/`PeriodoIncluidoConsolidacion`
+    (que sí existían ya en `frontend/src/types.ts`, aplicados sin problema
+    por el sub-parche 1/7). Se agregaron los 3 a mano, en el mismo lugar
+    donde los traía el parche original (debajo de la tarjeta principal,
+    antes del bloque `{cargando && ...}}`), sin el bloque de
+    `faltantesAsiento` del parche original (esa parte de "Asiento
+    Contable" no existe en este árbol, ver brecha #5 — se omitió esa
+    condición, ya que aquí nunca hubo tal estado que envolver).
+  - El único ajuste real de contenido (no solo de mecánica de aplicación):
+    el botón "Descargar AFPnet (Excel oficial)" se colocó inmediatamente
+    después del botón CSV existente, sin el tercer botón "Asiento Contable"
+    que traía el parche original entre ellos (tampoco existe, brecha #5).
+- `tests/planilla_mensual_rutas.test.ts`: 1 hunk del sub-parche 3/7 (prueba
+  del 400 "ningún trabajador con AFP" del Excel oficial) quedó en el mismo
+  `.rej` que 2 hunks ya aplicados del sub-parche 7/7 — se insertó a mano,
+  sin cambios de contenido (el fixture de este archivo ya tenía exactamente
+  el escenario que la prueba necesita: el único trabajador de
+  `beforeAll` está en ONP, no AFP).
+
+Verificado: `tsc --noEmit` limpio (backend y frontend), 335/335 tests
+pasando (309 previos + `afpnet_excel.test.ts` + `actualizar_nombres_afpnet.test.ts`
++ 1 prueba nueva en `planilla_mensual_rutas.test.ts`).

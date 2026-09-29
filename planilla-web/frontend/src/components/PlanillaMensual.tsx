@@ -10,6 +10,8 @@ import { useAuth } from "../AuthContext";
 import {
   AvisoRecalculoPosteriorMensual,
   DetallePlanillaMensualFila,
+  FilaHistorialConsolidacion,
+  PeriodoIncluidoConsolidacion,
   PlanillaMensualConsolidada,
   Proyecto,
   ResultadoConsolidacion,
@@ -78,6 +80,10 @@ const MESES = [
   "Julio", "Agosto", "Setiembre", "Octubre", "Noviembre", "Diciembre",
 ];
 
+const MESES_CORTO = [
+  "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Set", "Oct", "Nov", "Dic",
+];
+
 function formato2(valor: number | string): string {
   return Number(valor).toLocaleString("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -114,13 +120,51 @@ export default function PlanillaMensual() {
 
   const [cargando, setCargando] = useState(false);
   const [consolidando, setConsolidando] = useState(false);
-  const [descargando, setDescargando] = useState<"rem" | "afpnet" | null>(null);
+  const [descargando, setDescargando] = useState<"rem" | "afpnet" | "afpnet-excel" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Bug real de UI detectado en produccion (19/09/2026): los errores de
+  // descarga (ej. el 400 "ningun trabajador con AFP" del Excel oficial de
+  // AFPnet) se guardaban en el mismo estado "error" que usa la tarjeta de
+  // arriba (Consolidar mes) - como esa tarjeta queda fuera de vista cuando
+  // el usuario ya bajo hasta la tabla para presionar un boton de descarga,
+  // el mensaje SI aparecia, pero arriba del todo, invisible sin volver a
+  // subir. El usuario reporto "no sale ningun mensaje" varias veces con
+  // este sintoma exacto. Se separa en su propio estado para mostrarlo justo
+  // debajo de los botones de descarga, donde el usuario ya esta mirando.
+  const [errorDescarga, setErrorDescarga] = useState<string | null>(null);
 
   const [consolidado, setConsolidado] = useState<PlanillaMensualConsolidada | null>(null);
   const [noConsolidado, setNoConsolidado] = useState(false);
   const [avisos, setAvisos] = useState<AvisoRecalculoPosteriorMensual[]>([]);
   const [erroresConsolidacion, setErroresConsolidacion] = useState<ResultadoConsolidacion["errores"]>([]);
+
+  // Migracion 042 (21/09/2026): el usuario reporto no tener forma de ver que
+  // periodos exactos entraron en cada consolidacion (para verificar, ej.,
+  // que una quincena que cruza de mes SI se repartio entre agosto y
+  // setiembre), ni un historial de que meses/proyectos ya se consolidaron,
+  // ni un aviso cuando algun periodo incluido todavia no habia pasado por
+  // "Calcular". Los 2 primeros ya se calculaban en el backend pero se
+  // descartaban sin mostrarse en pantalla; el tercero es nuevo.
+  const [periodosIncluidos, setPeriodosIncluidos] = useState<PeriodoIncluidoConsolidacion[]>([]);
+  const [avisosPeriodosNoCalculados, setAvisosPeriodosNoCalculados] = useState<
+    ResultadoConsolidacion["avisos_periodos_no_calculados"]
+  >([]);
+  const [historial, setHistorial] = useState<FilaHistorialConsolidacion[]>([]);
+  const [cargandoHistorial, setCargandoHistorial] = useState(false);
+  const [errorHistorial, setErrorHistorial] = useState<string | null>(null);
+  const [mostrarHistorial, setMostrarHistorial] = useState(false);
+
+  async function cargarHistorial() {
+    setCargandoHistorial(true);
+    setErrorHistorial(null);
+    try {
+      setHistorial(await apiGet<FilaHistorialConsolidacion[]>("/planilla-mensual/historial"));
+    } catch (e) {
+      setErrorHistorial((e as Error).message);
+    } finally {
+      setCargandoHistorial(false);
+    }
+  }
 
   // Un usuario no-ADMIN solo puede elegir entre los proyectos que tiene
   // asignados (mismo criterio que Periodos.tsx).
@@ -149,6 +193,7 @@ export default function PlanillaMensual() {
   async function cargar() {
     setCargando(true);
     setError(null);
+    setErrorDescarga(null);
     setNoConsolidado(false);
     try {
       const datos = await apiGet<PlanillaMensualConsolidada>(
@@ -172,11 +217,16 @@ export default function PlanillaMensual() {
     setError(null);
     setAvisos([]);
     setErroresConsolidacion([]);
+    setPeriodosIncluidos([]);
+    setAvisosPeriodosNoCalculados([]);
     try {
       const r = await apiPost<ResultadoConsolidacion>("/planilla-mensual/consolidar", { proyecto, anio, mes });
       setAvisos(r.avisos_recalculo_posterior);
       setErroresConsolidacion(r.errores);
-      await cargar();
+      await cargar(); // limpia periodosIncluidos/avisosPeriodosNoCalculados del mes anterior antes de fijar los nuevos
+      setPeriodosIncluidos(r.periodos_incluidos);
+      setAvisosPeriodosNoCalculados(r.avisos_periodos_no_calculados);
+      if (mostrarHistorial) await cargarHistorial();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -184,14 +234,14 @@ export default function PlanillaMensual() {
     }
   }
 
-  async function descargar(tipoArchivo: "rem" | "afpnet", ruta: string, nombreArchivo: string) {
+  async function descargar(tipoArchivo: "rem" | "afpnet" | "afpnet-excel", ruta: string, nombreArchivo: string) {
     if (!consolidado) return;
-    setError(null);
+    setErrorDescarga(null);
     setDescargando(tipoArchivo);
     try {
       await apiDescargarArchivo(`/planilla-mensual/${consolidado.planillaMensual.id}${ruta}`, nombreArchivo);
     } catch (e) {
-      setError((e as Error).message);
+      setErrorDescarga((e as Error).message);
     } finally {
       setDescargando(null);
     }
@@ -242,7 +292,65 @@ export default function PlanillaMensual() {
 
         <button className="primario" type="button" onClick={consolidar} disabled={!proyecto || consolidando}>
           {consolidando ? "Consolidando..." : consolidado ? "Volver a consolidar este mes" : "Consolidar mes"}
+        </button>{" "}
+        <button
+          type="button"
+          onClick={() => {
+            const abrir = !mostrarHistorial;
+            setMostrarHistorial(abrir);
+            if (abrir && historial.length === 0) void cargarHistorial();
+          }}
+        >
+          {mostrarHistorial ? "Ocultar historial de meses consolidados" : "Ver historial de meses consolidados"}
         </button>
+
+        {periodosIncluidos.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <p style={{ marginBottom: 4, fontSize: "0.85rem", color: "#5a6172" }}>
+              <strong>Periodos que se tomaron en cuenta en esta consolidacion</strong> (se busca cualquier periodo de
+              este proyecto cuyas fechas toquen el mes, aunque su etiqueta sea de otro mes - ej. una quincena que
+              cruza de agosto a setiembre aporta sus dias de setiembre a la consolidacion de setiembre):
+            </p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Tipo</th>
+                  <th>Quincena</th>
+                  <th>Desde</th>
+                  <th>Hasta</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {periodosIncluidos.map((p) => (
+                  <tr key={p.id}>
+                    <td>{p.tipo}</td>
+                    <td>{p.quincena ?? "-"}</td>
+                    <td>{p.fecha_inicio}</td>
+                    <td>{p.fecha_fin}</td>
+                    <td>{p.estado}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {avisosPeriodosNoCalculados.length > 0 && (
+          <div className="mensaje-advertencia" style={{ marginTop: 12 }}>
+            {avisosPeriodosNoCalculados.length} periodo(s) incluidos en esta consolidacion todavia NO han pasado por
+            "Calcular" en la pantalla Periodos (su Tareo Diario podria estar incompleto todavia):
+            <ul>
+              {avisosPeriodosNoCalculados.map((p) => (
+                <li key={p.id}>
+                  {p.tipo} {p.quincena ? `(quincena ${p.quincena})` : ""} — {p.fecha_inicio} al {p.fecha_fin}
+                </li>
+              ))}
+            </ul>
+            Esta consolidacion igual se calculo a partir del Tareo Diario ya cargado en esos periodos - revisa que
+            este completo antes de descargar los archivos oficiales.
+          </div>
+        )}
 
         {erroresConsolidacion.length > 0 && (
           <div className="mensaje-error" style={{ marginTop: 12 }}>
@@ -265,6 +373,56 @@ export default function PlanillaMensual() {
           </div>
         )}
       </div>
+
+      {mostrarHistorial && (
+        <div className="card">
+          <h2>Historial de meses consolidados</h2>
+          {errorHistorial && <div className="mensaje-error">{errorHistorial}</div>}
+          {cargandoHistorial ? (
+            <p>Cargando...</p>
+          ) : historial.length === 0 ? (
+            <p style={{ color: "#5a6172" }}>Todavia no se ha consolidado ningun mes.</p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Periodo</th>
+                  <th>Proyecto</th>
+                  <th>Trabajadores</th>
+                  <th>Ultima consolidacion</th>
+                  <th>Por</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {historial.map((h) => (
+                  <tr key={h.id}>
+                    <td>
+                      {MESES_CORTO[h.mes - 1]} {h.anio}
+                    </td>
+                    <td>{h.proyecto}</td>
+                    <td>{h.trabajadores_consolidados}</td>
+                    <td>{new Date(h.calculado_en).toLocaleString("es-PE")}</td>
+                    <td>{h.calculado_por_nombre ?? "-"}</td>
+                    <td>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProyecto(h.proyecto);
+                          setAnio(h.anio);
+                          setMes(h.mes);
+                        }}
+                      >
+                        Ver
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
 
       {cargando && <div className="card">Cargando...</div>}
 
@@ -299,7 +457,35 @@ export default function PlanillaMensual() {
             >
               {descargando === "afpnet" ? "Generando..." : "Descargar AFPnet (CSV)"}
             </button>
+            <button
+              type="button"
+              disabled={descargando === "afpnet-excel"}
+              onClick={() =>
+                descargar("afpnet-excel", "/exportar/afpnet-excel", `AFPnet_Oficial_${nroDoc}_${proyecto}.xlsx`)
+              }
+            >
+              {descargando === "afpnet-excel" ? "Generando..." : "Descargar AFPnet (Excel oficial)"}
+            </button>
           </div>
+
+          {errorDescarga && (
+            <div className="mensaje-error" style={{ marginBottom: 16 }}>
+              {errorDescarga}
+            </div>
+          )}
+
+          {consolidado.avisos_datos_afpnet.length > 0 && (
+            <div className="mensaje-advertencia" style={{ marginBottom: 16 }}>
+              El archivo oficial de AFPnet (Excel) tiene {consolidado.avisos_datos_afpnet.length} advertencia
+              {consolidado.avisos_datos_afpnet.length === 1 ? "" : "s"} - no impide la descarga, pero conviene
+              revisarlas:
+              <ul>
+                {consolidado.avisos_datos_afpnet.map((a, i) => (
+                  <li key={i}>{a}</li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {(() => {
             const personalizadosIngreso = conceptosPersonalizadosPorTipo(consolidado.detalle, "INGRESO");

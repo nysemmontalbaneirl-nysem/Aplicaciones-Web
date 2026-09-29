@@ -11,7 +11,7 @@
 
 import { pool } from "./db";
 
-interface FilaAFPnet {
+export interface FilaAFPnet {
   numero_documento: string;
   apellidos_nombres: string;
   cuspp: string | null;
@@ -39,6 +39,26 @@ interface FilaAFPnet {
 
 function num(valor: string | number | undefined): number {
   return Number(valor) || 0;
+}
+
+/**
+ * Base imponible ("remuneracion afecta") sobre la que se calculan los
+ * aportes de AFP - se usa tanto para el CSV simplificado (mas abajo) como
+ * para el archivo Excel OFICIAL de AFPnet (ver afpnetExcel.ts, columna
+ * "Remuneracion asegurable"), confirmado explicitamente con el usuario que
+ * debe ser la misma formula en ambos.
+ */
+export function calcularRemuneracionAfectaAfp(f: FilaAFPnet): number {
+  return (
+    num(f.sueldo_basico) +
+    num(f.remuneracion_dominical) +
+    num(f.remuneracion_dominical_proporcional) +
+    num(f.remuneracion_feriado) +
+    num(f.sobretasa_dominical) +
+    num(f.sobretasa_feriado) +
+    num(f.bonificacion_buc) +
+    num(f.asignacion_familiar)
+  );
 }
 
 function csvEscape(valor: string | number): string {
@@ -79,10 +99,7 @@ function construirCSVAFPnet(filas: FilaAFPnet[]): string {
   ].join(",");
 
   const filasCsv = filas.map((f) => {
-    const remuneracionAfecta =
-      num(f.sueldo_basico) + num(f.remuneracion_dominical) + num(f.remuneracion_dominical_proporcional) +
-      num(f.remuneracion_feriado) + num(f.sobretasa_dominical) + num(f.sobretasa_feriado) +
-      num(f.bonificacion_buc) + num(f.asignacion_familiar);
+    const remuneracionAfecta = calcularRemuneracionAfectaAfp(f);
     const d = f.detalle_json?.aporte_pension_detalle;
     const total = (d?.aporteObligatorio ?? 0) + (d?.comisionFlujo ?? 0) + (d?.primaSeguro ?? 0);
 

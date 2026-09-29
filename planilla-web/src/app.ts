@@ -52,7 +52,14 @@ app.use(cors({ origin: origenesPermitidos }));
 app.use(express.json({ limit: "10mb" }));
 
 app.get("/api/salud", (_req: Request, res: Response) => {
-  res.json({ estado: "ok" });
+  // "version" es un marcador de texto libre, sin ningun significado tecnico
+  // mas alla de identificar que build esta corriendo en produccion - se
+  // actualiza a mano en cada entrega que necesite confirmarse asi (ver
+  // migracion 041 / archivo oficial de AFPnet, sept. 2026: sirvio para
+  // confirmar por que 3 entregas seguidas parecian no aplicarse). No
+  // requiere sesion (publico), asi que se puede visitar directo en el
+  // navegador o revisar con una peticion simple, sin necesitar el token.
+  res.json({ estado: "ok", version: "afpnet-excel-guard-2026-09-19c" });
 });
 
 // Sirve el frontend ya compilado (frontend/dist) cuando vive junto al

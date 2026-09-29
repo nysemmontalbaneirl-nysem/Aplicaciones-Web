@@ -163,8 +163,34 @@ export interface ResultadoConsolidacion {
   anio: number;
   mes: number;
   trabajadores_consolidados: number;
-  periodos_incluidos: { id: number; tipo: string; quincena: number | null; fecha_inicio: string; fecha_fin: string }[];
+  periodos_incluidos: {
+    id: number;
+    tipo: string;
+    quincena: number | null;
+    fecha_inicio: string;
+    fecha_fin: string;
+    estado: string;
+  }[];
   avisos_recalculo_posterior: AvisoRecalculoPosteriorMensual[];
+  // Migracion 042 (21/09/2026): el usuario reporto que no habia forma de
+  // saber, al consolidar un mes, si alguno de los periodos que lo componen
+  // todavia no tenia su planilla calculada (boton "Calcular" de Periodos) -
+  // sin este aviso, un periodo cuyo Tareo Diario esta a medio llenar
+  // (porque el usuario todavia no termino de cargarlo/revisarlo) se
+  // consolidaba en silencio igual, sin ninguna señal de que sus datos
+  // podrian estar incompletos. No bloquea la consolidacion (el calculo
+  // real de este mecanismo siempre parte del Tareo Diario, nunca de
+  // detalle_planilla - un periodo sin calcular igual aporta datos validos
+  // si su Tareo ya esta completo) - mismo criterio de "avisar, no
+  // bloquear" que el resto del sistema (avisos_recalculo_posterior,
+  // avisos_regimen, etc.).
+  avisos_periodos_no_calculados: {
+    id: number;
+    tipo: string;
+    quincena: number | null;
+    fecha_inicio: string;
+    fecha_fin: string;
+  }[];
   errores: { contrato_id: number; dni: string; nombre: string; motivo: string }[];
 }
 
@@ -197,6 +223,20 @@ export async function consolidarPlanillaMensual(
     );
   }
   const periodoIds = periodos.map((p) => p.id);
+
+  // Aviso (no bloquea, ver comentario de avisos_periodos_no_calculados en
+  // ResultadoConsolidacion): periodos incluidos en este mes que todavia no
+  // pasaron por "Calcular" (estado ABIERTO) - su Tareo Diario podria estar
+  // a medio llenar todavia.
+  const avisosPeriodosNoCalculados = periodos
+    .filter((p) => p.estado !== "CALCULADO")
+    .map((p) => ({
+      id: p.id,
+      tipo: p.tipo,
+      quincena: p.quincena,
+      fecha_inicio: fechaISO(p.fecha_inicio),
+      fecha_fin: fechaISO(p.fecha_fin),
+    }));
 
   // Aviso (no bloquea): alguna quincena usada aqui se volvio a calcular
   // DESPUES de la ultima vez que se consolido este mismo mes.
@@ -419,8 +459,10 @@ export async function consolidarPlanillaMensual(
         quincena: p.quincena,
         fecha_inicio: fechaISO(p.fecha_inicio),
         fecha_fin: fechaISO(p.fecha_fin),
+        estado: p.estado,
       })),
       avisos_recalculo_posterior: avisosRecalculoPosterior,
+      avisos_periodos_no_calculados: avisosPeriodosNoCalculados,
       errores,
     };
   } catch (e) {
@@ -462,4 +504,39 @@ export async function obtenerPlanillaMensual(proyecto: string, anio: number, mes
 export async function obtenerPlanillaMensualPorId(id: number) {
   const r = await pool.query("SELECT * FROM planilla_mensual WHERE id = $1", [id]);
   return r.rows[0] ?? null;
+}
+
+export interface FilaHistorialConsolidacion {
+  id: number;
+  proyecto: string;
+  anio: number;
+  mes: number;
+  calculado_en: string;
+  calculado_por_nombre: string | null;
+  trabajadores_consolidados: number;
+}
+
+// Migracion 042 (21/09/2026): el usuario reporto que no habia forma de ver,
+// de un vistazo, que meses/proyectos ya se consolidaron - tenia que ir
+// probando proyecto por proyecto y mes por mes en el selector de arriba
+// para averiguarlo. proyectosPermitidos=null significa "todos" (ADMIN);
+// para el resto de roles se filtra por los proyectos que ya tiene
+// asignados (mismo criterio que tieneAccesoProyecto).
+export async function listarHistorialConsolidaciones(
+  proyectosPermitidos: string[] | null
+): Promise<FilaHistorialConsolidacion[]> {
+  const condicionProyecto = proyectosPermitidos ? "WHERE pm.proyecto = ANY($1::text[])" : "";
+  const parametros = proyectosPermitidos ? [proyectosPermitidos] : [];
+  const r = await pool.query(
+    `SELECT pm.id, pm.proyecto, pm.anio, pm.mes, pm.calculado_en, u.nombre AS calculado_por_nombre,
+            COUNT(dpm.id)::int AS trabajadores_consolidados
+     FROM planilla_mensual pm
+     LEFT JOIN usuarios u ON u.id = pm.calculado_por
+     LEFT JOIN detalle_planilla_mensual dpm ON dpm.planilla_mensual_id = pm.id
+     ${condicionProyecto}
+     GROUP BY pm.id, u.nombre
+     ORDER BY pm.anio DESC, pm.mes DESC, pm.proyecto`,
+    parametros
+  );
+  return r.rows as FilaHistorialConsolidacion[];
 }

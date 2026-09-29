@@ -69,6 +69,12 @@ const estadoVacio = {
   tipo_documento: "01",
   numero_documento: "",
   apellidos_nombres: "",
+  // Migracion 041: opcionales, solo para el archivo oficial de AFPnet (exige
+  // estas 3 columnas separadas) - no reemplazan "apellidos_nombres", que
+  // sigue siendo el campo que se usa en el resto del sistema.
+  apellido_paterno: "",
+  apellido_materno: "",
+  nombres: "",
   fecha_nacimiento: "",
   sexo: "",
   estado_civil: "",
@@ -319,6 +325,9 @@ export default function Trabajadores() {
         tipo_documento: empleado.tipo_documento ?? "01",
         numero_documento: empleado.numero_documento,
         apellidos_nombres: empleado.apellidos_nombres,
+        apellido_paterno: empleado.apellido_paterno ?? "",
+        apellido_materno: empleado.apellido_materno ?? "",
+        nombres: empleado.nombres ?? "",
         fecha_nacimiento: empleado.fecha_nacimiento?.slice(0, 10) ?? "",
         sexo: empleado.sexo ?? "",
         estado_civil: empleado.estado_civil ?? "",
@@ -475,6 +484,9 @@ export default function Trabajadores() {
         tipo_documento: empleado.tipo_documento ?? "01",
         numero_documento: empleado.numero_documento,
         apellidos_nombres: empleado.apellidos_nombres,
+        apellido_paterno: empleado.apellido_paterno ?? "",
+        apellido_materno: empleado.apellido_materno ?? "",
+        nombres: empleado.nombres ?? "",
         fecha_nacimiento: empleado.fecha_nacimiento?.slice(0, 10) ?? "",
         sexo: empleado.sexo ?? "",
         estado_civil: empleado.estado_civil ?? "",
@@ -606,6 +618,9 @@ export default function Trabajadores() {
       const datosEmpleado = {
         tipo_documento: form.tipo_documento,
         apellidos_nombres: form.apellidos_nombres,
+        apellido_paterno: form.apellido_paterno || null,
+        apellido_materno: form.apellido_materno || null,
+        nombres: form.nombres || null,
         fecha_nacimiento: form.fecha_nacimiento || null,
         sexo: form.sexo || null,
         estado_civil: form.estado_civil || null,
@@ -750,6 +765,27 @@ export default function Trabajadores() {
                 value={form.apellidos_nombres}
                 onChange={(e) => actualizarCampo("apellidos_nombres", e.target.value)}
               />
+            </label>
+            {/* Migracion 041: opcionales - solo se usan para armar el archivo
+                oficial de AFPnet (exige estas 3 columnas por separado). No
+                reemplazan "Apellidos y nombres" de arriba. */}
+            <label>
+              Apellido paterno (para AFPnet)
+              <input
+                value={form.apellido_paterno}
+                onChange={(e) => actualizarCampo("apellido_paterno", e.target.value)}
+              />
+            </label>
+            <label>
+              Apellido materno (para AFPnet)
+              <input
+                value={form.apellido_materno}
+                onChange={(e) => actualizarCampo("apellido_materno", e.target.value)}
+              />
+            </label>
+            <label>
+              Nombres (para AFPnet)
+              <input value={form.nombres} onChange={(e) => actualizarCampo("nombres", e.target.value)} />
             </label>
             <label>
               Sexo

@@ -88,6 +88,13 @@ export interface Empleado {
   firma_mime?: string | null;
   firma_nombre?: string | null;
   tiene_firma?: boolean;
+  // Migracion 041: apellido paterno/materno/nombres por separado - solo se
+  // usan para el archivo oficial de AFPnet (exige estas 3 columnas
+  // separadas). Opcionales y no retroactivos; "apellidos_nombres" sigue
+  // siendo el campo que se usa en el resto del sistema.
+  apellido_paterno?: string | null;
+  apellido_materno?: string | null;
+  nombres?: string | null;
 }
 
 export interface Contrato {
@@ -498,6 +505,10 @@ export interface DetallePlanillaMensualFila {
 export interface PlanillaMensualConsolidada {
   planillaMensual: PlanillaMensualCabecera;
   detalle: DetallePlanillaMensualFila[];
+  // Migracion 041: advertencias del archivo oficial de AFPnet (apellidos
+  // referenciales incompletos en Trabajadores, o tipo de documento sin
+  // mapeo confirmado a AFPnet) - no bloquean la descarga, ver afpnetExcel.ts.
+  avisos_datos_afpnet: string[];
 }
 
 export interface AvisoRecalculoPosteriorMensual {
@@ -509,15 +520,38 @@ export interface AvisoRecalculoPosteriorMensual {
   calculado_en: string;
 }
 
+export interface PeriodoIncluidoConsolidacion {
+  id: number;
+  tipo: string;
+  quincena: number | null;
+  fecha_inicio: string;
+  fecha_fin: string;
+  estado: string;
+}
+
 export interface ResultadoConsolidacion {
   planilla_mensual_id: number;
   proyecto: string;
   anio: number;
   mes: number;
   trabajadores_consolidados: number;
-  periodos_incluidos: { id: number; tipo: string; quincena: number | null; fecha_inicio: string; fecha_fin: string }[];
+  periodos_incluidos: PeriodoIncluidoConsolidacion[];
   avisos_recalculo_posterior: AvisoRecalculoPosteriorMensual[];
+  avisos_periodos_no_calculados: Omit<PeriodoIncluidoConsolidacion, "estado">[];
   errores: { contrato_id: number; dni: string; nombre: string; motivo: string }[];
+}
+
+// Migracion 042: una fila del historial de meses ya consolidados (GET
+// /planilla-mensual/historial), para no tener que ir probando proyecto por
+// proyecto y mes por mes en el selector de arriba.
+export interface FilaHistorialConsolidacion {
+  id: number;
+  proyecto: string;
+  anio: number;
+  mes: number;
+  calculado_en: string;
+  calculado_por_nombre: string | null;
+  trabajadores_consolidados: number;
 }
 
 export interface Proyecto {

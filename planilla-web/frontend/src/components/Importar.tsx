@@ -16,6 +16,13 @@ interface ResultadoImportacion {
   errores: ErrorFila[];
 }
 
+// Migracion 042 (21/09/2026): resultado de la actualizacion masiva de
+// apellido paterno/materno/nombres (ver POST /empleados/actualizar-nombres-afpnet).
+interface ResultadoActualizarNombres {
+  actualizados: number;
+  errores: ErrorFila[];
+}
+
 const COLUMNAS_ESPERADAS = [
   "DNI", "APELLIDOS_NOMBRES", "FECHA_NACIMIENTO", "GRADO_INSTRUCCION", "NUMERO_HIJOS",
   "CELULAR", "CORREO", "DIRECCION", "UBIGEO", "ENTIDAD_BANCARIA", "CUENTA_BANCARIA",
@@ -47,6 +54,9 @@ const COLUMNAS_SUNAT_OPCIONALES = [
   "TIPO_CONTRATO_CODIGO", "TIPO_PAGO_CODIGO", "PERIODICIDAD_CODIGO",
   "SITUACION_ESPECIAL_CODIGO", "JORNADA_LABORAL", "REGIMEN_SALUD_CODIGO", "EPS_CODIGO",
   "MOTIVO_BAJA_CODIGO",
+  // Migracion 041: opcionales, solo para el archivo oficial de AFPnet (exige
+  // apellido paterno/materno/nombres en columnas separadas).
+  "APELLIDO_PATERNO", "APELLIDO_MATERNO", "NOMBRES",
 ];
 
 export default function Importar() {
@@ -54,6 +64,15 @@ export default function Importar() {
   const [subiendo, setSubiendo] = useState(false);
   const [resultado, setResultado] = useState<ResultadoImportacion | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Migracion 042: estado propio de la tarjeta "Actualizar apellidos/nombres
+  // (AFPnet)" - separado a proposito del de arriba (misma razon que ya se
+  // corrigio en Planilla Mensual: mezclar el error de una tarjeta con el de
+  // otra hace que el mensaje aparezca lejos de donde el usuario esta mirando).
+  const [archivoNombres, setArchivoNombres] = useState<File | null>(null);
+  const [subiendoNombres, setSubiendoNombres] = useState(false);
+  const [resultadoNombres, setResultadoNombres] = useState<ResultadoActualizarNombres | null>(null);
+  const [errorNombres, setErrorNombres] = useState<string | null>(null);
 
   async function subirArchivo(e: React.FormEvent) {
     e.preventDefault();
@@ -70,6 +89,24 @@ export default function Importar() {
       setError((e as Error).message);
     } finally {
       setSubiendo(false);
+    }
+  }
+
+  async function subirArchivoNombres(e: React.FormEvent) {
+    e.preventDefault();
+    if (!archivoNombres) return;
+    setErrorNombres(null);
+    setResultadoNombres(null);
+    setSubiendoNombres(true);
+    try {
+      const formData = new FormData();
+      formData.append("archivo", archivoNombres);
+      const cuerpo = await apiPostArchivo<ResultadoActualizarNombres>("/empleados/actualizar-nombres-afpnet", formData);
+      setResultadoNombres(cuerpo);
+    } catch (e) {
+      setErrorNombres((e as Error).message);
+    } finally {
+      setSubiendoNombres(false);
     }
   }
 
@@ -169,6 +206,84 @@ export default function Importar() {
             {COLUMNAS_SUNAT_OPCIONALES.join(", ")}
           </div>
         </details>
+      </div>
+
+      <div className="card">
+        <h2>Actualizar apellidos/nombres (AFPnet)</h2>
+        <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
+          Distinta de la importación de arriba: esta <strong>no crea trabajadores nuevos ni cambia
+          ningún otro dato</strong> (proyecto, categoría, sueldo, etc.). Sirve solo para completar el
+          apellido paterno, apellido materno y nombres de trabajadores <strong>que ya existen</strong>{" "}
+          en el sistema — el dato que exige el archivo oficial de AFPnet (Excel). Sube el archivo{" "}
+          <strong>.xlsx tal cual, sin convertir a CSV</strong>.
+        </p>
+        <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
+          Una celda que dejes en blanco <strong>nunca borra</strong> un dato ya cargado — solo se
+          actualiza lo que efectivamente llenes en cada fila.
+        </p>
+
+        <div style={{ margin: "12px 0" }}>
+          <a
+            href={conToken(`${BASE_URL}/empleados/actualizar-nombres-afpnet/plantilla.xlsx`)}
+            className="primario"
+            style={{ display: "inline-block", textDecoration: "none" }}
+          >
+            Descargar plantilla (ya trae a los trabajadores con datos faltantes)
+          </a>
+          <p style={{ marginTop: 8, marginBottom: 0, fontSize: "0.82rem", color: "#5a6172" }}>
+            La plantilla ya viene precargada con el DNI y el nombre actual de cada trabajador al que
+            hoy le falta alguno de estos 3 campos, para que no tengas que buscarlos a mano. Si
+            necesitas corregir a alguien que no aparece ahí, agrega una fila nueva con su DNI.
+          </p>
+        </div>
+
+        {errorNombres && <div className="mensaje-error">{errorNombres}</div>}
+
+        <form onSubmit={subirArchivoNombres}>
+          <input
+            type="file"
+            accept=".xlsx"
+            onChange={(e) => setArchivoNombres(e.target.files?.[0] ?? null)}
+          />
+          <div style={{ marginTop: 12 }}>
+            <button className="primario" type="submit" disabled={!archivoNombres || subiendoNombres}>
+              {subiendoNombres ? "Actualizando..." : "Actualizar"}
+            </button>
+          </div>
+        </form>
+
+        {resultadoNombres && (
+          <div style={{ marginTop: 16 }}>
+            <div className="mensaje-ok">
+              {resultadoNombres.actualizados} trabajador
+              {resultadoNombres.actualizados === 1 ? "" : "es"} actualizado
+              {resultadoNombres.actualizados === 1 ? "" : "s"}.
+            </div>
+            {resultadoNombres.errores.length > 0 && (
+              <>
+                <h3>Filas con error ({resultadoNombres.errores.length})</h3>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Fila</th>
+                      <th>DNI</th>
+                      <th>Motivo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resultadoNombres.errores.map((e, idx) => (
+                      <tr key={idx}>
+                        <td>{e.fila}</td>
+                        <td>{e.dni}</td>
+                        <td>{e.motivo}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {resultado && (

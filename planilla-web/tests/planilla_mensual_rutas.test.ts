@@ -138,11 +138,47 @@ describe("POST /api/planilla-mensual/consolidar", () => {
     expect(r.body.errores).toEqual([]);
     expect(r.body.trabajadores_consolidados).toBe(1);
     planillaMensualId = r.body.planilla_mensual_id;
+
+    // Migracion 042: el periodo del fixture (beforeAll) queda en estado
+    // ABIERTO (nunca se le presiona "Calcular") - debe aparecer listado en
+    // periodos_incluidos Y generar el aviso de "periodo no calculado
+    // todavia", sin que eso bloquee la consolidacion.
+    expect(r.body.periodos_incluidos).toHaveLength(1);
+    expect(r.body.periodos_incluidos[0].estado).toBe("ABIERTO");
+    expect(r.body.avisos_periodos_no_calculados).toHaveLength(1);
+    expect(r.body.avisos_periodos_no_calculados[0].fecha_inicio).toBe("2026-10-01");
   });
 
   it("falta proyecto/anio/mes -> 400", async () => {
     const r = await request(app).post("/api/planilla-mensual/consolidar").set(auth(tokenAdmin)).send({ anio: 2026, mes: 10 });
     expect(r.status).toBe(400);
+  });
+});
+
+describe("GET /api/planilla-mensual/historial", () => {
+  it("ADMIN ve el mes/proyecto ya consolidado arriba", async () => {
+    const r = await request(app).get("/api/planilla-mensual/historial").set(auth(tokenAdmin));
+    expect(r.status).toBe(200);
+    const fila = r.body.find((f: { proyecto: string; anio: number; mes: number }) => f.proyecto === PROYECTO && f.anio === 2026 && f.mes === 10);
+    expect(fila).toBeDefined();
+    expect(fila.trabajadores_consolidados).toBe(1);
+  });
+
+  it("Responsable de Proyecto B NO ve la consolidacion de Proyecto A", async () => {
+    const r = await request(app).get("/api/planilla-mensual/historial").set(auth(tokenResponsableB));
+    expect(r.status).toBe(200);
+    expect(r.body.some((f: { proyecto: string }) => f.proyecto === PROYECTO)).toBe(false);
+  });
+
+  it("Responsable de Proyecto A SI ve su propia consolidacion", async () => {
+    const r = await request(app).get("/api/planilla-mensual/historial").set(auth(tokenResponsableA));
+    expect(r.status).toBe(200);
+    expect(r.body.some((f: { proyecto: string }) => f.proyecto === PROYECTO)).toBe(true);
+  });
+
+  it("sin el permiso planilla_mensual.gestionar (TAREADOR) -> 403", async () => {
+    const r = await request(app).get("/api/planilla-mensual/historial").set(auth(tokenTareadorA));
+    expect(r.status).toBe(403);
   });
 });
 
@@ -190,6 +226,20 @@ describe("Descargas de la Planilla Mensual ya consolidada", () => {
       .set(auth(tokenAdmin));
     expect(r.status).toBe(200);
     expect(r.headers["content-type"]).toContain("text/csv");
+  });
+
+  // Bug real de produccion (19/09/2026): el usuario recibio un .xlsx "valido"
+  // pero sin ninguna fila, sin ningun aviso de por que, y penso que era un
+  // bug del generador. El unico trabajador de esta Planilla Mensual esta en
+  // ONP (no AFP, ver beforeAll) - exactamente el caso que antes devolvia 200
+  // con un archivo vacio. Ahora debe explicar el motivo en vez de entregarlo.
+  it("GET /:id/exportar/afpnet-excel sin ningun trabajador con Sistema de Pension = AFP -> 400 explicando el motivo (nunca un archivo vacio en silencio)", async () => {
+    const r = await request(app)
+      .get(`/api/planilla-mensual/${planillaMensualId}/exportar/afpnet-excel`)
+      .set(auth(tokenAdmin));
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/Sistema de Pension = AFP/);
+    expect(r.body.advertencias).toEqual([]);
   });
 
   it("Responsable de Proyecto B no puede descargar el REM de Proyecto A -> 403", async () => {

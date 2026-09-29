@@ -235,3 +235,122 @@ describe("consolidarPlanillaMensual: integracion con Tareo Diario real", () => {
     expect(segunda.avisos_recalculo_posterior.some((a) => a.periodo_id === semanal)).toBe(true);
   });
 });
+
+// Caso real reportado por el usuario en produccion (21/09/2026): una
+// quincena etiquetada "Agosto" en Periodos en realidad va del 31/08 al
+// 13/09 (13 de sus 14 dias son de setiembre), y en Periodos existe ademas
+// una quincena SI etiquetada "Setiembre" (14/09 al 27/09). El usuario
+// reporto que al generar el archivo de AFPnet, agosto salia bien pero
+// setiembre salia vacio - la sospecha era que la consolidacion de
+// setiembre no estaba encontrando la quincena etiquetada "Agosto" (aunque
+// case la totalidad de sus dias son de setiembre). Esta prueba reproduce
+// exactamente esas 2 quincenas y confirma que obtenerPeriodosDelMes/
+// consolidarPlanillaMensual SI las junta correctamente por FECHA (no por la
+// etiqueta anio/mes del periodo, que aqui es enganosa a proposito).
+describe("consolidarPlanillaMensual: quincena que cruza de mes (caso real 21/09/2026)", () => {
+  const contratosCruceMes: number[] = [];
+  const periodosCruceMes: number[] = [];
+
+  beforeAll(async () => {
+    await pool.query(
+      `INSERT INTO tabla_salarial_mensual (anio, mes, categoria, jornal_basico, buc, bae, movilidad_acumulada, gratificacion_diaria)
+       VALUES (2026, 9, 'PEON', 66.5, 0.30, 0, 8.60, 12.68)
+       ON CONFLICT (anio, mes, categoria) DO UPDATE SET jornal_basico = EXCLUDED.jornal_basico`
+    );
+    await pool.query(
+      `INSERT INTO tasas_afp_mensuales (anio, mes, afp_nombre, comision_flujo, prima_seguro, aporte_obligatorio)
+       VALUES (2026, 9, 'INTEGRA', 0.0155, 0.0137, 0.10)
+       ON CONFLICT (anio, mes, afp_nombre) DO NOTHING`
+    );
+  });
+
+  afterAll(async () => {
+    await pool.query("DELETE FROM detalle_planilla_mensual WHERE contrato_id = ANY($1::int[])", [contratosCruceMes]);
+    await pool.query("DELETE FROM planilla_mensual WHERE proyecto = $1 AND anio = 2026 AND mes = 9", [PROYECTO]);
+    for (const periodoId of periodosCruceMes) {
+      await pool.query("DELETE FROM tareo_diario WHERE periodo_id = $1", [periodoId]);
+      await pool.query("DELETE FROM asistencia_periodo WHERE periodo_id = $1", [periodoId]);
+      await pool.query("DELETE FROM periodos_planilla WHERE id = $1", [periodoId]);
+    }
+    await pool.query("DELETE FROM contratos WHERE id = ANY($1::int[])", [contratosCruceMes]);
+    await pool.query("DELETE FROM tabla_salarial_mensual WHERE anio = 2026 AND mes = 9 AND categoria = 'PEON'");
+    await pool.query("DELETE FROM tasas_afp_mensuales WHERE anio = 2026 AND mes = 9");
+  });
+
+  it("setiembre consolida la quincena etiquetada 'Agosto' (31/08-13/09) MAS la etiquetada 'Setiembre' (14/09-27/09), sin quedar vacio", async () => {
+    // Quincena etiquetada "Agosto 2026" pero con fechas mayormente de
+    // setiembre - igual que el caso real (imagen de Periodos adjuntada).
+    // quincena=NULL (en vez de 2) solo para no chocar con el indice unico
+    // de {anio,mes,tipo,quincena,proyecto} ya ocupado por otra prueba de
+    // este mismo archivo (Q1/Q2 de agosto) - no cambia lo que se prueba
+    // aqui, que es el filtro por FECHA, no por quincena.
+    const pAgostoEtiqueta = await pool.query(
+      `INSERT INTO periodos_planilla (anio, mes, quincena, tipo, fecha_inicio, fecha_fin, dias_periodo, proyecto, estado)
+       VALUES (2026, 8, NULL, 'QUINCENAL', '2026-08-31', '2026-09-13', 14, $1, 'CALCULADO') RETURNING id`,
+      [PROYECTO]
+    );
+    const periodoAgostoEtiqueta = pAgostoEtiqueta.rows[0].id as number;
+    periodosCruceMes.push(periodoAgostoEtiqueta);
+
+    // Quincena etiquetada "Setiembre 2026", fechas 100% de setiembre.
+    const pSetiembre = await pool.query(
+      `INSERT INTO periodos_planilla (anio, mes, quincena, tipo, fecha_inicio, fecha_fin, dias_periodo, proyecto, estado)
+       VALUES (2026, 9, 1, 'QUINCENAL', '2026-09-14', '2026-09-27', 14, $1, 'CALCULADO') RETURNING id`,
+      [PROYECTO]
+    );
+    const periodoSetiembre = pSetiembre.rows[0].id as number;
+    periodosCruceMes.push(periodoSetiembre);
+
+    const contratoId = await crearContrato("88880099", "PRUEBA CRUCE DE MES SETIEMBRE", "PEON");
+    contratosCruceMes.push(contratoId);
+
+    // Tareo cargado en AMBAS quincenas: 1 dia de agosto + 12 dias de
+    // setiembre en la quincena "Agosto", mas 10 dias en la quincena
+    // "Setiembre" - solo los dias de SETIEMBRE deben contar al consolidar
+    // setiembre (el 31/08 debe quedar fuera, es de la consolidacion de
+    // agosto, no de esta).
+    await cargarTareoDiario(periodoAgostoEtiqueta, contratoId, [
+      "2026-08-31", // no debe contar para la consolidacion de SETIEMBRE
+      "2026-09-01",
+      "2026-09-02",
+      "2026-09-03",
+      "2026-09-04",
+      "2026-09-05",
+      "2026-09-08",
+      "2026-09-09",
+      "2026-09-10",
+      "2026-09-11",
+      "2026-09-12",
+      "2026-09-13",
+    ]);
+    await cargarTareoDiario(periodoSetiembre, contratoId, [
+      "2026-09-14",
+      "2026-09-15",
+      "2026-09-16",
+      "2026-09-17",
+      "2026-09-18",
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25",
+    ]);
+
+    const resultado = await consolidarPlanillaMensual(PROYECTO, 2026, 9, adminUserId);
+
+    expect(resultado.errores).toEqual([]);
+    // Las 2 quincenas deben aparecer como incluidas, aunque una este
+    // etiquetada "Agosto" - se buscan por fecha, no por la etiqueta.
+    expect(resultado.periodos_incluidos.map((p) => p.id).sort()).toEqual(
+      [periodoAgostoEtiqueta, periodoSetiembre].sort()
+    );
+    // El punto central de esta prueba: setiembre NO debe salir vacio.
+    expect(resultado.trabajadores_consolidados).toBe(1);
+
+    const consolidado = await obtenerPlanillaMensual(PROYECTO, 2026, 9);
+    expect(consolidado).not.toBeNull();
+    // 11 dias de setiembre en la quincena "Agosto" (se excluye el 31/08) + 10
+    // dias en la quincena "Setiembre" = 21 dias trabajados en total.
+    expect(Number(consolidado!.detalle[0].dias_trabajados)).toBe(21);
+  });
+});

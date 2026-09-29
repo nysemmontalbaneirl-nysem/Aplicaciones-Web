@@ -28,7 +28,8 @@ const COLUMNAS_EMPLEADO_SIN_FIRMA = `
   grado_instruccion_codigo, entidad_bancaria_codigo, discapacidad,
   segunda_direccion, direccion_essalud,
   ubigeo_departamento_codigo, ubigeo_provincia_codigo, ubigeo_distrito_codigo,
-  firma_mime, firma_nombre, (firma_archivo IS NOT NULL) AS tiene_firma
+  firma_mime, firma_nombre, (firma_archivo IS NOT NULL) AS tiene_firma,
+  apellido_paterno, apellido_materno, nombres
 `;
 
 // entidad_bancaria, grado_instruccion y ubigeo (texto libre, historicos) se
@@ -167,6 +168,11 @@ empleadosRouter.post("/", requierePermiso("empleados.gestionar"), asyncHandler(a
     const ubigeo_departamento_codigo = codigoOpcional(b.ubigeo_departamento_codigo);
     const ubigeo_provincia_codigo = codigoOpcional(b.ubigeo_provincia_codigo);
     const ubigeo_distrito_codigo = codigoOpcional(b.ubigeo_distrito_codigo);
+    // Migracion 041: apellido paterno/materno/nombres, opcionales - se usan
+    // solo para el archivo oficial de AFPnet (ver afpnetExcel.ts).
+    const apellido_paterno = codigoOpcional(b.apellido_paterno);
+    const apellido_materno = codigoOpcional(b.apellido_materno);
+    const nombres = codigoOpcional(b.nombres);
 
     // El texto libre historico (grado_instruccion/entidad_bancaria/ubigeo)
     // se rellena a partir del catalogo si el formulario ya no lo manda,
@@ -183,8 +189,9 @@ empleadosRouter.post("/", requierePermiso("empleados.gestionar"), asyncHandler(a
          sexo, estado_civil, nacionalidad_codigo, pais_emisor_documento_codigo,
          grado_instruccion_codigo, entidad_bancaria_codigo, discapacidad,
          segunda_direccion, direccion_essalud,
-         ubigeo_departamento_codigo, ubigeo_provincia_codigo, ubigeo_distrito_codigo)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+         ubigeo_departamento_codigo, ubigeo_provincia_codigo, ubigeo_distrito_codigo,
+         apellido_paterno, apellido_materno, nombres)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
        RETURNING ${COLUMNAS_EMPLEADO_SIN_FIRMA}`,
       [
         b.tipo_documento ?? "1",
@@ -211,6 +218,9 @@ empleadosRouter.post("/", requierePermiso("empleados.gestionar"), asyncHandler(a
         ubigeo_departamento_codigo,
         ubigeo_provincia_codigo,
         ubigeo_distrito_codigo,
+        apellido_paterno,
+        apellido_materno,
+        nombres,
       ]
     );
     res.status(201).json(resultado.rows[0]);
@@ -242,6 +252,9 @@ empleadosRouter.put("/:id", requierePermiso("empleados.gestionar"), asyncHandler
     const ubigeo_departamento_codigo = codigoOpcional(b.ubigeo_departamento_codigo);
     const ubigeo_provincia_codigo = codigoOpcional(b.ubigeo_provincia_codigo);
     const ubigeo_distrito_codigo = codigoOpcional(b.ubigeo_distrito_codigo);
+    const apellido_paterno = codigoOpcional(b.apellido_paterno);
+    const apellido_materno = codigoOpcional(b.apellido_materno);
+    const nombres = codigoOpcional(b.nombres);
 
     const grado_instruccion = b.grado_instruccion ?? (await resolverNombreCatalogo("catalogo_grado_instruccion", grado_instruccion_codigo));
     const entidad_bancaria = b.entidad_bancaria ?? (await resolverNombreCatalogo("catalogo_banco", entidad_bancaria_codigo));
@@ -255,7 +268,8 @@ empleadosRouter.put("/:id", requierePermiso("empleados.gestionar"), asyncHandler
         sexo = $12, estado_civil = $13, nacionalidad_codigo = $14, pais_emisor_documento_codigo = $15,
         grado_instruccion_codigo = $16, entidad_bancaria_codigo = $17, discapacidad = $18,
         segunda_direccion = $19, direccion_essalud = $20,
-        ubigeo_departamento_codigo = $21, ubigeo_provincia_codigo = $22, ubigeo_distrito_codigo = $23
+        ubigeo_departamento_codigo = $21, ubigeo_provincia_codigo = $22, ubigeo_distrito_codigo = $23,
+        apellido_paterno = $25, apellido_materno = $26, nombres = $27
        WHERE id = $24
        RETURNING ${COLUMNAS_EMPLEADO_SIN_FIRMA}`,
       [
@@ -283,6 +297,9 @@ empleadosRouter.put("/:id", requierePermiso("empleados.gestionar"), asyncHandler
         ubigeo_provincia_codigo,
         ubigeo_distrito_codigo,
         req.params.id,
+        apellido_paterno,
+        apellido_materno,
+        nombres,
       ]
     );
     if (resultado.rowCount === 0) {

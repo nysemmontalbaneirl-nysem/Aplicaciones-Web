@@ -54,6 +54,16 @@ export interface Empleado {
   firma_mime?: string | null;
   firma_nombre?: string | null;
   tiene_firma?: boolean;
+  // Migracion 041: apellido paterno/materno/nombres por separado, a pedido
+  // explicito del usuario para poder declarar el archivo oficial de AFPnet
+  // (exige estos 3 datos en columnas separadas, ver src/afpnetExcel.ts).
+  // "apellidos_nombres" sigue siendo el campo maestro para todo lo demas
+  // (boletas, reportes, tareo, etc.) - estos 3 son ADICIONALES, opcionales,
+  // y no retroactivos (empleados ya cargados quedan en null hasta que se
+  // editen a mano).
+  apellido_paterno?: string | null;
+  apellido_materno?: string | null;
+  nombres?: string | null;
 }
 
 export interface Contrato {

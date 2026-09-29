@@ -22,11 +22,13 @@ import { tieneAccesoProyecto } from "../permisos";
 import { ErrorValidacion } from "../validaciones";
 import {
   consolidarPlanillaMensual,
+  listarHistorialConsolidaciones,
   obtenerPlanillaMensual,
   obtenerPlanillaMensualPorId,
 } from "../planillaMensual";
 import { generarLineasREMMensual } from "../plame";
 import { generarCSVAFPnetMensual } from "../afpnet";
+import { generarFilasAFPnetExcel, construirWorkbookAFPnetExcel } from "../afpnetExcel";
 
 // NOTA (recon 19/46): el parche original tambien agregaba
 // GET /:id/exportar/asiento-contable (Excel del asiento contable mensual,
@@ -97,6 +99,22 @@ planillaMensualRouter.post(
   })
 );
 
+// GET /api/planilla-mensual/historial -> lista TODOS los meses/proyectos ya
+// consolidados (sin necesidad de ir probando proyecto por proyecto y mes
+// por mes en el selector de abajo). ADMIN ve todos los proyectos; el resto
+// de roles solo los que ya tiene asignados (mismo criterio que el resto de
+// esta pantalla). Debe declararse ANTES de "GET /:id/..." mas abajo para
+// que Express no confunda "historial" con un :id.
+planillaMensualRouter.get(
+  "/historial",
+  requierePermiso("planilla_mensual.gestionar"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const proyectosPermitidos = req.usuario!.rol === "ADMIN" ? null : req.usuario!.proyectos;
+    const historial = await listarHistorialConsolidaciones(proyectosPermitidos);
+    res.json(historial);
+  })
+);
+
 // GET /api/planilla-mensual?proyecto=...&anio=...&mes=... -> lee la Planilla
 // Mensual ya consolidada de ese mes (cabecera + detalle por trabajador), o
 // 404 si nunca se consolido.
@@ -117,7 +135,18 @@ planillaMensualRouter.get(
     if (!consolidado) {
       return res.status(404).json({ error: "Este mes todavia no se ha consolidado para este proyecto." });
     }
-    res.json(consolidado);
+    // Migracion 041: advertencias del archivo oficial de AFPnet (apellidos
+    // referenciales incompletos, o tipo de documento sin mapeo confirmado) -
+    // se recalculan en cada carga de esta pantalla (no solo al consolidar),
+    // porque dependen de datos de Trabajadores que pueden corregirse en
+    // cualquier momento sin necesidad de volver a consolidar el mes.
+    const { advertencias: avisosDatosAfpnet } = await generarFilasAFPnetExcel(
+      consolidado.planillaMensual.id,
+      proyecto,
+      anio,
+      mes
+    );
+    res.json({ ...consolidado, avisos_datos_afpnet: avisosDatosAfpnet });
   })
 );
 
@@ -157,6 +186,39 @@ planillaMensualRouter.get(
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="${nombreArchivo}"`);
     res.send("﻿" + csv); // BOM para que Excel detecte UTF-8 correctamente
+  })
+);
+
+// GET /api/planilla-mensual/:id/exportar/afpnet-excel -> Excel OFICIAL para
+// subir directamente al portal de AFPnet (migracion 041, ver afpnetExcel.ts).
+// A diferencia de /exportar/afpnet (CSV simplificado, uso interno/manual),
+// este es el archivo con la estructura de 17 columnas que AFPnet exige.
+planillaMensualRouter.get(
+  "/:id/exportar/afpnet-excel",
+  requierePermiso("planilla_mensual.gestionar"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const acceso = await obtenerCabeceraConAcceso(req, Number(req.params.id));
+    if (acceso.tipo === "sin_acceso") return res.status(403).json({ error: "No tienes acceso a ese proyecto" });
+    if (acceso.tipo === "no_encontrada") return res.status(404).json({ error: "Planilla Mensual no encontrada" });
+    const cabecera = acceso.cabecera;
+
+    const { filas, advertencias } = await generarFilasAFPnetExcel(cabecera.id, cabecera.proyecto, cabecera.anio, cabecera.mes);
+    if (filas.length === 0) {
+      return res.status(400).json({
+        error:
+          advertencias.length > 0
+            ? `Ningun trabajador quedo incluido en el archivo: los ${advertencias.length} trabajador(es) con Sistema de Pension = AFP de este proyecto/mes fueron excluidos por advertencias - revisa la lista de advertencias que se muestra arriba, en esta misma pantalla.`
+            : `No se encontro ningun trabajador con Sistema de Pension = AFP en la Planilla Mensual Consolidada de "${cabecera.proyecto}" (${cabecera.mes}/${cabecera.anio}). Verifica que haya trabajadores consolidados este mes para este proyecto y que su contrato tenga el Sistema de Pension configurado como AFP (no ONP).`,
+        advertencias,
+      });
+    }
+    const workbook = construirWorkbookAFPnetExcel(filas);
+    const nombreArchivo = `AFPnet_Oficial_${cabecera.anio}${String(cabecera.mes).padStart(2, "0")}_${cabecera.proyecto}.xlsx`;
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${nombreArchivo}"`);
+    await workbook.xlsx.write(res);
+    res.end();
   })
 );
 

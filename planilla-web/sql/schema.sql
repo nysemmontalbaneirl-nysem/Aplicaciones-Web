@@ -283,6 +283,12 @@ CREATE TABLE empleados (
     firma_archivo       BYTEA,
     firma_mime          VARCHAR(100),
     firma_nombre        VARCHAR(200),
+    -- Migracion 041: apellido paterno/materno/nombres por separado, exigidos
+    -- por el archivo oficial de AFPnet (ver src/afpnetExcel.ts). Opcionales
+    -- y no retroactivos - "apellidos_nombres" sigue siendo el campo maestro.
+    apellido_paterno    VARCHAR(100),
+    apellido_materno    VARCHAR(100),
+    nombres             VARCHAR(150),
     creado_en           TIMESTAMPTZ NOT NULL DEFAULT now(),
     actualizado_en      TIMESTAMPTZ NOT NULL DEFAULT now()
 );

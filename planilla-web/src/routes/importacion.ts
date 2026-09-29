@@ -323,6 +323,12 @@ const COLUMNAS = [
   "REGIMEN_SALUD_CODIGO",
   "EPS_CODIGO",
   "MOTIVO_BAJA_CODIGO",
+  // Migracion 041: apellido paterno/materno/nombres por separado -
+  // opcionales, solo se usan para armar el archivo oficial de AFPnet (ver
+  // src/afpnetExcel.ts). No reemplazan APELLIDOS_NOMBRES.
+  "APELLIDO_PATERNO",
+  "APELLIDO_MATERNO",
+  "NOMBRES",
 ] as const;
 
 interface FilaCSV {
@@ -524,6 +530,9 @@ const FILA_EJEMPLO: Record<(typeof COLUMNAS)[number], string | number> = {
   REGIMEN_SALUD_CODIGO: "01",
   EPS_CODIGO: "20431115825",
   MOTIVO_BAJA_CODIGO: "",
+  APELLIDO_PATERNO: "",
+  APELLIDO_MATERNO: "",
+  NOMBRES: "",
 };
 
 // GET /api/empleados/importar-masivo/plantilla.xlsx -> descarga un Excel
@@ -746,6 +755,10 @@ importacionRouter.post("/importar-masivo", requierePermiso("importacion.masiva")
         const ubigeoDepartamentoCodigo = opcional(fila.UBIGEO_DEPARTAMENTO_CODIGO);
         const ubigeoProvinciaCodigo = opcional(fila.UBIGEO_PROVINCIA_CODIGO);
         const ubigeoDistritoCodigo = opcional(fila.UBIGEO_DISTRITO_CODIGO);
+        // Migracion 041: opcionales, solo para el archivo oficial de AFPnet.
+        const apellidoPaterno = opcional(fila.APELLIDO_PATERNO);
+        const apellidoMaterno = opcional(fila.APELLIDO_MATERNO);
+        const nombresPropios = opcional(fila.NOMBRES);
 
         // El texto libre historico (grado_instruccion/entidad_bancaria/ubigeo)
         // se completa desde el catalogo solo si el CSV no trae ya el texto
@@ -769,8 +782,9 @@ importacionRouter.post("/importar-masivo", requierePermiso("importacion.masiva")
                sexo, estado_civil, nacionalidad_codigo, pais_emisor_documento_codigo,
                grado_instruccion_codigo, entidad_bancaria_codigo, discapacidad,
                segunda_direccion, direccion_essalud,
-               ubigeo_departamento_codigo, ubigeo_provincia_codigo, ubigeo_distrito_codigo)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+               ubigeo_departamento_codigo, ubigeo_provincia_codigo, ubigeo_distrito_codigo,
+               apellido_paterno, apellido_materno, nombres)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
              RETURNING id`,
             [
               dni,
@@ -796,6 +810,9 @@ importacionRouter.post("/importar-masivo", requierePermiso("importacion.masiva")
               ubigeoDepartamentoCodigo,
               ubigeoProvinciaCodigo,
               ubigeoDistritoCodigo,
+              apellidoPaterno,
+              apellidoMaterno,
+              nombresPropios,
             ]
           );
           empleadoId = r.rows[0].id;
@@ -812,7 +829,9 @@ importacionRouter.post("/importar-masivo", requierePermiso("importacion.masiva")
                entidad_bancaria_codigo = $16, discapacidad = $17,
                segunda_direccion = $18, direccion_essalud = $19,
                ubigeo_departamento_codigo = $20, ubigeo_provincia_codigo = $21,
-               ubigeo_distrito_codigo = $22, actualizado_en = now()
+               ubigeo_distrito_codigo = $22,
+               apellido_paterno = $24, apellido_materno = $25, nombres = $26,
+               actualizado_en = now()
              WHERE id = $23`,
             [
               apellidosNombres,
@@ -838,6 +857,9 @@ importacionRouter.post("/importar-masivo", requierePermiso("importacion.masiva")
               ubigeoProvinciaCodigo,
               ubigeoDistritoCodigo,
               empleadoId,
+              apellidoPaterno,
+              apellidoMaterno,
+              nombresPropios,
             ]
           );
           empleadosActualizados++;
@@ -961,3 +983,210 @@ importacionRouter.get("/importar-masivo/plantilla", (_req: Request, res: Respons
     condicionales: COLUMNAS_CONDICIONALES,
   });
 });
+
+// =========================================================================
+// Actualizacion masiva de apellido paterno/materno/nombres (migracion 042,
+// 21/09/2026) - el usuario pidio explicitamente una forma de completar estos
+// 3 campos (agregados en la migracion 041 para el archivo oficial de AFPnet)
+// para trabajadores QUE YA EXISTEN en el sistema, subiendo un Excel con el
+// DNI y esos 3 campos - DISTINTA de "importar-masivo" de arriba, que exige
+// CATEGORIA/SISTEMA_PENSION/FECHA_INGRESO/etc. (pensada para dar de alta o
+// cesar) y hubiera sido peligrosa/incomoda para este caso: reutilizarla
+// hubiera obligado a repetir todos esos campos obligatorios sin necesidad
+// (con el riesgo real de, por un PROYECTO/FECHA_INGRESO que no calce exacto
+// con el contrato ya existente, crear sin querer un contrato duplicado - ver
+// el bloque "Evitar duplicar el mismo contrato" mas arriba). Este mecanismo
+// nuevo es minimo a proposito: SOLO puede tocar estas 3 columnas de
+// trabajadores ya existentes (nunca crea un trabajador, nunca toca ningun
+// otro campo/contrato), y cada campo se actualiza SOLO si la celda no viene
+// vacia (una celda vacia NUNCA borra un dato ya cargado - permite completar
+// solo lo que falte sin arriesgar sobreescribir con blanco por error).
+//
+// A diferencia de "importar-masivo" (que exige guardar como CSV separado por
+// coma, la fuente mas comun de errores de esa pantalla), este sube el
+// archivo .xlsx TAL CUAL, sin conversion - mas simple para este caso acotado.
+const COLUMNAS_ACTUALIZAR_NOMBRES = ["DNI", "APELLIDO_PATERNO", "APELLIDO_MATERNO", "NOMBRES"] as const;
+
+// GET .../plantilla.xlsx: a diferencia de la plantilla de alta (fila de
+// ejemplo generica), esta viene PRE-CARGADA con el DNI y el nombre completo
+// actual de cada trabajador al que hoy le falta alguno de estos 3 campos -
+// para que el usuario no tenga que ir a buscar los DNIs uno por uno (son
+// justo los que ya se le muestran como advertencia en Planilla Mensual). La
+// columna NOMBRE_ACTUAL_EN_EL_SISTEMA es solo de referencia (para saber de
+// quien es cada fila mientras se llena) - se ignora por completo al subir el
+// archivo de vuelta.
+importacionRouter.get(
+  "/actualizar-nombres-afpnet/plantilla.xlsx",
+  requierePermiso("importacion.masiva"),
+  asyncHandler(async (_req: Request, res: Response) => {
+    const workbook = new ExcelJS.Workbook();
+
+    const hojaInstrucciones = workbook.addWorksheet("Instrucciones");
+    hojaInstrucciones.getColumn(1).width = 100;
+    const lineasInstrucciones: { texto: string; negrita?: boolean; tamano?: number }[] = [
+      { texto: "COMO USAR ESTA PLANTILLA", negrita: true, tamano: 13 },
+      { texto: "" },
+      {
+        texto:
+          "Sirve SOLO para completar apellido paterno, apellido materno y nombres de trabajadores " +
+          "QUE YA EXISTEN en el sistema - los usa el archivo oficial de AFPnet (Excel). No crea " +
+          "trabajadores nuevos ni cambia ningun otro dato (proyecto, categoria, sueldo, etc.).",
+      },
+      { texto: "" },
+      {
+        texto:
+          "1. La hoja \"Trabajadores a completar\" ya trae precargados los trabajadores que hoy tienen " +
+          "algun dato faltante (columnas DNI y NOMBRE_ACTUAL_EN_EL_SISTEMA - esta ultima es solo de " +
+          "referencia para saber de quien es cada fila, no la edites, se ignora al subir el archivo).",
+      },
+      {
+        texto:
+          "2. Completa APELLIDO_PATERNO, APELLIDO_MATERNO y/o NOMBRES de cada fila. Puedes dejar en " +
+          "blanco lo que no sepas todavia: una celda vacia NUNCA borra un dato ya cargado, solo se " +
+          "actualiza lo que efectivamente llenes.",
+      },
+      { texto: "3. Si necesitas corregir a alguien que no aparece en esta lista, agrega una fila nueva con su DNI." },
+      {
+        texto:
+          "4. Guarda el archivo tal cual (.xlsx, SIN convertir a CSV) y subelo en Trabajadores > " +
+          "\"Actualizar apellidos/nombres (AFPnet)\".",
+      },
+    ];
+    for (const { texto, negrita, tamano } of lineasInstrucciones) {
+      const fila = hojaInstrucciones.addRow([texto]);
+      if (negrita || tamano) fila.font = { bold: !!negrita, size: tamano ?? 11 };
+    }
+
+    const hoja = workbook.addWorksheet("Trabajadores a completar");
+    hoja.columns = [
+      { header: "DNI", key: "dni", width: 15 },
+      { header: "NOMBRE_ACTUAL_EN_EL_SISTEMA", key: "nombreActual", width: 42 },
+      { header: "APELLIDO_PATERNO", key: "apellidoPaterno", width: 22 },
+      { header: "APELLIDO_MATERNO", key: "apellidoMaterno", width: 22 },
+      { header: "NOMBRES", key: "nombres", width: 26 },
+    ];
+    hoja.getRow(1).font = { bold: true };
+    hoja.getColumn("dni").numFmt = "@";
+
+    const faltantes = await pool.query(
+      `SELECT numero_documento, apellidos_nombres, apellido_paterno, apellido_materno, nombres
+       FROM empleados
+       WHERE apellido_paterno IS NULL OR apellido_materno IS NULL OR nombres IS NULL
+       ORDER BY apellidos_nombres`
+    );
+    for (const f of faltantes.rows) {
+      const fila = hoja.addRow({
+        dni: f.numero_documento,
+        nombreActual: f.apellidos_nombres,
+        apellidoPaterno: f.apellido_paterno ?? "",
+        apellidoMaterno: f.apellido_materno ?? "",
+        nombres: f.nombres ?? "",
+      });
+      fila.getCell("nombreActual").font = { italic: true, color: { argb: "FF808080" } };
+    }
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", 'attachment; filename="plantilla_actualizar_nombres_afpnet.xlsx"');
+    await workbook.xlsx.write(res);
+    res.end();
+  })
+);
+
+// POST .../actualizar-nombres-afpnet (multipart, campo "archivo" = .xlsx tal
+// cual, sin convertir a CSV). Actualiza SOLO apellido_paterno/apellido_materno/
+// nombres de empleados YA EXISTENTES (por DNI) - nunca crea trabajadores ni
+// toca ningun otro campo/tabla. Una celda vacia deja intacto el valor que ya
+// tenia ese campo (no lo borra) - asi se puede subir una plantilla llenada a
+// medias sin arriesgar perder datos ya cargados.
+importacionRouter.post(
+  "/actualizar-nombres-afpnet",
+  requierePermiso("importacion.masiva"),
+  upload.single("archivo"),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "Falta el archivo Excel (campo 'archivo')" });
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    try {
+      await workbook.xlsx.load(req.file.buffer as unknown as ExcelJS.Buffer);
+    } catch (err) {
+      return res.status(400).json({ error: `No se pudo leer el archivo Excel: ${(err as Error).message}` });
+    }
+
+    // Toma la primera hoja con datos (no depende de un nombre exacto de hoja,
+    // por si el usuario renombra "Trabajadores a completar" sin querer).
+    const hoja = workbook.worksheets.find((h) => h.rowCount > 1) ?? workbook.worksheets[0];
+    if (!hoja || hoja.rowCount < 2) {
+      return res.status(400).json({ error: "El archivo no tiene filas de datos" });
+    }
+
+    const columnaPorNombre = new Map<string, number>();
+    hoja.getRow(1).eachCell((celda, numeroColumna) => {
+      columnaPorNombre.set(celda.text.trim().toUpperCase(), numeroColumna);
+    });
+    const columnasFaltantes = COLUMNAS_ACTUALIZAR_NOMBRES.filter((c) => !columnaPorNombre.has(c));
+    if (columnasFaltantes.length > 0) {
+      return res.status(400).json({
+        error:
+          `El archivo no tiene la(s) columna(s) "${columnasFaltantes.join('", "')}". ` +
+          `Descarga de nuevo la plantilla (Trabajadores > "Actualizar apellidos/nombres (AFPnet)") y no cambies los encabezados.`,
+      });
+    }
+    const idxDni = columnaPorNombre.get("DNI")!;
+    const idxPaterno = columnaPorNombre.get("APELLIDO_PATERNO")!;
+    const idxMaterno = columnaPorNombre.get("APELLIDO_MATERNO")!;
+    const idxNombres = columnaPorNombre.get("NOMBRES")!;
+
+    const errores: ErrorFila[] = [];
+    let actualizados = 0;
+
+    const cliente = await pool.connect();
+    try {
+      await cliente.query("BEGIN");
+      for (let numeroFila = 2; numeroFila <= hoja.rowCount; numeroFila++) {
+        const fila = hoja.getRow(numeroFila);
+        const dni = fila.getCell(idxDni).text.trim();
+        const apellidoPaterno = fila.getCell(idxPaterno).text.trim();
+        const apellidoMaterno = fila.getCell(idxMaterno).text.trim();
+        const nombres = fila.getCell(idxNombres).text.trim();
+
+        if (!dni && !apellidoPaterno && !apellidoMaterno && !nombres) continue; // fila en blanco, se ignora
+
+        await cliente.query(`SAVEPOINT fila_${numeroFila}`);
+        try {
+          if (!/^\d{8,15}$/.test(dni)) {
+            throw new Error("DNI vacio o invalido (debe tener 8 a 15 digitos)");
+          }
+          if (!apellidoPaterno && !apellidoMaterno && !nombres) {
+            throw new Error("La fila no trae ningun dato para actualizar (apellido paterno/materno/nombres vacios)");
+          }
+          const resultado = await cliente.query(
+            `UPDATE empleados SET
+               apellido_paterno = COALESCE(NULLIF($1, ''), apellido_paterno),
+               apellido_materno = COALESCE(NULLIF($2, ''), apellido_materno),
+               nombres = COALESCE(NULLIF($3, ''), nombres),
+               actualizado_en = now()
+             WHERE numero_documento = $4
+             RETURNING id`,
+            [apellidoPaterno, apellidoMaterno, nombres, dni]
+          );
+          if (resultado.rowCount === 0) {
+            throw new Error("No existe ningun trabajador con ese DNI en el sistema");
+          }
+          actualizados++;
+        } catch (err) {
+          await cliente.query(`ROLLBACK TO SAVEPOINT fila_${numeroFila}`);
+          errores.push({ fila: numeroFila, dni: dni || "(vacio)", motivo: mensajeErrorFila(err) });
+        }
+      }
+      await cliente.query("COMMIT");
+      res.json({ actualizados, errores });
+    } catch (err) {
+      await cliente.query("ROLLBACK");
+      throw err;
+    } finally {
+      cliente.release();
+    }
+  })
+);
