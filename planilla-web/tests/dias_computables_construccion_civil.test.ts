@@ -56,9 +56,7 @@ function contratoConstruccionCivil(categoria: CategoriaOcupacional = "OPERARIO")
     fecha_cese: null,
     sueldo_base: null,
     viaticos: 0,
-    // NOTA (recon 12/46): el fixture original tambien incluia
-    // "condicion_trabajo: 0" (migracion 026) - ese campo no existe todavia
-    // en Contrato en este punto de la reconstruccion, se omite aqui.
+    condicion_trabajo: 0,
     sindicalizado: false,
     poliza_seguro: false,
     sctr_salud: false,
@@ -68,17 +66,14 @@ function contratoConstruccionCivil(categoria: CategoriaOcupacional = "OPERARIO")
   };
 }
 
-// NOTA (recon 12/46): el fixture original tambien incluia
-// "dias_feriado_trabajado" y "dias_dominical_no_laborado" (infraestructura
-// de "dominical proporcional / feriado no laborado", migraciones 022/023) -
-// ninguno de esos campos existe todavia en AsistenciaEntrada en este punto
-// de la reconstruccion, se omiten aqui.
 function asistencia(parcial: Partial<AsistenciaEntrada>): AsistenciaEntrada {
   return {
     contrato_id: 1,
     dias_trabajados: 0,
     dias_dominical: 0,
+    dias_dominical_no_laborado: 0,
     dias_feriado: 0,
+    dias_feriado_trabajado: 0,
     dias_falta: 0,
     horas_extra_25: 0,
     horas_extra_35: 0,
@@ -191,14 +186,10 @@ describe("calcularAsignacionEscolar (funcion pura) - suma descanso medico comput
     expect(sinDescansoMedico).toBeCloseTo(244.24, 2);
   });
 
-  it("el dominical NO entra a la formula de escolaridad (a diferencia de Gratificacion) - confirmado con el Excel del usuario", () => {
+  it("el dominical (domingo SI trabajado) NO entra a la formula de escolaridad (a diferencia de Gratificacion) - confirmado con el Excel del usuario", () => {
     const conDominical = calcularAsignacionEscolar(
       JORNAL_ARTEAGA,
       3,
-      // NOTA (recon 12/46): el caso original tambien variaba
-      // "dias_dominical_no_laborado" (campo que no existe todavia, ver nota
-      // del fixture "asistencia" arriba) - se deja solo dias_dominical, que
-      // ya alcanza para probar que el dominical no entra a esta formula.
       asistencia({ dias_trabajados: DIAS_TRABAJADOS_ARTEAGA, dias_dominical: 5 }),
       "OPERARIO",
       12
@@ -211,6 +202,34 @@ describe("calcularAsignacionEscolar (funcion pura) - suma descanso medico comput
       12
     );
     expect(conDominical).toBeCloseTo(sinDominical, 2);
+  });
+
+  // Migracion 048 (reconstruida desde backend_dist, ver
+  // RECONSTRUCCION_BRECHAS.md): a diferencia del dominical SI trabajado (caso
+  // de arriba), el dominical proporcional NO LABORADO (dias_dominical_no_laborado,
+  // migracion 023) SI entra a los "dias computables" de Escolaridad, con el
+  // mismo criterio que dias_subsidio_enfermedad_computable/dias_feriado
+  // (calcularAsignacionEscolar en motorCalculo.ts).
+  it("el dominical proporcional NO laborado SI entra a la formula de escolaridad", () => {
+    const conDominicalNoLaborado = calcularAsignacionEscolar(
+      JORNAL_ARTEAGA,
+      3,
+      asistencia({ dias_trabajados: DIAS_TRABAJADOS_ARTEAGA, dias_dominical_no_laborado: 1 }),
+      "OPERARIO",
+      12
+    );
+    const sinDominicalNoLaborado = calcularAsignacionEscolar(
+      JORNAL_ARTEAGA,
+      3,
+      asistencia({ dias_trabajados: DIAS_TRABAJADOS_ARTEAGA }),
+      "OPERARIO",
+      12
+    );
+    // (89.30/12) x (10.94+1) x 3 = 266.56 vs (89.30/12) x 10.94 x 3 = 244.24
+    // (los mismos montos ya verificados arriba para dias_subsidio_enfermedad_computable,
+    // porque ambos campos entran a la formula de la misma forma) - diferencia 22.32.
+    expect(conDominicalNoLaborado).toBeCloseTo(266.56, 2);
+    expect(sinDominicalNoLaborado).toBeCloseTo(244.24, 2);
   });
 });
 
@@ -362,14 +381,14 @@ describe("Integracion: Vacaciones/CTS/Escolaridad via Tareo Diario + /calcular c
       2
     );
     expect(Number(detalleCon.cts) - Number(detalleSin.cts)).toBeCloseTo(Math.round(jornalDiario * 0.15 * 100) / 100, 2);
-    // NOTA (recon 26/46): en produccion (migracion 039) esta diferencia ya
-    // no es SOLO el dia de descanso medico computable - el dominical
-    // PROPORCIONAL no laborado de esa semana tambien entraria a la formula
-    // de Escolaridad desde esa migracion. Esa parte de la migracion 039 no
-    // se pudo reconstruir ("dias_dominical_no_laborado" no existe todavia
-    // en este arbol - migraciones 022/023/026, ver RECONSTRUCCION_BRECHAS.md
-    // brecha #4), asi que se mantiene la asercion original: la diferencia es
-    // exactamente 1 dia de descanso medico computable.
+    // Migracion 048 (039 original, reconstruida desde backend_dist, ver
+    // RECONSTRUCCION_BRECHAS.md): dias_dominical_no_laborado ya existe y
+    // entra a la formula de Escolaridad (calcularAsignacionEscolar). En este
+    // escenario puntual (ninguno de los 2 contratos tiene domingo trabajado
+    // ni fila cargada el domingo del periodo) el prorrateo semanal da el
+    // mismo resultado para ambos, asi que la diferencia observada sigue
+    // siendo exactamente 1 dia de descanso medico computable - confirmado
+    // corriendo esta prueba tras la reconstruccion.
     expect(Number(detalleCon.asignacion_escolaridad) - Number(detalleSin.asignacion_escolaridad)).toBeCloseTo(
       (jornalDiario / 12) * 3,
       2

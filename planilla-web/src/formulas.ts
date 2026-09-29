@@ -41,7 +41,12 @@ export const VARIABLES_FORMULA = [
   "jornal_diario",
   "dias_trabajados",
   "dias_dominical",
+  // Migracion 048 (reconstruida desde backend_dist de produccion, ver
+  // RECONSTRUCCION_BRECHAS.md): dias_dominical_no_laborado/
+  // dias_feriado_trabajado no existian todavia en AsistenciaEntrada.
+  "dias_dominical_no_laborado",
   "dias_feriado",
+  "dias_feriado_trabajado",
   "dias_falta",
   "dias_subsidio_enfermedad",
   "dias_incapacidad_enfermedad",

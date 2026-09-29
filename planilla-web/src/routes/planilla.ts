@@ -7,9 +7,11 @@ import { requierePermiso } from "../authMiddleware";
 import { pool } from "../db";
 import {
   calcularAjustePisoEssaludMensual,
+  calcularDiasDominicalProporcional,
   calcularLineaPlanilla,
   calcularPisoEssaludMensual,
   calcularTramosMes,
+  DiaCrudoDominical,
   diasEntreFechas,
   esConstruccionCivil,
   periodoCruzaMes,
@@ -20,6 +22,7 @@ import {
 import { PoolClient } from "pg";
 import { obtenerConceptos, filaAHorarioProyecto } from "./conceptos";
 import { tieneAccesoProyecto } from "../permisos";
+import { rangoVigenciaEnPeriodo } from "../vigenciaContrato";
 import {
   AsistenciaEntrada,
   Contrato,
@@ -894,6 +897,65 @@ export function fechaISO(v: unknown): string {
   return String(v).slice(0, 10);
 }
 
+// Catalogo de feriados vigentes para un contrato en el RANGO dado
+// (interseccion con la vigencia del contrato, igual criterio que el resto
+// del prorrateo) - se usa para el feriado no laborado (migracion 022), para
+// clasificar dias feriados en el dominical proporcional (migracion 023), y
+// (importacion de marcaciones) para clasificar una marcacion de un dia
+// feriado sin tener que replicar esta consulta.
+//
+// Migracion 042 (ambito geografico): un feriado NACIONAL siempre cuenta. Uno
+// REGIONAL/LOCAL solo cuenta si el PROYECTO de este periodo
+// (periodos_planilla.proyecto -> proyectos.nombre) tiene configurada la
+// ubicacion correspondiente y coincide con la del feriado. Se resuelve con
+// un JOIN NULL-safe en la misma consulta: un periodo legado (proyecto NULL)
+// o un proyecto sin ubicacion configurada simplemente no matchea nunca la
+// condicion REGIONAL/LOCAL, y solo recibe los feriados NACIONAL -
+// comportamiento "seguro por defecto" confirmado con el usuario.
+//
+// Migracion 048 (reconstruida desde backend_dist, ver RECONSTRUCCION_BRECHAS.md):
+// esta funcion (junto con el resto de este bloque) reemplaza el stub
+// "esFeriado = false" que dejaron los parches 42-45/46 mientras el catalogo
+// dias_feriados no existia (ver los puntos 4/4.1/15 de ese documento).
+export async function obtenerFeriadosVigentes(
+  periodoId: string | number,
+  contratoId: number,
+  fechaDesde: string,
+  fechaHasta: string
+): Promise<Set<string>> {
+  const contratoResult = await pool.query(
+    "SELECT fecha_ingreso, fecha_cese FROM contratos WHERE id = $1",
+    [contratoId]
+  );
+  if (contratoResult.rowCount === 0) return new Set();
+  const { fecha_ingreso, fecha_cese } = contratoResult.rows[0];
+  const rango = rangoVigenciaEnPeriodo(fecha_ingreso, fecha_cese, fechaDesde, fechaHasta);
+  if (!rango) return new Set();
+  const feriadosResult = await pool.query(
+    `SELECT df.fecha
+     FROM dias_feriados df
+     LEFT JOIN periodos_planilla pp ON pp.id = $3
+     LEFT JOIN proyectos p ON p.nombre = pp.proyecto
+     WHERE df.fecha BETWEEN $1 AND $2
+       AND (
+         df.ambito = 'NACIONAL'
+         OR (
+           df.ambito = 'REGIONAL'
+           AND p.ubigeo_departamento_codigo IS NOT NULL
+           AND p.ubigeo_departamento_codigo = df.ubigeo_departamento_codigo
+         )
+         OR (
+           df.ambito = 'LOCAL'
+           AND p.ubigeo_provincia_codigo IS NOT NULL
+           AND p.ubigeo_provincia_codigo = df.ubigeo_provincia_codigo
+           AND (df.ubigeo_distrito_codigo IS NULL OR df.ubigeo_distrito_codigo = p.ubigeo_distrito_codigo)
+         )
+       )`,
+    [rango.desde, rango.hasta, periodoId]
+  );
+  return new Set(feriadosResult.rows.map((f) => fechaISO(f.fecha)));
+}
+
 /**
  * Suma todas las filas de tareo_diario de un contrato, en el rango
  * [fechaDesde, fechaHasta], en los totales que espera asistencia_periodo.
@@ -902,6 +964,33 @@ export function fechaISO(v: unknown): string {
  * estandar) - mismo criterio que ya tolera dias_trabajados fraccionario en
  * el resto del sistema (ver comentarios de motorCalculo.ts sobre dias
  * redondeados).
+ *
+ * Migracion 022 (feriado no laborado, reconstruida desde backend_dist en la
+ * migracion 048): ademas acredita automaticamente el pago del feriado NO
+ * laborado (D.Leg. 713 - el feriado se paga se trabaje o no) por cada fecha
+ * del periodo registrada en dias_feriados para la que este contrato NO
+ * tenga horas de "Feriado trabajado" cargadas ese dia - asi el usuario no
+ * tiene que tocar el Tareo Diario para esos dias. Si el dia tiene FALTA,
+ * SUBSIDIO o LICENCIA marcado explicitamente, no se acredita nada
+ * automatico: se respeta lo que ya se cargo y se evita pagar doble.
+ * dias_feriado_trabajado (subconjunto SI trabajado, usado para la
+ * sobretasa) sigue viniendo solo de las horas de "Feriado trabajado";
+ * dias_feriado pasa a ser el TOTAL a pagar = trabajado + no laborado
+ * acreditado aqui. Una fecha feriado con una fila en 0 (el Tareo Diario
+ * siempre pre-llena una fila por cada dia del periodo) SI cuenta como "no
+ * laborado" - basta con que esa fecha no tenga horas de feriado trabajadas
+ * Y no tenga una marca explicita de FALTA/SUBSIDIO/LICENCIA ese dia.
+ *
+ * Migracion 023 (dominical proporcional, reconstruida en la misma
+ * migracion 048): ademas arma, dia por dia, la lista cruda que necesita
+ * calcularDiasDominicalProporcional (motorCalculo.ts) para el dominical
+ * proporcional (D.Leg. 713 - descanso semanal no laborado). Reglas de
+ * conteo por dia (confirmadas con el usuario): FALTA=0h; SUBSIDIO/LICENCIA=
+ * 8h fijas; un dia feriado (trabajado o no, segun el catalogo dias_feriados
+ * o con horas_feriado cargadas)=8h fijas; jornal normal=horas reales; dia
+ * sin registro=0h (no se agrega nada a la lista). El resultado
+ * (dias_dominical_no_laborado) es independiente de dias_dominical (domingo
+ * SI trabajado, sin cambios de la migracion 022).
  *
  * NOTA (recon 11/46): separada de recalcularAsistenciaDesdeTareoDiario para
  * que el tramo-por-tramo de un periodo que cruza de mes (Ronda 3, ver
@@ -914,8 +1003,9 @@ export async function agregarTareoDiario(
   fechaDesde: string,
   fechaHasta: string
 ): Promise<Omit<AsistenciaEntrada, "contrato_id">> {
+  const feriadosVigentes = await obtenerFeriadosVigentes(periodoId, contratoId, fechaDesde, fechaHasta);
   const r = await pool.query(
-    `SELECT horas_normales, minutos_normales, horas_dominical, minutos_dominical,
+    `SELECT fecha, horas_normales, minutos_normales, horas_dominical, minutos_dominical,
             horas_feriado, minutos_feriado, horas_extra_tramo1, minutos_extra_tramo1,
             horas_extra_tramo2, minutos_extra_tramo2, horas_extra_tramo3, minutos_extra_tramo3,
             tipo_dia_especial
@@ -934,28 +1024,94 @@ export async function agregarTareoDiario(
   let diasSubsidioMaternidad = 0;
   let diasLicenciaPaternidad = 0;
 
+  const fechasConRegistro = new Set<string>();
+  // Fechas feriado con horas de "Feriado trabajado" > 0 ese dia especifico
+  // (ya se pagan via diasFeriadoTrabajado mas abajo) y fechas con una marca
+  // explicita de FALTA/SUBSIDIO/LICENCIA (el feriado NO se autocredita ahi,
+  // se respeta lo que ya se cargo) - las dos se usan despues del loop para
+  // decidir que feriados del catalogo faltan por acreditar como "no
+  // laborados", sin depender de si la fecha tiene o no una fila en
+  // tareo_diario.
+  const feriadosConHorasTrabajadas = new Set<string>();
+  const fechasConMarcaEspecial = new Set<string>();
+  const diasCrudos: DiaCrudoDominical[] = [];
+
   for (const fila of r.rows) {
+    const fecha = fechaISO(fila.fecha);
+    fechasConRegistro.add(fecha);
+    const diaSemana = new Date(fecha + "T00:00:00Z").getUTCDay(); // 0=domingo
+
     switch (fila.tipo_dia_especial as TipoDiaEspecial | null) {
       case "FALTA":
+        fechasConMarcaEspecial.add(fecha);
         diasFalta += 1;
+        if (diaSemana !== 0) diasCrudos.push({ fecha, horasJornada: 0, domingoTrabajado: false });
         continue;
       case "DESCANSO_MEDICO":
+        fechasConMarcaEspecial.add(fecha);
         diasSubsidioEnfermedad += 1;
+        if (diaSemana !== 0) diasCrudos.push({ fecha, horasJornada: 8, domingoTrabajado: false });
         continue;
       case "SUBSIDIO_MATERNIDAD":
+        fechasConMarcaEspecial.add(fecha);
         diasSubsidioMaternidad += 1;
+        if (diaSemana !== 0) diasCrudos.push({ fecha, horasJornada: 8, domingoTrabajado: false });
         continue;
       case "LICENCIA_PATERNIDAD":
+        fechasConMarcaEspecial.add(fecha);
         diasLicenciaPaternidad += 1;
+        if (diaSemana !== 0) diasCrudos.push({ fecha, horasJornada: 8, domingoTrabajado: false });
         continue;
     }
+
+    const horasFeriadoDia = Number(fila.horas_feriado) + Number(fila.minutos_feriado) / 60;
     horasNormales += Number(fila.horas_normales) + Number(fila.minutos_normales) / 60;
     horasDominical += Number(fila.horas_dominical) + Number(fila.minutos_dominical) / 60;
-    horasFeriado += Number(fila.horas_feriado) + Number(fila.minutos_feriado) / 60;
+    horasFeriado += horasFeriadoDia;
     horasTramo1 += Number(fila.horas_extra_tramo1) + Number(fila.minutos_extra_tramo1) / 60;
     horasTramo2 += Number(fila.horas_extra_tramo2) + Number(fila.minutos_extra_tramo2) / 60;
     horasTramo3 += Number(fila.horas_extra_tramo3) + Number(fila.minutos_extra_tramo3) / 60;
+
+    if (horasFeriadoDia > 0) feriadosConHorasTrabajadas.add(fecha);
+
+    if (diaSemana === 0) {
+      diasCrudos.push({ fecha, horasJornada: 0, domingoTrabajado: Number(fila.horas_dominical) > 0 });
+    } else if (feriadosVigentes.has(fecha) || horasFeriadoDia > 0) {
+      // Un dia feriado (trabajado o no) cuenta 8h fijas para el dominical
+      // proporcional, sin importar las horas reales trabajadas ese dia
+      // puntual - confirmado explicitamente con el usuario.
+      diasCrudos.push({ fecha, horasJornada: 8, domingoTrabajado: false });
+    } else {
+      diasCrudos.push({
+        fecha,
+        horasJornada: Number(fila.horas_normales) + Number(fila.minutos_normales) / 60,
+        domingoTrabajado: false,
+      });
+    }
   }
+
+  const diasFeriadoTrabajado = redondear2(horasFeriado / 8);
+  let diasFeriadoNoLaborado = 0;
+  for (const feriado of feriadosVigentes) {
+    // Ya se pago como feriado trabajado (horas_feriado > 0 ese dia), o el
+    // dia tiene una marca explicita (FALTA/SUBSIDIO/LICENCIA) que ya se
+    // proceso aparte arriba - en ambos casos no se autocredita nada mas.
+    if (feriadosConHorasTrabajadas.has(feriado) || fechasConMarcaEspecial.has(feriado)) continue;
+    diasFeriadoNoLaborado += 1;
+    // La fila cruda del dominical proporcional para esta fecha SOLO se
+    // agrega aqui si no habia ninguna fila en tareo_diario - si SI habia
+    // fila (el caso mas comun: una fila en 0 porque nadie trabajo ese
+    // feriado), el loop de arriba ya la agrego a diasCrudos (rama
+    // "feriadosVigentes.has") y agregarla de nuevo aqui duplicaria la fecha
+    // en el calculo semanal.
+    if (!fechasConRegistro.has(feriado)) {
+      if (new Date(feriado + "T00:00:00Z").getUTCDay() !== 0) {
+        diasCrudos.push({ fecha: feriado, horasJornada: 8, domingoTrabajado: false });
+      }
+    }
+  }
+
+  const diasDominicalNoLaborado = calcularDiasDominicalProporcional(diasCrudos);
 
   // Migracion 032: tope de 60 dias/año calendario por CONTRATO para que un
   // dia de descanso medico cuente como "dia computable" en Gratificacion/
@@ -1010,7 +1166,8 @@ export async function agregarTareoDiario(
   return {
     dias_trabajados: redondear2(horasNormales / 8),
     dias_dominical: redondear2(horasDominical / 8),
-    dias_feriado: redondear2(horasFeriado / 8),
+    dias_feriado: redondear2(diasFeriadoTrabajado + diasFeriadoNoLaborado),
+    dias_feriado_trabajado: diasFeriadoTrabajado,
     dias_falta: diasFalta,
     horas_extra_25: redondear2(horasTramo1),
     horas_extra_35: redondear2(horasTramo2),
@@ -1024,6 +1181,7 @@ export async function agregarTareoDiario(
     dias_incapacidad_enfermedad: diasIncapacidadEnfermedad,
     dias_subsidio_maternidad: diasSubsidioMaternidad,
     dias_licencia_paternidad: diasLicenciaPaternidad,
+    dias_dominical_no_laborado: diasDominicalNoLaborado,
     dias_subsidio_enfermedad_computable: diasSubsidioEnfermedadComputable,
   };
 }
@@ -1976,18 +2134,22 @@ planillaRouter.post(
       horariosResult.rows.map((fila) => [fila.proyecto_nombre as string, filaAHorarioProyecto(fila)])
     );
 
-    // NOTA (recon 44/46): el parche original clasificaba aqui cada dia
-    // contra un catalogo de feriados vigentes (obtenerFeriadosVigentes,
-    // consultando la tabla "dias_feriados") para marcar "Feriado trabajado"
-    // automaticamente. La tabla "dias_feriados" NUNCA existio en este arbol
-    // (ver RECONSTRUCCION_BRECHAS.md punto 15 - el feriado se registra hoy
-    // 100% a mano, por dia y por trabajador, en el Tareo Diario) - se omite
-    // esta clasificacion automatica; feriadosPorContrato queda vacio, asi
-    // que ningun dia importado se marca como feriado (cae en la rama
-    // normal/dominical/extra de mas abajo). El usuario puede corregir a
-    // mano un dia puntual como "Feriado trabajado" desde Registrar Tareo
-    // Diario despues de aplicar la importacion, igual que ya hace hoy.
+    // Catalogo de feriados vigentes por contrato (una consulta por contrato
+    // involucrado, cubriendo todo el periodo) - migracion 048, reconstruida
+    // desde backend_dist (ver RECONSTRUCCION_BRECHAS.md). Antes de esta
+    // migracion, la tabla "dias_feriados" no existia todavia y esta
+    // clasificacion se omitia (ningun dia importado se marcaba como
+    // feriado); ahora se clasifica automaticamente igual que en el resto
+    // del sistema.
     const feriadosPorContrato = new Map<number, Set<string>>();
+    await Promise.all(
+      [...contratosVistos.keys()].map(async (contratoId) => {
+        feriadosPorContrato.set(
+          contratoId,
+          await obtenerFeriadosVigentes(req.params.id, contratoId, fechaISO(periodo.fecha_inicio), fechaISO(periodo.fecha_fin))
+        );
+      })
+    );
 
     interface DiaCalculado {
       contratoId: number;
@@ -2252,14 +2414,11 @@ planillaRouter.put(
 
     const fecha = fechaISO(fila.fecha);
     const diaSemana = new Date(fecha + "T00:00:00Z").getUTCDay();
-    // NOTA (recon 45/46): igual que en la importacion masiva de arriba
-    // (feriadosPorContrato, ver RECONSTRUCCION_BRECHAS.md punto 15), aqui no
-    // existe un catalogo de "dias_feriados" contra el cual clasificar la
-    // fecha automaticamente - la tabla nunca existio en este arbol. Se deja
-    // esFeriado en false; si el dia es realmente un feriado trabajado, el
-    // usuario lo marca a mano desde Registrar Tareo Diario despues de
-    // aplicar/confirmar esta fila, igual que ya hace hoy.
-    const esFeriado = false;
+    // Migracion 048 (reconstruida desde backend_dist, ver
+    // RECONSTRUCCION_BRECHAS.md): clasifica la fecha contra el catalogo real
+    // de dias_feriados (con el mismo criterio de vigencia/ambito que el
+    // resto del sistema), igual que la importacion masiva de arriba.
+    const esFeriado = (await obtenerFeriadosVigentes(req.params.id, fila.contrato_id, fecha, fecha)).has(fecha);
 
     const horarioResult = await pool.query(
       `SELECT p.id AS proyecto_id, h.hora_ingreso, h.hora_salida, h.minutos_refrigerio,
@@ -2459,7 +2618,8 @@ planillaRouter.post(
 
     const esAdminCalculo = req.usuario!.rol === "ADMIN";
     const asistenciaResult = await pool.query(
-      `SELECT a.contrato_id, a.dias_trabajados, a.dias_dominical, a.dias_feriado, a.dias_falta,
+      `SELECT a.contrato_id, a.dias_trabajados, a.dias_dominical, a.dias_dominical_no_laborado, a.dias_feriado,
+              a.dias_feriado_trabajado, a.dias_falta,
               a.horas_extra_25, a.horas_extra_35, a.horas_extra_100,
               a.dias_subsidio_enfermedad, a.dias_incapacidad_enfermedad, a.dias_subsidio_maternidad, a.dias_licencia_paternidad,
               a.dias_subsidio_enfermedad_computable,
@@ -2651,7 +2811,9 @@ planillaRouter.post(
         contrato_id: fila.contrato_id,
         dias_trabajados: Number(fila.dias_trabajados),
         dias_dominical: Number(fila.dias_dominical),
+        dias_dominical_no_laborado: Number(fila.dias_dominical_no_laborado),
         dias_feriado: Number(fila.dias_feriado),
+        dias_feriado_trabajado: Number(fila.dias_feriado_trabajado),
         dias_falta: Number(fila.dias_falta),
         horas_extra_25: Number(fila.horas_extra_25),
         horas_extra_35: Number(fila.horas_extra_35),

@@ -122,6 +122,12 @@ export interface Contrato {
   fecha_ingreso: string;
   fecha_cese: string | null;
   sueldo_base: number | null;
+  // Migracion 048 (reconstruida desde backend_dist, ver
+  // RECONSTRUCCION_BRECHAS.md): monto fijo mensual de "condicion de
+  // trabajo" (D.S. 003-97-TR) - no remunerativo, no se prorratea, no se
+  // declara en el PLAME. Opcional aqui porque las respuestas de listados
+  // mas antiguos podrian no traerlo todavia.
+  condicion_trabajo?: number;
   sindicalizado: boolean;
   poliza_seguro: boolean;
   sctr_salud: boolean;
@@ -140,6 +146,23 @@ export interface Contrato {
   jornada_laboral?: string | null;
   regimen_salud_codigo?: string | null;
   eps_codigo?: string | null;
+}
+
+// Catalogo de dias feriados (dias_feriados, migracion 022, reconstruida
+// desde backend_dist en la migracion 048 - ver RECONSTRUCCION_BRECHAS.md).
+// Un NACIONAL no lleva ubicacion; un REGIONAL lleva solo departamento; un
+// LOCAL lleva al menos provincia (distrito opcional) - ver
+// GET/POST/PUT/DELETE /api/conceptos/dias-feriados (backend).
+export type AmbitoFeriado = "NACIONAL" | "REGIONAL" | "LOCAL";
+
+export interface DiaFeriado {
+  id: number;
+  fecha: string;
+  descripcion: string;
+  ambito: AmbitoFeriado;
+  ubigeo_departamento_codigo: string | null;
+  ubigeo_provincia_codigo: string | null;
+  ubigeo_distrito_codigo: string | null;
 }
 
 // Un item generico de catalogo (codigo + nombre) tal como los devuelve
@@ -228,7 +251,15 @@ export interface DetallePlanilla {
 
   dias_trabajados: number;
   dias_dominical: number;
+  // Migracion 048 (023 original, reconstruida desde backend_dist, ver
+  // RECONSTRUCCION_BRECHAS.md): prorrateo del descanso semanal (domingo) NO
+  // laborado - independiente de dias_dominical (domingo SI trabajado).
+  dias_dominical_no_laborado: number;
   dias_feriado: number;
+  // Migracion 048 (022 original): subconjunto de dias_feriado que SI se
+  // trabajo (usado para la sobretasa) - dias_feriado es el total a pagar
+  // (trabajado + no laborado).
+  dias_feriado_trabajado: number;
   dias_falta: number;
   horas_extra_25: number;
   horas_extra_35: number;
@@ -248,7 +279,14 @@ export interface DetallePlanilla {
   jornal_diario: number;
   sueldo_basico: number;
   remuneracion_dominical: number;
+  // Migracion 048: pago del prorrateo de dias_dominical_no_laborado.
+  remuneracion_dominical_proporcional: number;
   remuneracion_feriado: number;
+  // Migracion 048: recargo legal (D.Leg. 713) por trabajar el dia de
+  // descanso semanal/un feriado sin sustitutorio - se paga ADEMAS de
+  // remuneracion_dominical/remuneracion_feriado, no en su lugar.
+  sobretasa_dominical: number;
+  sobretasa_feriado: number;
   importe_horas_extra: number;
   asignacion_familiar: number;
   asignacion_escolaridad: number;
@@ -264,6 +302,10 @@ export interface DetallePlanilla {
   incapacidad_enfermedad: number;
   licencia_paternidad: number;
   otras_bonificaciones: number;
+  // Migracion 048: monto fijo mensual por contrato (D.S. 003-97-TR), copiado
+  // de contratos.condicion_trabajo - no remunerativo, no afecta ningun
+  // aporte ni se declara en el PLAME.
+  condicion_trabajo: number;
   gratificacion: number;
   bonificacion_extraordinaria: number;
   cts: number;
@@ -295,7 +337,14 @@ export interface AsistenciaEntrada {
   contrato_id: number;
   dias_trabajados: number;
   dias_dominical: number;
+  // Migracion 048 (023 original, reconstruida desde backend_dist): solo la
+  // calcula agregarTareoDiario (Tareo Diario) - la carga por Excel en bloque
+  // la deja en 0.
+  dias_dominical_no_laborado?: number;
   dias_feriado: number;
+  // Migracion 048 (022 original): subconjunto de dias_feriado que SI se
+  // trabajo, usado para la sobretasa.
+  dias_feriado_trabajado?: number;
   dias_falta: number;
   horas_extra_25: number;
   horas_extra_35: number;
@@ -464,6 +513,7 @@ export interface DetalleTrabajadorMensualFila {
   dias_dominical: number;
   dias_dominical_no_laborado: number;
   dias_feriado: number;
+  dias_feriado_trabajado: number;
   dias_falta: number;
   horas_extra_25: number;
   horas_extra_35: number;

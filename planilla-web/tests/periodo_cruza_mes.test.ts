@@ -88,20 +88,15 @@ describe("sumarResultadosLinea (funcion pura)", () => {
   // Fabrica un ResultadoCalculoLinea minimo, con la mayoria de los campos en
   // 0, para poder aislar el comportamiento de cada campo en las pruebas.
   //
-  // NOTA (recon 11/46): el fixture original tambien incluia
-  // "dias_dominical_no_laborado", "remuneracion_dominical_proporcional",
-  // "sobretasa_dominical", "sobretasa_feriado" y "condicion_trabajo" -
-  // ninguno de esos campos existe todavia en DetallePlanilla en este punto
-  // de la reconstruccion (ver sumarResultadosLinea en motorCalculo.ts, que
-  // los omite por el mismo motivo). Se quitan aqui tambien. Revisar y
-  // reincorporar cuando se reconstruyan esas migraciones.
   function detalle(overrides: Partial<ResultadoCalculoLinea["detalle"]>): ResultadoCalculoLinea {
     return {
       detalle: {
         contrato_id: 1,
         dias_trabajados: 0,
         dias_dominical: 0,
+        dias_dominical_no_laborado: 0,
         dias_feriado: 0,
+        dias_feriado_trabajado: 0,
         dias_falta: 0,
         horas_extra_25: 0,
         horas_extra_35: 0,
@@ -114,7 +109,10 @@ describe("sumarResultadosLinea (funcion pura)", () => {
         jornal_diario: 0,
         sueldo_basico: 0,
         remuneracion_dominical: 0,
+        remuneracion_dominical_proporcional: 0,
         remuneracion_feriado: 0,
+        sobretasa_dominical: 0,
+        sobretasa_feriado: 0,
         importe_horas_extra: 0,
         asignacion_familiar: 0,
         asignacion_escolaridad: 0,
@@ -125,6 +123,7 @@ describe("sumarResultadosLinea (funcion pura)", () => {
         incapacidad_enfermedad: 0,
         licencia_paternidad: 0,
         otras_bonificaciones: 0,
+        condicion_trabajo: 0,
         gratificacion: 0,
         bonificacion_extraordinaria: 0,
         cts: 0,

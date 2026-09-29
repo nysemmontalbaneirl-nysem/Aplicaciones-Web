@@ -24,12 +24,9 @@ function asistencia(parcial: Partial<AsistenciaEntrada>): AsistenciaEntrada {
     contrato_id: 1,
     dias_trabajados: 0,
     dias_dominical: 0,
+    dias_dominical_no_laborado: 0,
     dias_feriado: 0,
-    // NOTA (recon 41/46): dias_feriado_trabajado/dias_dominical_no_laborado
-    // son parte de la infraestructura de "dominical proporcional/feriado no
-    // laborado" (migraciones 022/023/026) que no existe en AsistenciaEntrada
-    // en este arbol - ver RECONSTRUCCION_BRECHAS.md punto 4. Se omiten aqui
-    // igual que en el resto del motor de calculo.
+    dias_feriado_trabajado: 0,
     dias_falta: 0,
     horas_extra_25: 0,
     horas_extra_35: 0,

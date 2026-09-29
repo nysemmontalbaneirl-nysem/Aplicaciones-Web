@@ -163,9 +163,9 @@ export function sumarResultadosLinea(resultados: ResultadoCalculoLinea[]): Resul
     contrato_id: ultimo.contrato_id,
     dias_trabajados: sumar("dias_trabajados"),
     dias_dominical: sumar("dias_dominical"),
-    // NOTA (recon 11/46): "dias_dominical_no_laborado" no existe todavia en
-    // DetallePlanilla (ver comentario de la funcion) - se omite.
+    dias_dominical_no_laborado: sumar("dias_dominical_no_laborado"),
     dias_feriado: sumar("dias_feriado"),
+    dias_feriado_trabajado: sumar("dias_feriado_trabajado"),
     dias_falta: sumar("dias_falta"),
     horas_extra_25: sumar("horas_extra_25"),
     horas_extra_35: sumar("horas_extra_35"),
@@ -187,18 +187,18 @@ export function sumarResultadosLinea(resultados: ResultadoCalculoLinea[]): Resul
     jornal_diario: ultimo.jornal_diario,
     sueldo_basico: sumar("sueldo_basico"),
     remuneracion_dominical: sumar("remuneracion_dominical"),
-    // NOTA (recon 11/46): "remuneracion_dominical_proporcional",
-    // "sobretasa_dominical" y "sobretasa_feriado" no existen todavia en
-    // DetallePlanilla (ver comentario de la funcion) - se omiten.
+    remuneracion_dominical_proporcional: sumar("remuneracion_dominical_proporcional"),
     remuneracion_feriado: sumar("remuneracion_feriado"),
+    sobretasa_dominical: sumar("sobretasa_dominical"),
+    sobretasa_feriado: sumar("sobretasa_feriado"),
     importe_horas_extra: sumar("importe_horas_extra"),
     asignacion_familiar: sumar("asignacion_familiar"),
     asignacion_escolaridad: sumar("asignacion_escolaridad"),
     bonificacion_buc: sumar("bonificacion_buc"),
     bonificacion_bae: sumar("bonificacion_bae"),
     bonificacion_movilidad: sumar("bonificacion_movilidad"),
-    // NOTA (recon 11/46): "condicion_trabajo" no existe todavia en
-    // DetallePlanilla (ver comentario de la funcion) - se omite.
+    // No se suma: monto fijo por contrato - ver comentario de la funcion.
+    condicion_trabajo: ultimo.condicion_trabajo,
     subsidio_enfermedad: sumar("subsidio_enfermedad"),
     incapacidad_enfermedad: sumar("incapacidad_enfermedad"),
     licencia_paternidad: sumar("licencia_paternidad"),
@@ -225,21 +225,20 @@ export function sumarResultadosLinea(resultados: ResultadoCalculoLinea[]): Resul
     senati: sumar("senati"),
   };
 
-  // NOTA (recon 11/46): la suma original tambien incluia
-  // "remuneracion_dominical_proporcional", "sobretasa_dominical",
-  // "sobretasa_feriado" y "condicion_trabajo" - omitidos porque esos
-  // campos no existen todavia (ver comentario de la funcion). Revisar y
-  // reincorporar cuando se reconstruyan esas migraciones.
   const totalIngresos = redondear(
     detalle.sueldo_basico +
       detalle.remuneracion_dominical +
+      detalle.remuneracion_dominical_proporcional +
       detalle.remuneracion_feriado +
+      detalle.sobretasa_dominical +
+      detalle.sobretasa_feriado +
       detalle.importe_horas_extra +
       detalle.asignacion_familiar +
       detalle.asignacion_escolaridad +
       detalle.bonificacion_buc +
       detalle.bonificacion_bae +
       detalle.bonificacion_movilidad +
+      detalle.condicion_trabajo +
       detalle.subsidio_enfermedad +
       detalle.incapacidad_enfermedad +
       detalle.licencia_paternidad +
@@ -413,6 +412,118 @@ export function calcularRemuneracionFeriado(
   return redondear(jornalDiario * asistencia.dias_feriado);
 }
 
+export interface DiaCrudoDominical {
+  fecha: string;
+  horasJornada: number;
+  domingoTrabajado: boolean;
+}
+
+/**
+ * Migracion 048 (023 original, reconstruida desde backend_dist de
+ * produccion - ver RECONSTRUCCION_BRECHAS.md): prorrateo del descanso
+ * semanal (domingo) NO laborado (D.Leg. 713 - el descanso semanal se paga
+ * aunque no se complete la semana completa de trabajo, en proporcion a lo
+ * efectivamente trabajado esa semana).
+ *
+ * Recibe la lista cruda de dias del rango (armada por
+ * recalcularAsistenciaDesdeTareoDiario en routes/planilla.ts, un elemento
+ * por cada dia con algun registro), agrupados por semana (lunes a domingo).
+ * Por cada semana en la que el domingo NO se trabajo, se suman las horas de
+ * jornada de esa semana (un dia feriado o con marca especial FALTA/
+ * SUBSIDIO/LICENCIA cuenta 8h fijas, ver el criterio completo en
+ * agregarTareoDiario) y se divide entre 6 (jornada semanal completa) - el
+ * resultado en horas equivalentes de todas las semanas del periodo,
+ * dividida entre 8, da los dias equivalentes de dominical no laborado.
+ *
+ * Si una semana esta partida entre 2 periodos (el corte de quincena/mes cae
+ * a mitad de semana), quien arma "dias" solo incluye los dias de esa semana
+ * que pertenecen a ESTE periodo - eso es lo unico que hace falta para que
+ * el prorrateo entre periodos salga solo, sin logica adicional aqui: cada
+ * periodo suma su propia porcion de horas de la semana partida, entre 6,
+ * sin que esta funcion necesite saber que la semana esta partida. Por el
+ * mismo motivo, si el domingo de esa semana cae en el OTRO periodo (no en
+ * "dias"), simplemente no hay ninguna entrada con domingoTrabajado=true
+ * para esa semana, y el calculo procede asumiendo que no se trabajo - la
+ * simplificacion aceptada explicitamente por el usuario para este caso.
+ */
+export function calcularDiasDominicalProporcional(dias: DiaCrudoDominical[]): number {
+  const semanas = new Map<string, { horas: number; domingoTrabajado: boolean }>();
+  for (const dia of dias) {
+    const fecha = new Date(dia.fecha + "T00:00:00Z");
+    const diaSemana = fecha.getUTCDay(); // 0=domingo .. 6=sabado
+    const lunes = new Date(fecha);
+    lunes.setUTCDate(fecha.getUTCDate() - ((diaSemana + 6) % 7));
+    const clave = lunes.toISOString().slice(0, 10);
+    const acumulado = semanas.get(clave) ?? { horas: 0, domingoTrabajado: false };
+    if (diaSemana === 0) {
+      acumulado.domingoTrabajado = acumulado.domingoTrabajado || dia.domingoTrabajado;
+    } else {
+      acumulado.horas += dia.horasJornada;
+    }
+    semanas.set(clave, acumulado);
+  }
+  let horasEquivalentesTotal = 0;
+  for (const semana of semanas.values()) {
+    if (semana.domingoTrabajado) continue; // ya se paga por REM_DOMINICAL + SOBRETASA_DOMINICAL
+    horasEquivalentesTotal += semana.horas / 6;
+  }
+  return redondear(horasEquivalentesTotal / 8);
+}
+
+/** Remuneracion por el descanso dominical NO laborado (ver calcularDiasDominicalProporcional). */
+export function calcularRemuneracionDominicalProporcional(
+  jornalDiario: number,
+  asistencia: AsistenciaEntrada
+): number {
+  return redondear(jornalDiario * asistencia.dias_dominical_no_laborado);
+}
+
+/**
+ * Sobretasa (recargo legal) por trabajar el dia de descanso semanal
+ * (domingo) sin descanso sustitutorio (D.Leg. 713): el trabajador recibe el
+ * dia laborado (ya cubierto por calcularRemuneracionDominical) MAS esta
+ * sobretasa, confirmada en 100% (factor 1.00) por igual para construccion
+ * civil y regimen general - ver conceptos_planilla -> SOBRETASA_DOMINICAL
+ * (editable en Configuracion si la ley cambia el porcentaje). Se calcula
+ * sobre dias_dominical completo, ya que ese campo siempre representa
+ * domingos efectivamente trabajados.
+ */
+export function calcularSobretasaDominical(
+  jornalDiario: number,
+  asistencia: AsistenciaEntrada,
+  factorSobretasa: number
+): number {
+  return redondear(jornalDiario * asistencia.dias_dominical * factorSobretasa);
+}
+
+/**
+ * Sobretasa (recargo legal) por trabajar un feriado sin descanso
+ * sustitutorio (D.Leg. 713): "pago triple" = (1) el pago del feriado, que
+ * se debe SIEMPRE se trabaje o no (calcularRemuneracionFeriado, acreditado
+ * tambien para feriados no laborados) + (2) el pago por el trabajo
+ * realizado + (3) una sobretasa del 100% sobre ese trabajo.
+ *
+ * calcularRemuneracionFeriado paga exactamente 1 vez por cada dia feriado
+ * del periodo (dias_feriado = trabajado + no laborado), se haya trabajado
+ * ese dia o no - por lo tanto solo puede cubrir el componente (1). NO puede,
+ * ademas, representar el componente (2) para los dias que si se
+ * trabajaron. Por eso esta funcion cubre los componentes (2)+(3) juntos: el
+ * factor configurado en Configuracion (SOBRETASA_FERIADO.factor1) es 2.00
+ * (200%, NO 100%) - 100% por el trabajo realizado mas 100% de sobretasa -
+ * para que el total de un feriado trabajado sea 100% (calcularRemuneracionFeriado)
+ * + 200% (esta funcion) = 300% = pago triple. Se calcula sobre
+ * dias_feriado_trabajado (subconjunto de dias_feriado efectivamente
+ * trabajado) y NO sobre dias_feriado completo - un feriado no laborado no
+ * genera este monto, solo el pago garantizado del dia.
+ */
+export function calcularSobretasaFeriado(
+  jornalDiario: number,
+  asistencia: AsistenciaEntrada,
+  factorSobretasa: number
+): number {
+  return redondear(jornalDiario * asistencia.dias_feriado_trabajado * factorSobretasa);
+}
+
 /**
  * Migracion 030 (renombrado y corregido en la migracion 038): pago real de
  * los primeros 20 dias/año de "Descanso Medico" por enfermedad, a cargo del
@@ -552,20 +663,14 @@ export function calcularAsignacionFamiliar(
  * dominical, a diferencia de la Gratificacion). No incluye maternidad/
  * paternidad (el usuario solo confirmo el criterio para descanso medico).
  *
- * Migracion 039 (18/09/2026): en produccion se agrega dias_dominical_no_laborado
- * (el proporcional de descanso semanal NO trabajado, migracion 023 -
- * jornal/6 por semana completa) a los dias computables - confirmado
- * explicitamente por el usuario. OJO: esto es DISTINTO de dias_dominical
- * (domingo EFECTIVAMENTE trabajado), que el usuario confirmo dejar FUERA
- * del calculo de escolaridad (a diferencia de la Gratificacion, que si
- * incluye ambos).
- *
- * NOTA (recon 26/46): "dias_dominical_no_laborado" no existe todavia en
- * AsistenciaEntrada en este arbol (migraciones 022/023/026 no
- * reconstruidas, ver RECONSTRUCCION_BRECHAS.md brecha #4) - se omite ese
- * sumando aqui (mismo criterio ya usado en el resto del motor de calculo
- * para esta brecha). Reincorporar cuando se reconstruya esa
- * infraestructura.
+ * Migracion 048 (039 original, reconstruida desde backend_dist de
+ * produccion, 18/09/2026): se agrega dias_dominical_no_laborado (el
+ * proporcional de descanso semanal NO trabajado, migracion 023 - jornal/6
+ * por semana completa) a los dias computables - confirmado explicitamente
+ * por el usuario. OJO: esto es DISTINTO de dias_dominical (domingo
+ * EFECTIVAMENTE trabajado), que el usuario confirmo dejar FUERA del
+ * calculo de escolaridad (a diferencia de la Gratificacion, que si incluye
+ * ambos).
  */
 export function calcularAsignacionEscolar(
   jornalDiario: number,
@@ -580,7 +685,10 @@ export function calcularAsignacionEscolar(
   // producia una diferencia sistematica de unos centimos).
   const escolaridadDiaria = jornalDiario / factorDivisor;
   const diasComputables =
-    asistencia.dias_trabajados + asistencia.dias_subsidio_enfermedad_computable + asistencia.dias_feriado;
+    asistencia.dias_trabajados +
+    asistencia.dias_subsidio_enfermedad_computable +
+    asistencia.dias_feriado +
+    asistencia.dias_dominical_no_laborado;
   return redondear(escolaridadDiaria * diasComputables * numeroHijos);
 }
 
@@ -708,20 +816,40 @@ export function calcularRemuneracionComputableRegular(
  * Gratificacion (Fiestas Patrias / Navidad).
  *
  * Construccion civil (RD N°777-87-DR-LIM): NO es un pago unico en julio o
- * diciembre. Se devenga y paga EN CADA PERIODO, en proporcion a los dias
- * trabajados + dominicales + feriados de ese periodo, usando una tasa
- * diaria = jornal basico x 40/210 (40 jornales basicos repartidos entre 210
- * dias = 30 dias x 7 meses). Verificado exacto contra la tabla salarial de
- * la Federacion de Trabajadores (Operario 89.30 -> 17.01/dia, Oficial
- * 69.75 -> 13.29/dia, Peon 62.80 -> 11.96/dia) y contra boletas reales de
- * las 4 categorias de obrero.
+ * diciembre. Se devenga y paga EN CADA PERIODO, en proporcion a los "dias
+ * computables" de ese periodo, usando una tasa diaria = jornal basico x
+ * 40/N, donde N son los dias del tramo del año en que cae el periodo:
+ * - Enero a Julio (7 meses): N = 210 dias (30 x 7).
+ * - Agosto a Diciembre (5 meses): N = 150 dias (30 x 5).
+ * Migracion 048 (reconstruida desde backend_dist de produccion, ver
+ * RECONSTRUCCION_BRECHAS.md): antes de esta migracion el sistema no
+ * distinguia el tramo y siempre usaba 210, lo que pagaba de MENOS en el
+ * tramo agosto-diciembre (17.01/dia en vez de 23.81/dia para un jornal de
+ * 89.30, caso real confirmado con el usuario: contrato ALVAREZ CALDERON,
+ * periodo 08/2026).
  *
- * IMPORTANTE: el factor se CALCULA a partir del jornal basico de la tabla
- * salarial del periodo, no se lee de un campo aparte que haya que editar a
- * mano - asi no se puede quedar desactualizado ni en 0 por olvido al cargar
- * una tabla salarial nueva (bug real encontrado: el campo
- * tabla_categorias.gratificacion_diaria por defecto queda en 0 en
- * categorias/periodos nuevos si el administrador no lo llena aparte).
+ * "Dias computables" = dias_trabajados + dias_dominical (domingo trabajado)
+ * + dias_dominical_no_laborado (proporcional, migracion 023) + dias_feriado
+ * (trabajado o no) + dias_subsidio_enfermedad_computable (topado a 60
+ * dias/año/contrato, migracion 032) + dias_subsidio_maternidad +
+ * dias_licencia_paternidad. Antes de esta migracion solo se sumaban
+ * dias_trabajados + dias_dominical + dias_feriado + dias_subsidio_enfermedad_computable:
+ * el dominical proporcional y los descansos por maternidad/paternidad NO
+ * entraban, lo que pagaba de menos (un domingo no laborado o una licencia
+ * protegida no deben reducir la gratificacion, igual que ya no reducen el
+ * feriado).
+ *
+ * La tasa diaria NO se redondea antes de multiplicarla por los dias
+ * computables (solo se redondea el resultado final) - redondear antes
+ * introduce una diferencia de centimos. Verificado exacto contra la tabla
+ * salarial de la Federacion de Trabajadores (Operario 89.30 -> 17.01/dia en
+ * el tramo enero-julio, Oficial 69.75 -> 13.29/dia, Peon 62.80 -> 11.96/dia)
+ * y contra boletas reales de las 4 categorias de obrero.
+ *
+ * IMPORTANTE: el numerador (40 jornales) y los 2 denominadores (210/150) se
+ * CALCULAN a partir de factores configurables en conceptos_planilla
+ * (Configuracion), no estan escritos a fuego - asi se pueden ajustar sin
+ * tocar codigo si cambia el convenio colectivo.
  *
  * EMPLEADO (regimen general): se mantiene la formula anterior, pago unico
  * en julio/diciembre = (remuneracion computable / 6) x meses completos
@@ -736,32 +864,28 @@ export function calcularGratificacion(
   anio: number,
   fechaIngreso: string,
   factorNumerador: number,
-  factorDenominador: number
+  factorDenominadorEneroJulio: number,
+  factorDenominadorAgostoDiciembre: number
 ): number {
   if (esConstruccionCivil(contrato.categoria_ocupacional)) {
-    const gratificacionDiaria = redondear(jornalDiario * (factorNumerador / factorDenominador));
-    // Migracion 032: se suma dias_subsidio_enfermedad_computable (topado a
-    // 60 dias/año/contrato), por consistencia con Vacaciones/CTS/Escolaridad
-    // - confirmado con el usuario, aunque hoy nunca reduce el monto en la
-    // practica porque el tope de 20 dias/año ya existente sobre el PAGO del
-    // subsidio es mas estricto (20 < 60).
-    //
-    // NOTA (recon 12/46): el parche original de esta migracion asumia que
-    // Gratificacion YA sumaba dias_subsidio_enfermedad (sin tope),
-    // dias_subsidio_maternidad, dias_licencia_paternidad y
-    // dias_dominical_no_laborado desde una migracion 025 que no existe
-    // todavia en este punto de la reconstruccion (tampoco existe el campo
-    // dias_dominical_no_laborado, ni el split factorDenominadorAgostoDiciembre/
-    // factorDenominadorEneroJulio que ese parche tambien traia). Se agrega
-    // aqui SOLO dias_subsidio_enfermedad_computable a la formula existente
-    // (dias_trabajados + dias_dominical + dias_feriado) - revisar y sumar
-    // los demas terminos cuando se reconstruya esa migracion 025.
+    const factorDenominador = mes >= 8 ? factorDenominadorAgostoDiciembre : factorDenominadorEneroJulio;
+    // Migracion 032: dias_subsidio_enfermedad (sin tope) se reemplaza por
+    // dias_subsidio_enfermedad_computable (topado a 60 dias/año/contrato),
+    // por consistencia con Vacaciones/CTS/Escolaridad - confirmado con el
+    // usuario, aunque hoy nunca reduce el monto en la practica porque el
+    // tope de 20 dias/año ya existente sobre el PAGO del subsidio es mas
+    // estricto (20 < 60). dias_subsidio_maternidad y
+    // dias_licencia_paternidad quedan SIN TOPE (el usuario solo confirmo el
+    // tope para descanso medico por enfermedad).
     const diasComputables =
       asistencia.dias_trabajados +
       asistencia.dias_dominical +
+      asistencia.dias_dominical_no_laborado +
       asistencia.dias_feriado +
-      asistencia.dias_subsidio_enfermedad_computable;
-    return redondear(gratificacionDiaria * diasComputables);
+      asistencia.dias_subsidio_enfermedad_computable +
+      asistencia.dias_subsidio_maternidad +
+      asistencia.dias_licencia_paternidad;
+    return redondear(jornalDiario * (factorNumerador / factorDenominador) * diasComputables);
   }
 
   if (mes !== 7 && mes !== 12) return 0;
@@ -1186,7 +1310,9 @@ function calcularLineaEventual(contrato: Contrato, asistencia: AsistenciaEntrada
       contrato_id: contrato.id,
       dias_trabajados: asistencia.dias_trabajados,
       dias_dominical: 0,
+      dias_dominical_no_laborado: 0,
       dias_feriado: 0,
+      dias_feriado_trabajado: 0,
       dias_falta: asistencia.dias_falta,
       horas_extra_25: 0,
       horas_extra_35: 0,
@@ -1199,13 +1325,17 @@ function calcularLineaEventual(contrato: Contrato, asistencia: AsistenciaEntrada
       jornal_diario: 0,
       sueldo_basico: montoPactado,
       remuneracion_dominical: 0,
+      remuneracion_dominical_proporcional: 0,
       remuneracion_feriado: 0,
+      sobretasa_dominical: 0,
+      sobretasa_feriado: 0,
       importe_horas_extra: 0,
       asignacion_familiar: 0,
       asignacion_escolaridad: 0,
       bonificacion_buc: 0,
       bonificacion_bae: 0,
       bonificacion_movilidad: 0,
+      condicion_trabajo: 0,
       subsidio_enfermedad: 0,
       incapacidad_enfermedad: 0,
       licencia_paternidad: 0,
@@ -1336,15 +1466,22 @@ export function calcularLineaPlanilla(
   // estaActivo arriba) - permite apagar temporalmente un concepto (ej. para
   // reemplazarlo por un "gemelo" con formula propia) sin borrar su fila del
   // catalogo.
-  // NOTA (recon 26/46): el parche original tambien gateaba
-  // remDominicalProporcional/sobretasaDominical/sobretasaFeriado/
-  // condicionTrabajo con este mismo interruptor - esos campos no existen
-  // todavia en este arbol (migraciones 022/023/026, ver brecha #4), asi que
-  // se omiten aqui igual que en el resto del motor de calculo.
+  // REM_DOMINICAL_PROPORCIONAL comparte el interruptor de REM_DOMINICAL (se
+  // fusionan en un solo concepto para aportes/PLAME, ver montosPorConcepto
+  // mas abajo).
   const remDominical = estaActivo(conceptos, "REM_DOMINICAL")
     ? calcularRemuneracionDominical(jornalDiario, asistencia)
     : 0;
+  const remDominicalProporcional = estaActivo(conceptos, "REM_DOMINICAL")
+    ? calcularRemuneracionDominicalProporcional(jornalDiario, asistencia)
+    : 0;
   const remFeriado = estaActivo(conceptos, "REM_FERIADO") ? calcularRemuneracionFeriado(jornalDiario, asistencia) : 0;
+  const sobretasaDominical = estaActivo(conceptos, "SOBRETASA_DOMINICAL")
+    ? calcularSobretasaDominical(jornalDiario, asistencia, obtenerFactor(conceptos, "SOBRETASA_DOMINICAL", "factor1"))
+    : 0;
+  const sobretasaFeriado = estaActivo(conceptos, "SOBRETASA_FERIADO")
+    ? calcularSobretasaFeriado(jornalDiario, asistencia, obtenerFactor(conceptos, "SOBRETASA_FERIADO", "factor1"))
+    : 0;
   const codigoHorasExtra = esConstruccionCivil(contrato.categoria_ocupacional)
     ? "HORAS_EXTRA_CONSTRUCCION"
     : "HORAS_EXTRA_GENERAL";
@@ -1404,6 +1541,15 @@ export function calcularLineaPlanilla(
     ? calcularLicenciaPaternidad(jornalDiario, asistencia)
     : 0;
 
+  // Condicion de trabajo (D.S. 003-97-TR, migracion 026): monto FIJO por
+  // contrato (contratos.condicion_trabajo), igual criterio que "viaticos"
+  // (nunca se prorratea por dias trabajados/faltas) - a diferencia de
+  // viaticos, este SI se paga de verdad (entra a totalIngresos). No es
+  // remunerativo: no afecta ninguna base de aportes (ver la fila
+  // CONDICION_TRABAJO en conceptos_planilla, todos sus afecto_* en false) y
+  // no se declara en el PLAME (ver plame.ts).
+  const condicionTrabajo = estaActivo(conceptos, "CONDICION_TRABAJO") ? redondear(Number(contrato.condicion_trabajo)) : 0;
+
   // Remuneracion computable del periodo actual (solo para mostrar en el detalle)
   const remuneracionComputable = sueldoBasico + remDominical + asignacionFamiliar + bonificacionBUC;
   // Para EMPLEADO (regimen general), gratificacion/CTS usan el sueldo de un
@@ -1428,7 +1574,8 @@ export function calcularLineaPlanilla(
         anio,
         contrato.fecha_ingreso,
         obtenerFactor(conceptos, "GRATIFICACION", "factor1"),
-        obtenerFactor(conceptos, "GRATIFICACION", "factor2")
+        obtenerFactor(conceptos, "GRATIFICACION", "factor2"),
+        obtenerFactor(conceptos, "GRATIFICACION", "factor3")
       )
     : 0;
   // bonificacionExtraordinaria/cts usan "gratificacion" (ya en 0 si el
@@ -1457,13 +1604,17 @@ export function calcularLineaPlanilla(
   const totalIngresos = redondear(
     sueldoBasico +
       remDominical +
+      remDominicalProporcional +
       remFeriado +
+      sobretasaDominical +
+      sobretasaFeriado +
       importeHorasExtra +
       asignacionFamiliar +
       asignacionEscolaridad +
       bonificacionBUC +
       bonificacionBAE +
       bonificacionMovilidad +
+      condicionTrabajo +
       subsidioEnfermedad +
       incapacidadEnfermedad +
       licenciaPaternidad +
@@ -1479,14 +1630,22 @@ export function calcularLineaPlanilla(
   // regimen del trabajador (misma logica que calcularHorasExtra).
   const montosPorConcepto: Record<string, number> = {
     SUELDO_BASICO: sueldoBasico,
-    REM_DOMINICAL: remDominical,
+    // El dominical proporcional (migracion 023) se suma al MISMO concepto
+    // REM_DOMINICAL, en vez de tener su propio codigo: comparten el mismo
+    // codigo PLAME (0115), la misma cuenta contable y los mismos flags
+    // afecto_* - remuneracion_dominical_proporcional se guarda por separado
+    // en detalle_planilla solo para trazabilidad/auditoria.
+    REM_DOMINICAL: remDominical + remDominicalProporcional,
     REM_FERIADO: remFeriado,
+    SOBRETASA_DOMINICAL: sobretasaDominical,
+    SOBRETASA_FERIADO: sobretasaFeriado,
     [codigoHorasExtra]: importeHorasExtra,
     ASIGNACION_FAMILIAR: asignacionFamiliar,
     ASIGNACION_ESCOLARIDAD: asignacionEscolaridad,
     BUC: bonificacionBUC,
     BAE: bonificacionBAE,
     MOVILIDAD: bonificacionMovilidad,
+    CONDICION_TRABAJO: condicionTrabajo,
     // Migracion 038: el concepto se renombro de SUBSIDIO_ENFERMEDAD a
     // DESCANSO_MEDICO (ver el comentario completo en calcularSubsidioEnfermedad)
     // - se agrega ademas el concepto nuevo INCAPACIDAD_ENFERMEDAD para el
@@ -1512,14 +1671,13 @@ export function calcularLineaPlanilla(
   // representan "esto cuenta para la base de tal aporte", que solo tiene
   // sentido para un ingreso remunerativo - un DESCUENTO o un APORTE
   // patronal personalizado no debe inflar la base de otro aporte.
-  // NOTA (recon 15/46): "dias_dominical_no_laborado" y
-  // "dias_feriado_trabajado" no existen todavia en AsistenciaEntrada (ver
-  // nota de VARIABLES_FORMULA en formulas.ts) - se omiten aqui tambien.
   const variablesFormula: VariablesFormula = {
     jornal_diario: jornalDiario,
     dias_trabajados: asistencia.dias_trabajados,
     dias_dominical: asistencia.dias_dominical,
+    dias_dominical_no_laborado: asistencia.dias_dominical_no_laborado,
     dias_feriado: asistencia.dias_feriado,
+    dias_feriado_trabajado: asistencia.dias_feriado_trabajado,
     dias_falta: asistencia.dias_falta,
     dias_subsidio_enfermedad: asistencia.dias_subsidio_enfermedad,
     dias_incapacidad_enfermedad: asistencia.dias_incapacidad_enfermedad,
@@ -1625,7 +1783,9 @@ export function calcularLineaPlanilla(
       contrato_id: contrato.id,
       dias_trabajados: asistencia.dias_trabajados,
       dias_dominical: asistencia.dias_dominical,
+      dias_dominical_no_laborado: asistencia.dias_dominical_no_laborado,
       dias_feriado: asistencia.dias_feriado,
+      dias_feriado_trabajado: asistencia.dias_feriado_trabajado,
       dias_falta: asistencia.dias_falta,
       horas_extra_25: asistencia.horas_extra_25,
       horas_extra_35: asistencia.horas_extra_35,
@@ -1641,13 +1801,17 @@ export function calcularLineaPlanilla(
       jornal_diario: redondear(jornalDiario),
       sueldo_basico: sueldoBasico,
       remuneracion_dominical: remDominical,
+      remuneracion_dominical_proporcional: remDominicalProporcional,
       remuneracion_feriado: remFeriado,
+      sobretasa_dominical: sobretasaDominical,
+      sobretasa_feriado: sobretasaFeriado,
       importe_horas_extra: importeHorasExtra,
       asignacion_familiar: asignacionFamiliar,
       asignacion_escolaridad: asignacionEscolaridad,
       bonificacion_buc: bonificacionBUC,
       bonificacion_bae: bonificacionBAE,
       bonificacion_movilidad: bonificacionMovilidad,
+      condicion_trabajo: condicionTrabajo,
       subsidio_enfermedad: subsidioEnfermedad,
       incapacidad_enfermedad: incapacidadEnfermedad,
       licencia_paternidad: licenciaPaternidad,

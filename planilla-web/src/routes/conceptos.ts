@@ -3,7 +3,15 @@ import { Router, Request, Response, NextFunction } from "express";
 import { asyncHandler } from "../asyncHandler";
 import { requierePermiso, requiereRol } from "../authMiddleware";
 import { pool } from "../db";
-import { ConceptoPlanilla, ConceptosPlanilla, CuotaSindicalCategoria, CategoriaOcupacional, HorarioProyecto } from "../tipos";
+import {
+  AmbitoFeriado,
+  CategoriaOcupacional,
+  ConceptoPlanilla,
+  ConceptosPlanilla,
+  CuotaSindicalCategoria,
+  DiaFeriado,
+  HorarioProyecto,
+} from "../tipos";
 import { ErrorValidacion } from "../validaciones";
 import { registrarBitacora } from "../bitacora";
 import { validarFormula, ErrorFormula, VARIABLES_FORMULA } from "../formulas";
@@ -118,6 +126,214 @@ conceptosRouter.get(
       construccion: factores("HORAS_EXTRA_CONSTRUCCION"),
       general: factores("HORAS_EXTRA_GENERAL"),
     });
+  })
+);
+
+// ===========================================================================
+// Dias feriados (dias_feriados, migracion 022, reconstruida desde
+// backend_dist en la migracion 048 - ver RECONSTRUCCION_BRECHAS.md):
+// catalogo editable por el usuario para poder acreditar automaticamente el
+// pago del feriado no laborado al recalcular el Tareo Diario (ver
+// recalcularAsistenciaDesdeTareoDiario/obtenerFeriadosVigentes en
+// routes/planilla.ts). Se siembra vacio: el usuario lo llena con las
+// fechas oficiales de cada año desde Configuracion.
+// ===========================================================================
+function filaAFeriado(fila: Record<string, unknown>): DiaFeriado {
+  const fecha = fila.fecha;
+  return {
+    id: fila.id as number,
+    fecha: typeof fecha === "string" ? fecha.slice(0, 10) : new Date(fecha as string).toISOString().slice(0, 10),
+    descripcion: fila.descripcion as string,
+    ambito: (fila.ambito as AmbitoFeriado) ?? "NACIONAL",
+    ubigeo_departamento_codigo: (fila.ubigeo_departamento_codigo as string | null) ?? null,
+    ubigeo_provincia_codigo: (fila.ubigeo_provincia_codigo as string | null) ?? null,
+    ubigeo_distrito_codigo: (fila.ubigeo_distrito_codigo as string | null) ?? null,
+  };
+}
+
+interface AmbitoFeriadoValidado {
+  ambito: AmbitoFeriado;
+  ubigeo_departamento_codigo: string | null;
+  ubigeo_provincia_codigo: string | null;
+  ubigeo_distrito_codigo: string | null;
+}
+
+// Migracion 042: valida la misma regla que el CHECK de la base de datos
+// (dias_feriados_ambito_ubicacion_check), pero ANTES de llegar a la BD,
+// para poder devolver un mensaje claro en español en vez del error crudo de
+// Postgres. NACIONAL no lleva ubicacion; REGIONAL exige departamento (y
+// nada mas especifico); LOCAL exige al menos provincia (distrito opcional).
+function validarAmbitoFeriado(b: Record<string, unknown>): AmbitoFeriadoValidado {
+  const ambito = (b.ambito as string) ?? "NACIONAL";
+  if (!["NACIONAL", "REGIONAL", "LOCAL"].includes(ambito)) {
+    throw new ErrorValidacion("ambito debe ser NACIONAL, REGIONAL o LOCAL");
+  }
+  const departamento = (b.ubigeo_departamento_codigo as string) || null;
+  const provincia = (b.ubigeo_provincia_codigo as string) || null;
+  const distrito = (b.ubigeo_distrito_codigo as string) || null;
+  if (ambito === "NACIONAL" && (departamento || provincia || distrito)) {
+    throw new ErrorValidacion("Un feriado NACIONAL no debe llevar departamento/provincia/distrito");
+  }
+  if (ambito === "REGIONAL" && (!departamento || provincia || distrito)) {
+    throw new ErrorValidacion("Un feriado REGIONAL debe llevar solo el departamento (sin provincia ni distrito)");
+  }
+  if (ambito === "LOCAL" && !provincia) {
+    throw new ErrorValidacion("Un feriado LOCAL debe llevar al menos la provincia (el distrito es opcional)");
+  }
+  return {
+    ambito: ambito as AmbitoFeriado,
+    ubigeo_departamento_codigo: ambito === "REGIONAL" ? departamento : null,
+    ubigeo_provincia_codigo: ambito === "LOCAL" ? provincia : null,
+    ubigeo_distrito_codigo: ambito === "LOCAL" ? distrito : null,
+  };
+}
+
+// GET /api/conceptos/dias-feriados -> catalogo completo, ordenado por fecha.
+conceptosRouter.get(
+  "/dias-feriados",
+  requierePermiso("conceptos.editar"),
+  asyncHandler(async (_req: Request, res: Response) => {
+    const r = await pool.query("SELECT * FROM dias_feriados ORDER BY fecha");
+    res.json(r.rows.map(filaAFeriado));
+  })
+);
+
+// POST /api/conceptos/dias-feriados -> agrega una fecha nueva.
+conceptosRouter.post(
+  "/dias-feriados",
+  requierePermiso("conceptos.editar"),
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const b = req.body as Record<string, unknown>;
+      if (typeof b.fecha !== "string" || Number.isNaN(Date.parse(b.fecha))) {
+        throw new ErrorValidacion("fecha es obligatoria y debe ser una fecha valida (YYYY-MM-DD)");
+      }
+      if (typeof b.descripcion !== "string" || b.descripcion.trim().length === 0) {
+        throw new ErrorValidacion("descripcion es obligatoria");
+      }
+      const ambitoValidado = validarAmbitoFeriado(b);
+      const r = await pool.query(
+        `INSERT INTO dias_feriados (fecha, descripcion, ambito, ubigeo_departamento_codigo, ubigeo_provincia_codigo, ubigeo_distrito_codigo)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [
+          b.fecha,
+          b.descripcion.trim(),
+          ambitoValidado.ambito,
+          ambitoValidado.ubigeo_departamento_codigo,
+          ambitoValidado.ubigeo_provincia_codigo,
+          ambitoValidado.ubigeo_distrito_codigo,
+        ]
+      );
+      await registrarBitacora(req.usuario!.id, "CREACION_DIA_FERIADO", "dias_feriados", r.rows[0].id, {
+        fecha: b.fecha,
+        descripcion: r.rows[0].descripcion,
+        ambito: r.rows[0].ambito,
+      });
+      res.status(201).json(filaAFeriado(r.rows[0]));
+    } catch (err) {
+      if (err instanceof ErrorValidacion) {
+        return res.status(400).json({ error: err.message });
+      }
+      // fecha+ambito+ubicacion ya registrada (indice unico, migracion 042)
+      if ((err as { code?: string }).code === "23505") {
+        return res.status(400).json({ error: "Ya existe un feriado registrado en esa fecha con ese mismo ámbito y ubicación" });
+      }
+      throw err;
+    }
+  })
+);
+
+// PUT /api/conceptos/dias-feriados/:id -> edita fecha/descripcion/ambito.
+conceptosRouter.put(
+  "/dias-feriados/:id",
+  requierePermiso("conceptos.editar"),
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id)) {
+        throw new ErrorValidacion("id invalido");
+      }
+      const existente = await pool.query("SELECT * FROM dias_feriados WHERE id = $1", [id]);
+      if (existente.rowCount === 0) {
+        return res.status(404).json({ error: "Feriado no encontrado" });
+      }
+      const actual = existente.rows[0];
+      const b = req.body as Record<string, unknown>;
+      if (b.fecha !== undefined && (typeof b.fecha !== "string" || Number.isNaN(Date.parse(b.fecha)))) {
+        throw new ErrorValidacion("fecha debe ser una fecha valida (YYYY-MM-DD)");
+      }
+      if (b.descripcion !== undefined && (typeof b.descripcion !== "string" || (b.descripcion as string).trim().length === 0)) {
+        throw new ErrorValidacion("descripcion debe ser un texto no vacio");
+      }
+      // Si el body no trae ninguno de los campos de ambito/ubicacion, se
+      // conservan los valores actuales tal cual (edicion parcial, ej. solo
+      // la descripcion); si trae al menos uno, se revalida el conjunto
+      // completo contra la regla ambito<->ubicacion.
+      const tocaAmbito =
+        b.ambito !== undefined ||
+        b.ubigeo_departamento_codigo !== undefined ||
+        b.ubigeo_provincia_codigo !== undefined ||
+        b.ubigeo_distrito_codigo !== undefined;
+      const ambitoValidado: AmbitoFeriadoValidado = tocaAmbito
+        ? validarAmbitoFeriado(b)
+        : {
+            ambito: actual.ambito,
+            ubigeo_departamento_codigo: actual.ubigeo_departamento_codigo,
+            ubigeo_provincia_codigo: actual.ubigeo_provincia_codigo,
+            ubigeo_distrito_codigo: actual.ubigeo_distrito_codigo,
+          };
+      const r = await pool.query(
+        `UPDATE dias_feriados
+         SET fecha = $1, descripcion = $2, ambito = $3,
+             ubigeo_departamento_codigo = $4, ubigeo_provincia_codigo = $5, ubigeo_distrito_codigo = $6
+         WHERE id = $7
+         RETURNING *`,
+        [
+          b.fecha !== undefined ? b.fecha : actual.fecha,
+          b.descripcion !== undefined ? (b.descripcion as string).trim() : actual.descripcion,
+          ambitoValidado.ambito,
+          ambitoValidado.ubigeo_departamento_codigo,
+          ambitoValidado.ubigeo_provincia_codigo,
+          ambitoValidado.ubigeo_distrito_codigo,
+          id,
+        ]
+      );
+      await registrarBitacora(req.usuario!.id, "EDICION_DIA_FERIADO", "dias_feriados", id, {
+        antes: filaAFeriado(actual),
+        despues: filaAFeriado(r.rows[0]),
+      });
+      res.json(filaAFeriado(r.rows[0]));
+    } catch (err) {
+      if (err instanceof ErrorValidacion) {
+        return res.status(400).json({ error: err.message });
+      }
+      if ((err as { code?: string }).code === "23505") {
+        return res.status(400).json({ error: "Ya existe un feriado registrado en esa fecha con ese mismo ámbito y ubicación" });
+      }
+      throw err;
+    }
+  })
+);
+
+// DELETE /api/conceptos/dias-feriados/:id -> elimina una fecha.
+conceptosRouter.delete(
+  "/dias-feriados/:id",
+  requierePermiso("conceptos.editar"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) {
+      return res.status(400).json({ error: "id invalido" });
+    }
+    const existente = await pool.query("SELECT * FROM dias_feriados WHERE id = $1", [id]);
+    if (existente.rowCount === 0) {
+      return res.status(404).json({ error: "Feriado no encontrado" });
+    }
+    await pool.query("DELETE FROM dias_feriados WHERE id = $1", [id]);
+    await registrarBitacora(req.usuario!.id, "ELIMINACION_DIA_FERIADO", "dias_feriados", id, {
+      fecha: filaAFeriado(existente.rows[0]).fecha,
+      descripcion: existente.rows[0].descripcion,
+    });
+    res.status(204).end();
   })
 );
 

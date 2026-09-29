@@ -134,6 +134,13 @@ export function validarAsistenciaEntrada(valor: unknown): AsistenciaEntrada {
     dias_trabajados: validarMontoPositivo(v.dias_trabajados ?? 0, "dias_trabajados"),
     dias_dominical: validarMontoPositivo(v.dias_dominical ?? 0, "dias_dominical"),
     dias_feriado: validarMontoPositivo(v.dias_feriado ?? 0, "dias_feriado"),
+    dias_feriado_trabajado: validarMontoPositivo(v.dias_feriado_trabajado ?? 0, "dias_feriado_trabajado"),
+    // Migracion 048 (reconstruida desde backend_dist, ver
+    // RECONSTRUCCION_BRECHAS.md): no aplica a la carga por Excel en bloque
+    // (sin fecha por dia) - siempre 0 aqui, igual que dias_feriado_trabajado
+    // arriba. Solo recalcularAsistenciaDesdeTareoDiario (Tareo Diario) lo
+    // calcula de verdad.
+    dias_dominical_no_laborado: validarMontoPositivo(v.dias_dominical_no_laborado ?? 0, "dias_dominical_no_laborado"),
     dias_falta: validarMontoPositivo(v.dias_falta ?? 0, "dias_falta"),
     horas_extra_25: validarMontoPositivo(v.horas_extra_25 ?? 0, "horas_extra_25"),
     horas_extra_35: validarMontoPositivo(v.horas_extra_35 ?? 0, "horas_extra_35"),

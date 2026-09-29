@@ -81,6 +81,10 @@ export interface Contrato {
   fecha_cese: string | null;
   sueldo_base: number | null;
   viaticos: number;
+  // Migracion 048 (026 original, reconstruida desde backend_dist de
+  // produccion): monto FIJO mensual (D.S. 003-97-TR) - no remunerativo, no
+  // se prorratea, no se declara en el PLAME. Ver motorCalculo.ts.
+  condicion_trabajo: number;
   sindicalizado: boolean;
   poliza_seguro: boolean;
   sctr_salud: boolean;
@@ -256,6 +260,18 @@ export interface AsistenciaEntrada {
   // legalmente independientes y se calculan por separado en
   // agregarTareoDiario.
   dias_subsidio_enfermedad_computable: number;
+  // Migracion 048 (022/023 originales, reconstruidas desde backend_dist de
+  // produccion - ver RECONSTRUCCION_BRECHAS.md): dias_feriado_trabajado es
+  // el subconjunto SI trabajado de dias_feriado (dias_feriado pasa a
+  // incluir tambien el feriado no laborado, acreditado automaticamente vía
+  // el catalogo "dias_feriados"), usado para la sobretasa. Antes de esta
+  // migracion, dias_feriado_trabajado no existia y dias_feriado solo
+  // contaba lo efectivamente trabajado.
+  dias_feriado_trabajado: number;
+  // Prorrateo del descanso semanal (domingo) NO laborado, D.Leg. 713 - ver
+  // calcularDiasDominicalProporcional en motorCalculo.ts. Independiente de
+  // dias_dominical (domingo SI trabajado).
+  dias_dominical_no_laborado: number;
 }
 
 export interface DetallePlanilla {
@@ -288,17 +304,33 @@ export interface DetallePlanilla {
   // por Escolaridad (topado a 60 dias/año/contrato) - foto historica para
   // trazabilidad, ver el comentario completo en AsistenciaEntrada.
   dias_subsidio_enfermedad_computable: number;
+  // Migracion 048 (reconstruida desde backend_dist): foto historica, mismo
+  // criterio que dias_subsidio_maternidad/dias_licencia_paternidad de
+  // arriba - ver el comentario completo en AsistenciaEntrada.
+  dias_feriado_trabajado: number;
+  dias_dominical_no_laborado: number;
 
   jornal_diario: number;
   sueldo_basico: number;
   remuneracion_dominical: number;
+  // Migracion 048: prorrateo del descanso dominical NO laborado - se
+  // declara bajo el mismo concepto REM_DOMINICAL (ver motorCalculo.ts),
+  // guardado aparte solo para trazabilidad/auditoria.
+  remuneracion_dominical_proporcional: number;
   remuneracion_feriado: number;
+  // Migracion 048: sobretasas legales (D.Leg. 713) por trabajar el
+  // descanso semanal o un feriado sin sustitutorio.
+  sobretasa_dominical: number;
+  sobretasa_feriado: number;
   importe_horas_extra: number;
   asignacion_familiar: number;
   asignacion_escolaridad: number;
   bonificacion_buc: number;
   bonificacion_bae: number;
   bonificacion_movilidad: number;
+  // Migracion 048 (026 original): monto FIJO por contrato, copiado tal
+  // cual del contrato a esta boleta - ver Contrato.condicion_trabajo.
+  condicion_trabajo: number;
   // Migracion 030: pago REAL de los dias de arriba (dias_subsidio_enfermedad/
   // dias_licencia_paternidad) - antes (migracion 027) esos campos eran
   // puramente informativos. Migracion 038: subsidio_enfermedad = jornal_diario
@@ -496,6 +528,25 @@ export interface Proyecto {
   ubigeo_departamento_codigo?: string | null;
   ubigeo_provincia_codigo?: string | null;
   ubigeo_distrito_codigo?: string | null;
+}
+
+// Catalogo de feriados (migracion 048, 022/042 originales - reconstruida
+// desde backend_dist de produccion): editable desde Configuracion, usado
+// para acreditar automaticamente el pago del feriado no laborado y para el
+// prorrateo del dominical (ver obtenerFeriadosVigentes en routes/planilla.ts).
+// NACIONAL no lleva ubicacion; REGIONAL exige solo departamento; LOCAL
+// exige al menos provincia (distrito opcional) - ver validarAmbitoFeriado
+// en routes/conceptos.ts.
+export type AmbitoFeriado = "NACIONAL" | "REGIONAL" | "LOCAL";
+
+export interface DiaFeriado {
+  id: number;
+  fecha: string;
+  descripcion: string;
+  ambito: AmbitoFeriado;
+  ubigeo_departamento_codigo: string | null;
+  ubigeo_provincia_codigo: string | null;
+  ubigeo_distrito_codigo: string | null;
 }
 
 // Cuota sindical por proyecto y categoria (migracion_029): el monto SEMANAL

@@ -109,6 +109,7 @@ const estadoVacio = {
   fecha_cese: "",
   sueldo_base: "",
   viaticos: "0",
+  condicion_trabajo: "0",
   tipo_pago_codigo: "",
   periodicidad_codigo: "",
   situacion_especial_codigo: "0",
@@ -362,6 +363,7 @@ export default function Trabajadores() {
         fecha_cese: contrato.fecha_cese?.slice(0, 10) ?? "",
         sueldo_base: contrato.sueldo_base != null ? String(contrato.sueldo_base) : "",
         viaticos: "0",
+        condicion_trabajo: contrato.condicion_trabajo != null ? String(contrato.condicion_trabajo) : "0",
         tipo_pago_codigo: contrato.tipo_pago_codigo ?? "",
         periodicidad_codigo: contrato.periodicidad_codigo ?? "",
         situacion_especial_codigo: contrato.situacion_especial_codigo ?? "0",
@@ -521,6 +523,7 @@ export default function Trabajadores() {
         fecha_cese: "",
         sueldo_base: contrato.sueldo_base != null ? String(contrato.sueldo_base) : "",
         viaticos: "0",
+        condicion_trabajo: contrato.condicion_trabajo != null ? String(contrato.condicion_trabajo) : "0",
         tipo_pago_codigo: contrato.tipo_pago_codigo ?? "",
         periodicidad_codigo: contrato.periodicidad_codigo ?? "",
         situacion_especial_codigo: contrato.situacion_especial_codigo ?? "0",
@@ -660,6 +663,7 @@ export default function Trabajadores() {
             ? Number(form.sueldo_base)
             : null,
         viaticos: Number(form.viaticos) || 0,
+        condicion_trabajo: Number(form.condicion_trabajo) || 0,
         tipo_pago_codigo: form.tipo_pago_codigo || null,
         periodicidad_codigo: form.periodicidad_codigo || null,
         situacion_especial_codigo: form.situacion_especial_codigo || null,
@@ -1148,6 +1152,15 @@ export default function Trabajadores() {
                 step="0.01"
                 value={form.viaticos}
                 onChange={(e) => actualizarCampo("viaticos", e.target.value)}
+              />
+            </label>
+            <label>
+              Condición de trabajo (S/. mensual, D.S. 003-97-TR)
+              <input
+                type="number"
+                step="0.01"
+                value={form.condicion_trabajo}
+                onChange={(e) => actualizarCampo("condicion_trabajo", e.target.value)}
               />
             </label>
             <label>

@@ -111,16 +111,15 @@ export function rangoDelMes(anio: number, mes: number): { desde: string; hasta: 
 // no aplican aca: jornal_diario/condicion_trabajo/seguro_vida se resuelven
 // UNA sola vez, dentro de la unica llamada a calcularLineaPlanilla).
 //
-// NOTA (recon 19/46): el parche original tambien sumaba "dias_feriado_trabajado"
-// y "dias_dominical_no_laborado" - campos de la infraestructura de "dominical
-// proporcional/feriado no laborado" (migraciones 022/023/026) que no existe
-// en AsistenciaEntrada en este arbol - ver RECONSTRUCCION_BRECHAS.md punto 4.
-// Se omiten aqui, igual criterio que en formulas.ts (VARIABLES_FORMULA) y
-// motorCalculo.ts.
 const CAMPOS_ASISTENCIA_SUMABLES = [
   "dias_trabajados",
   "dias_dominical",
+  // Migracion 048 (reconstruida desde backend_dist de produccion, ver
+  // RECONSTRUCCION_BRECHAS.md): "dias_dominical_no_laborado" y
+  // "dias_feriado_trabajado" no existian todavia en AsistenciaEntrada.
+  "dias_dominical_no_laborado",
   "dias_feriado",
+  "dias_feriado_trabajado",
   "dias_falta",
   "horas_extra_25",
   "horas_extra_35",
@@ -386,28 +385,27 @@ export async function consolidarPlanillaMensual(
 
     for (const { contrato, resultado } of lineas) {
       const d = resultado.detalle;
-      // NOTA (recon 19/46): dias_dominical_no_laborado, remuneracion_dominical_proporcional,
-      // sobretasa_dominical, sobretasa_feriado y condicion_trabajo son parte de la
-      // infraestructura de "dominical proporcional/feriado no laborado/condicion de
-      // trabajo" (migraciones 022/023/026), que no existe en DetallePlanilla/ResultadoCalculoLinea
-      // en este arbol - ver RECONSTRUCCION_BRECHAS.md punto 4. Se omiten de la lista de
-      // columnas explicita (quedan en su DEFAULT 0 de la tabla, ver schema.sql) en vez
-      // de intentar leerlas de "d", que no las tiene.
+      // Migracion 048 (reconstruida desde backend_dist, ver RECONSTRUCCION_BRECHAS.md):
+      // dias_dominical_no_laborado, dias_feriado_trabajado, remuneracion_dominical_proporcional,
+      // sobretasa_dominical, sobretasa_feriado y condicion_trabajo ya existen en
+      // DetallePlanilla/ResultadoCalculoLinea - se persisten en la foto mensual igual
+      // que el resto de campos, en vez de dejarse en su DEFAULT 0 de la tabla.
       const r = await cliente.query<{ id: number }>(
         `INSERT INTO detalle_planilla_mensual (
-           planilla_mensual_id, contrato_id, dias_trabajados, dias_dominical,
-           dias_feriado, dias_falta, horas_extra_25, horas_extra_35, horas_extra_100,
+           planilla_mensual_id, contrato_id, dias_trabajados, dias_dominical, dias_dominical_no_laborado,
+           dias_feriado, dias_feriado_trabajado, dias_falta, horas_extra_25, horas_extra_35, horas_extra_100,
            dias_subsidio_enfermedad, dias_subsidio_maternidad, dias_licencia_paternidad, dias_subsidio_enfermedad_computable,
-           jornal_diario, sueldo_basico, remuneracion_dominical, remuneracion_feriado,
+           jornal_diario, sueldo_basico, remuneracion_dominical, remuneracion_dominical_proporcional, remuneracion_feriado,
+           sobretasa_dominical, sobretasa_feriado,
            importe_horas_extra, asignacion_familiar, asignacion_escolaridad,
            bonificacion_buc, bonificacion_bae, bonificacion_movilidad,
-           subsidio_enfermedad, licencia_paternidad, otras_bonificaciones, gratificacion, bonificacion_extraordinaria,
+           subsidio_enfermedad, licencia_paternidad, otras_bonificaciones, condicion_trabajo, gratificacion, bonificacion_extraordinaria,
            cts, vacaciones, total_ingresos, aporte_pension, descuento_sindicato, seguro_vida, conafovicer, renta_5ta,
            otros_descuentos, total_descuentos, essalud, sctr, senati, neto_pagar, detalle_json,
            dias_incapacidad_enfermedad, incapacidad_enfermedad, essalud_base
          ) VALUES (
            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
-           $23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46
+           $23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52
          )
          RETURNING id`,
         [
@@ -415,7 +413,9 @@ export async function consolidarPlanillaMensual(
           contrato.id,
           d.dias_trabajados,
           d.dias_dominical,
+          d.dias_dominical_no_laborado,
           d.dias_feriado,
+          d.dias_feriado_trabajado,
           d.dias_falta,
           d.horas_extra_25,
           d.horas_extra_35,
@@ -427,7 +427,10 @@ export async function consolidarPlanillaMensual(
           d.jornal_diario,
           d.sueldo_basico,
           d.remuneracion_dominical,
+          d.remuneracion_dominical_proporcional,
           d.remuneracion_feriado,
+          d.sobretasa_dominical,
+          d.sobretasa_feriado,
           d.importe_horas_extra,
           d.asignacion_familiar,
           d.asignacion_escolaridad,
@@ -437,6 +440,7 @@ export async function consolidarPlanillaMensual(
           d.subsidio_enfermedad,
           d.licencia_paternidad,
           d.otras_bonificaciones,
+          d.condicion_trabajo,
           d.gratificacion,
           d.bonificacion_extraordinaria,
           d.cts,

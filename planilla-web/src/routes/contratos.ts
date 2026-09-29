@@ -240,12 +240,12 @@ contratosRouter.post("/", requierePermiso("contratos.gestionar"), asyncHandler(a
     const resultado = await pool.query(
       `INSERT INTO contratos
         (empleado_id, proyecto, grupo, categoria_ocupacional, ocupacion, sistema_pension,
-         afp_nombre, cuspp, sistema_comision, fecha_ingreso, sueldo_base, viaticos,
+         afp_nombre, cuspp, sistema_comision, fecha_ingreso, sueldo_base, viaticos, condicion_trabajo,
          sindicalizado, poliza_seguro, sctr_salud, essalud_vida, domiciliado,
          categoria_ocupacional_sunat_codigo, tipo_trabajador_codigo, regimen_laboral_codigo,
          tipo_contrato_codigo, tipo_pago_codigo, periodicidad_codigo, situacion_especial_codigo,
          jornada_laboral, regimen_salud_codigo, eps_codigo)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
        RETURNING *`,
       [
         b.empleado_id,
@@ -260,6 +260,11 @@ contratosRouter.post("/", requierePermiso("contratos.gestionar"), asyncHandler(a
         fecha_ingreso,
         b.sueldo_base ?? null,
         b.viaticos ?? 0,
+        // Migracion 048 (reconstruida desde backend_dist, ver
+        // RECONSTRUCCION_BRECHAS.md): monto fijo mensual de "condicion de
+        // trabajo" (D.S. 003-97-TR), no remunerativo - ver conceptos_planilla
+        // -> CONDICION_TRABAJO.
+        b.condicion_trabajo ?? 0,
         b.sindicalizado ?? false,
         b.poliza_seguro ?? false,
         b.sctr_salud ?? false,
@@ -329,13 +334,13 @@ contratosRouter.put("/:id", requierePermiso("contratos.gestionar"), asyncHandler
       `UPDATE contratos SET
         proyecto = $1, grupo = $2, categoria_ocupacional = $3, ocupacion = $4,
         sistema_pension = $5, afp_nombre = $6, cuspp = $7, sistema_comision = $8,
-        fecha_ingreso = $9, sueldo_base = $10, viaticos = $11, sindicalizado = $12,
-        poliza_seguro = $13, sctr_salud = $14, essalud_vida = $15, domiciliado = $16,
-        categoria_ocupacional_sunat_codigo = $17, tipo_trabajador_codigo = $18,
-        regimen_laboral_codigo = $19, tipo_contrato_codigo = $20, tipo_pago_codigo = $21,
-        periodicidad_codigo = $22, situacion_especial_codigo = $23, jornada_laboral = $24,
-        regimen_salud_codigo = $25, eps_codigo = $26
-       WHERE id = $27
+        fecha_ingreso = $9, sueldo_base = $10, viaticos = $11, condicion_trabajo = $12,
+        sindicalizado = $13, poliza_seguro = $14, sctr_salud = $15, essalud_vida = $16, domiciliado = $17,
+        categoria_ocupacional_sunat_codigo = $18, tipo_trabajador_codigo = $19,
+        regimen_laboral_codigo = $20, tipo_contrato_codigo = $21, tipo_pago_codigo = $22,
+        periodicidad_codigo = $23, situacion_especial_codigo = $24, jornada_laboral = $25,
+        regimen_salud_codigo = $26, eps_codigo = $27
+       WHERE id = $28
        RETURNING *`,
       [
         b.proyecto ?? "",
@@ -349,6 +354,7 @@ contratosRouter.put("/:id", requierePermiso("contratos.gestionar"), asyncHandler
         fecha_ingreso,
         b.sueldo_base ?? null,
         b.viaticos ?? 0,
+        b.condicion_trabajo ?? 0,
         b.sindicalizado ?? false,
         b.poliza_seguro ?? false,
         b.sctr_salud ?? false,

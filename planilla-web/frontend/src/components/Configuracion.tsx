@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
-import { apiGet, apiPost, apiPut } from "../api";
-import { ClaveConceptoLimiteTareo, ConceptoPlanilla, HorarioProyecto, LimitesTareo, Proyecto } from "../types";
+import { apiDelete, apiGet, apiPost, apiPut } from "../api";
+import {
+  AmbitoFeriado,
+  CatalogoItem,
+  CatalogoUbigeoDistrito,
+  CatalogoUbigeoProvincia,
+  ClaveConceptoLimiteTareo,
+  ConceptoPlanilla,
+  DiaFeriado,
+  HorarioProyecto,
+  LimitesTareo,
+  Proyecto,
+} from "../types";
 
 type CampoAfecto = "afecto_essalud" | "afecto_sctr" | "afecto_senati" | "afecto_onp" | "afecto_afp" | "afecto_renta5ta" | "afecto_conafovicer";
 
@@ -93,6 +104,30 @@ export default function Configuracion() {
   const [edicionesHorario, setEdicionesHorario] = useState<Record<string, string>>({});
   const [guardandoHorarioProyecto, setGuardandoHorarioProyecto] = useState<number | null>(null);
 
+  // ------------------------------------------------------------------
+  // Dias feriados (dias_feriados, migracion 022, reconstruida desde
+  // backend_dist en la migracion 048 - ver RECONSTRUCCION_BRECHAS.md):
+  // catalogo editable para que el sistema acredite automaticamente el pago
+  // del feriado no laborado al recalcular el Tareo Diario. Se agrega aqui
+  // como una cuarta tarjeta simple apilada, mismo criterio que "Limites de
+  // tareo"/"Horario por proyecto" de mas arriba (el sub-menu de
+  // Configuracion con pestañas nunca se reconstruyo en este arbol).
+  // ------------------------------------------------------------------
+  const [feriados, setFeriados] = useState<DiaFeriado[]>([]);
+  const [ubigeoDepartamentos, setUbigeoDepartamentos] = useState<CatalogoItem[]>([]);
+  const [ubigeoProvincias, setUbigeoProvincias] = useState<CatalogoUbigeoProvincia[]>([]);
+  const [ubigeoDistritos, setUbigeoDistritos] = useState<CatalogoUbigeoDistrito[]>([]);
+  const [nuevoFeriado, setNuevoFeriado] = useState({
+    fecha: "",
+    descripcion: "",
+    ambito: "NACIONAL" as AmbitoFeriado,
+    ubigeo_departamento_codigo: "",
+    ubigeo_provincia_codigo: "",
+    ubigeo_distrito_codigo: "",
+  });
+  const [guardandoFeriado, setGuardandoFeriado] = useState(false);
+  const [eliminandoFeriadoId, setEliminandoFeriadoId] = useState<number | null>(null);
+
   useEffect(() => {
     cargar();
   }, []);
@@ -101,11 +136,17 @@ export default function Configuracion() {
     setCargando(true);
     setError(null);
     try {
-      const [datos, datosLimites, datosProyectos, datosHorarios] = await Promise.all([
+      const [datos, datosLimites, datosProyectos, datosHorarios, datosFeriados, datosCatalogos] = await Promise.all([
         apiGet<ConceptoPlanilla[]>("/conceptos"),
         apiGet<LimitesTareo>("/conceptos/limites-tareo"),
         apiGet<Proyecto[]>("/proyectos"),
         apiGet<HorarioProyecto[]>("/conceptos/horarios-proyecto"),
+        apiGet<DiaFeriado[]>("/conceptos/dias-feriados"),
+        apiGet<{
+          ubigeo_departamento: CatalogoItem[];
+          ubigeo_provincia: CatalogoUbigeoProvincia[];
+          ubigeo_distrito: CatalogoUbigeoDistrito[];
+        }>("/catalogos"),
       ]);
       setConceptos(datos);
       setEdiciones({});
@@ -113,6 +154,10 @@ export default function Configuracion() {
       setProyectos(datosProyectos);
       setHorarios(datosHorarios);
       setEdicionesHorario({});
+      setFeriados(datosFeriados);
+      setUbigeoDepartamentos(datosCatalogos.ubigeo_departamento);
+      setUbigeoProvincias(datosCatalogos.ubigeo_provincia);
+      setUbigeoDistritos(datosCatalogos.ubigeo_distrito);
       const edicionInicial: Record<string, string> = {};
       for (const c of CONCEPTOS_LIMITE_TAREO) {
         for (const tipoDia of TIPOS_DIA_LIMITE_TAREO) {
@@ -392,6 +437,96 @@ export default function Configuracion() {
     }
   }
 
+  // ------------------------------------------------------------------
+  // Dias feriados (migracion 048)
+  // ------------------------------------------------------------------
+  const provinciasDelDepartamento = useMemo(
+    () => ubigeoProvincias.filter((p) => p.departamento_codigo === nuevoFeriado.ubigeo_departamento_codigo),
+    [ubigeoProvincias, nuevoFeriado.ubigeo_departamento_codigo]
+  );
+  const distritosDeLaProvincia = useMemo(
+    () => ubigeoDistritos.filter((d) => d.provincia_codigo === nuevoFeriado.ubigeo_provincia_codigo),
+    [ubigeoDistritos, nuevoFeriado.ubigeo_provincia_codigo]
+  );
+
+  function cambiarAmbitoFeriado(ambito: AmbitoFeriado) {
+    setNuevoFeriado((f) => ({
+      ...f,
+      ambito,
+      ubigeo_departamento_codigo: "",
+      ubigeo_provincia_codigo: "",
+      ubigeo_distrito_codigo: "",
+    }));
+  }
+
+  async function agregarFeriado() {
+    if (!nuevoFeriado.fecha || !nuevoFeriado.descripcion.trim()) {
+      setError("La fecha y la descripción son obligatorias para agregar un feriado.");
+      return;
+    }
+    if (nuevoFeriado.ambito === "REGIONAL" && !nuevoFeriado.ubigeo_departamento_codigo) {
+      setError("Un feriado REGIONAL debe llevar el departamento.");
+      return;
+    }
+    if (nuevoFeriado.ambito === "LOCAL" && !nuevoFeriado.ubigeo_provincia_codigo) {
+      setError("Un feriado LOCAL debe llevar al menos la provincia (el distrito es opcional).");
+      return;
+    }
+    setGuardandoFeriado(true);
+    setError(null);
+    try {
+      const creado = await apiPost<DiaFeriado>("/conceptos/dias-feriados", {
+        fecha: nuevoFeriado.fecha,
+        descripcion: nuevoFeriado.descripcion.trim(),
+        ambito: nuevoFeriado.ambito,
+        ubigeo_departamento_codigo: nuevoFeriado.ambito === "REGIONAL" ? nuevoFeriado.ubigeo_departamento_codigo : null,
+        ubigeo_provincia_codigo: nuevoFeriado.ambito === "LOCAL" ? nuevoFeriado.ubigeo_provincia_codigo : null,
+        ubigeo_distrito_codigo: nuevoFeriado.ambito === "LOCAL" ? nuevoFeriado.ubigeo_distrito_codigo || null : null,
+      });
+      setFeriados((prev) => [...prev, creado].sort((a, b) => a.fecha.localeCompare(b.fecha)));
+      setNuevoFeriado({
+        fecha: "",
+        descripcion: "",
+        ambito: "NACIONAL",
+        ubigeo_departamento_codigo: "",
+        ubigeo_provincia_codigo: "",
+        ubigeo_distrito_codigo: "",
+      });
+      setMensaje(`Feriado agregado: ${creado.descripcion}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al agregar el feriado");
+    } finally {
+      setGuardandoFeriado(false);
+    }
+  }
+
+  async function eliminarFeriado(feriado: DiaFeriado) {
+    if (!confirm(`¿Eliminar el feriado "${feriado.descripcion}" (${feriado.fecha})?`)) return;
+    setEliminandoFeriadoId(feriado.id);
+    setError(null);
+    try {
+      await apiDelete(`/conceptos/dias-feriados/${feriado.id}`);
+      setFeriados((prev) => prev.filter((f) => f.id !== feriado.id));
+      setMensaje(`Feriado eliminado: ${feriado.descripcion}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al eliminar el feriado");
+    } finally {
+      setEliminandoFeriadoId(null);
+    }
+  }
+
+  function etiquetaUbicacionFeriado(f: DiaFeriado): string {
+    if (f.ambito === "NACIONAL") return "—";
+    if (f.ambito === "REGIONAL") {
+      return ubigeoDepartamentos.find((d) => d.codigo === f.ubigeo_departamento_codigo)?.nombre ?? f.ubigeo_departamento_codigo ?? "—";
+    }
+    const provincia = ubigeoProvincias.find((p) => p.codigo === f.ubigeo_provincia_codigo)?.nombre ?? f.ubigeo_provincia_codigo;
+    const distrito = f.ubigeo_distrito_codigo
+      ? ubigeoDistritos.find((d) => d.codigo === f.ubigeo_distrito_codigo)?.nombre ?? f.ubigeo_distrito_codigo
+      : null;
+    return distrito ? `${provincia} - ${distrito}` : `${provincia}`;
+  }
+
   return (
     <>
     <div className="card">
@@ -638,6 +773,156 @@ export default function Configuracion() {
             </table>
           </div>
         )}
+      </div>
+    )}
+
+    {!cargando && (
+      <div className="card" style={{ marginTop: 18 }}>
+        <h2 className="titulo-reporte">Días feriados</h2>
+        <p style={{ color: "#5a6172", maxWidth: 900 }}>
+          Catálogo de fechas feriadas para que el sistema acredite automáticamente el pago del feriado no
+          laborado al recalcular el Tareo Diario (D.Leg. 713 — el feriado se paga se trabaje o no). Un feriado
+          NACIONAL aplica a todos los proyectos; uno REGIONAL solo aplica a los proyectos configurados en ese
+          departamento (ver Proyectos); uno LOCAL solo a los de esa provincia (y distrito, si se especifica).
+          Empieza cada año con las fechas oficiales — el catálogo comienza vacío.
+        </p>
+
+        <div className="tabla-scroll-horizontal">
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Descripción</th>
+                <th>Ámbito</th>
+                <th>Ubicación</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {feriados.length === 0 && (
+                <tr>
+                  <td colSpan={5} style={{ color: "#8a90a0" }}>
+                    Todavía no hay feriados registrados.
+                  </td>
+                </tr>
+              )}
+              {feriados.map((f) => (
+                <tr key={f.id}>
+                  <td>{f.fecha}</td>
+                  <td>{f.descripcion}</td>
+                  <td>{f.ambito}</td>
+                  <td>{etiquetaUbicacionFeriado(f)}</td>
+                  <td>
+                    <button
+                      type="button"
+                      onClick={() => eliminarFeriado(f)}
+                      disabled={eliminandoFeriadoId === f.id}
+                    >
+                      {eliminandoFeriadoId === f.id ? "..." : "Eliminar"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              <tr>
+                <td>
+                  <input
+                    type="date"
+                    value={nuevoFeriado.fecha}
+                    onChange={(e) => setNuevoFeriado((f) => ({ ...f, fecha: e.target.value }))}
+                  />
+                </td>
+                <td>
+                  <input
+                    type="text"
+                    placeholder="Ej. Año Nuevo"
+                    style={{ width: 220 }}
+                    value={nuevoFeriado.descripcion}
+                    onChange={(e) => setNuevoFeriado((f) => ({ ...f, descripcion: e.target.value }))}
+                  />
+                </td>
+                <td>
+                  <select
+                    value={nuevoFeriado.ambito}
+                    onChange={(e) => cambiarAmbitoFeriado(e.target.value as AmbitoFeriado)}
+                  >
+                    <option value="NACIONAL">NACIONAL</option>
+                    <option value="REGIONAL">REGIONAL</option>
+                    <option value="LOCAL">LOCAL</option>
+                  </select>
+                </td>
+                <td>
+                  {nuevoFeriado.ambito === "NACIONAL" && <span style={{ color: "#8a90a0" }}>—</span>}
+                  {nuevoFeriado.ambito === "REGIONAL" && (
+                    <select
+                      value={nuevoFeriado.ubigeo_departamento_codigo}
+                      onChange={(e) => setNuevoFeriado((f) => ({ ...f, ubigeo_departamento_codigo: e.target.value }))}
+                    >
+                      <option value="">Selecciona departamento...</option>
+                      {ubigeoDepartamentos.map((d) => (
+                        <option key={d.codigo} value={d.codigo}>
+                          {d.nombre}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {nuevoFeriado.ambito === "LOCAL" && (
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <select
+                        value={nuevoFeriado.ubigeo_departamento_codigo}
+                        onChange={(e) =>
+                          setNuevoFeriado((f) => ({
+                            ...f,
+                            ubigeo_departamento_codigo: e.target.value,
+                            ubigeo_provincia_codigo: "",
+                            ubigeo_distrito_codigo: "",
+                          }))
+                        }
+                      >
+                        <option value="">Departamento...</option>
+                        {ubigeoDepartamentos.map((d) => (
+                          <option key={d.codigo} value={d.codigo}>
+                            {d.nombre}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={nuevoFeriado.ubigeo_provincia_codigo}
+                        onChange={(e) =>
+                          setNuevoFeriado((f) => ({ ...f, ubigeo_provincia_codigo: e.target.value, ubigeo_distrito_codigo: "" }))
+                        }
+                        disabled={!nuevoFeriado.ubigeo_departamento_codigo}
+                      >
+                        <option value="">Provincia...</option>
+                        {provinciasDelDepartamento.map((p) => (
+                          <option key={p.codigo} value={p.codigo}>
+                            {p.nombre}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={nuevoFeriado.ubigeo_distrito_codigo}
+                        onChange={(e) => setNuevoFeriado((f) => ({ ...f, ubigeo_distrito_codigo: e.target.value }))}
+                        disabled={!nuevoFeriado.ubigeo_provincia_codigo}
+                      >
+                        <option value="">Distrito (opcional)...</option>
+                        {distritosDeLaProvincia.map((d) => (
+                          <option key={d.codigo} value={d.codigo}>
+                            {d.nombre}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </td>
+                <td>
+                  <button type="button" className="primario" onClick={agregarFeriado} disabled={guardandoFeriado}>
+                    {guardandoFeriado ? "..." : "Agregar"}
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     )}
     </>

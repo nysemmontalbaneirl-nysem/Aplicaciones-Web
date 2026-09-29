@@ -285,19 +285,44 @@ CREATE TABLE catalogo_ubigeo_distrito (
 CREATE INDEX idx_ubigeo_provincia_dep ON catalogo_ubigeo_provincia(departamento_codigo);
 CREATE INDEX idx_ubigeo_distrito_prov ON catalogo_ubigeo_distrito(provincia_codigo);
 
--- Migracion_042: ubicacion geografica opcional de cada proyecto (se
--- agrega aqui, despues del catalogo UBIGEO, en vez de dentro del CREATE
--- TABLE proyectos de mas arriba, porque proyectos se declara ANTES que
--- estos catalogos en este archivo). Pensada para decidir si un feriado
--- REGIONAL/LOCAL aplica o no a este proyecto - ver NOTA (recon 31/46) en
--- migracion_042_feriados_por_ubicacion.sql: esa parte (tabla
--- "dias_feriados" y su logica de coincidencia en routes/planilla.ts) se
--- omitio por completo (no existe en este arbol). Estas columnas quedan
--- listas para cuando ese catalogo se reconstruya en el futuro.
+-- Migracion_042: ubicacion geografica opcional de cada proyecto. Pensada
+-- para decidir si un feriado REGIONAL/LOCAL aplica o no a este proyecto -
+-- ver "dias_feriados" mas abajo (migracion 048, reconstruida a partir del
+-- backend_dist de produccion).
 ALTER TABLE proyectos
   ADD COLUMN ubigeo_departamento_codigo VARCHAR(2) REFERENCES catalogo_ubigeo_departamento(codigo),
   ADD COLUMN ubigeo_provincia_codigo    VARCHAR(4) REFERENCES catalogo_ubigeo_provincia(codigo),
   ADD COLUMN ubigeo_distrito_codigo     VARCHAR(6) REFERENCES catalogo_ubigeo_distrito(codigo);
+
+-- -------------------------------------------------------------------------
+-- dias_feriados (migracion 022 + ambito geografico de la migracion 042):
+-- catalogo de feriados editable desde Configuracion, usado para acreditar
+-- automaticamente el pago del feriado NO laborado y para el prorrateo del
+-- dominical (ver agregarTareoDiario en routes/planilla.ts). Se siembra
+-- VACIO - el usuario lo llena con las fechas oficiales de cada año.
+-- Reconstruida en la migracion 048 leyendo el backend ya compilado de
+-- produccion (backend_dist), no un parche - ver RECONSTRUCCION_BRECHAS.md.
+-- -------------------------------------------------------------------------
+CREATE TABLE dias_feriados (
+    id                          SERIAL PRIMARY KEY,
+    fecha                       DATE NOT NULL,
+    descripcion                 VARCHAR(200) NOT NULL,
+    ambito                      VARCHAR(10) NOT NULL DEFAULT 'NACIONAL'
+                                    CHECK (ambito IN ('NACIONAL', 'REGIONAL', 'LOCAL')),
+    ubigeo_departamento_codigo  VARCHAR(2) REFERENCES catalogo_ubigeo_departamento(codigo),
+    ubigeo_provincia_codigo     VARCHAR(4) REFERENCES catalogo_ubigeo_provincia(codigo),
+    ubigeo_distrito_codigo      VARCHAR(6) REFERENCES catalogo_ubigeo_distrito(codigo),
+    -- NACIONAL no lleva ubicacion; REGIONAL lleva solo departamento; LOCAL
+    -- lleva al menos provincia (distrito opcional) - reforzado tambien en
+    -- la API (routes/conceptos.ts) para dar un mensaje claro en español.
+    CONSTRAINT dias_feriados_ambito_ubicacion_check CHECK (
+        (ambito = 'NACIONAL' AND ubigeo_departamento_codigo IS NULL AND ubigeo_provincia_codigo IS NULL AND ubigeo_distrito_codigo IS NULL)
+        OR (ambito = 'REGIONAL' AND ubigeo_departamento_codigo IS NOT NULL AND ubigeo_provincia_codigo IS NULL AND ubigeo_distrito_codigo IS NULL)
+        OR (ambito = 'LOCAL' AND ubigeo_provincia_codigo IS NOT NULL)
+    )
+);
+CREATE UNIQUE INDEX idx_dias_feriados_unico
+    ON dias_feriados (fecha, ambito, COALESCE(ubigeo_departamento_codigo, ''), COALESCE(ubigeo_provincia_codigo, ''), COALESCE(ubigeo_distrito_codigo, ''));
 
 -- -------------------------------------------------------------------------
 -- empleados: datos maestros de la persona (no cambian por proyecto/periodo)
@@ -366,6 +391,13 @@ CREATE TABLE contratos (
     fecha_cese            DATE,
     sueldo_base           NUMERIC(10,2),         -- solo aplica a categoría EMPLEADO (mensual fijo)
     viaticos              NUMERIC(10,2) NOT NULL DEFAULT 0,
+    -- Migracion 048 (026 original, reconstruida desde backend_dist): monto
+    -- FIJO mensual de "condicion de trabajo" (D.S. 003-97-TR) - no
+    -- remunerativo, no se prorratea, no se declara en el PLAME (mismo
+    -- criterio de "monto fijo por contrato" que viaticos, pero a
+    -- diferencia de viaticos, este SI se paga de verdad: entra a
+    -- total_ingresos, ver detalle_planilla.condicion_trabajo).
+    condicion_trabajo     NUMERIC(10,2) NOT NULL DEFAULT 0,
     sindicalizado         BOOLEAN NOT NULL DEFAULT FALSE,
     poliza_seguro         BOOLEAN NOT NULL DEFAULT FALSE,
     sctr_salud            BOOLEAN NOT NULL DEFAULT FALSE,
@@ -466,6 +498,14 @@ CREATE TABLE asistencia_periodo (
     -- Enfermedad" (subsidiada por EsSalud) en vez de como dia normal de
     -- trabajo. Ver el comentario completo en tipos.ts (AsistenciaEntrada).
     dias_incapacidad_enfermedad NUMERIC(6,2) NOT NULL DEFAULT 0,
+    -- Migracion 048 (reconstruida desde backend_dist, ver
+    -- RECONSTRUCCION_BRECHAS.md): dias_feriado_trabajado es el subconjunto
+    -- SI trabajado de dias_feriado (usado para la sobretasa); dias_feriado
+    -- pasa a incluir tambien el feriado NO laborado, acreditado
+    -- automaticamente (migracion 022). dias_dominical_no_laborado es el
+    -- prorrateo del descanso semanal no laborado (migracion 023).
+    dias_feriado_trabajado NUMERIC(6,2) NOT NULL DEFAULT 0,
+    dias_dominical_no_laborado NUMERIC(6,2) NOT NULL DEFAULT 0,
     actualizado_en  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (periodo_id, contrato_id)
 );
@@ -593,12 +633,26 @@ CREATE TABLE detalle_planilla (
     dias_licencia_paternidad NUMERIC(6,2) NOT NULL DEFAULT 0,
     dias_subsidio_enfermedad_computable NUMERIC(6,2) NOT NULL DEFAULT 0, -- migracion 032: subconjunto de (dias_subsidio_enfermedad + dias_incapacidad_enfermedad) usado como "dia computable" en Gratificacion/Vacaciones/CTS/Escolaridad, topado a 60 dias/año/contrato
     dias_incapacidad_enfermedad NUMERIC(6,2) NOT NULL DEFAULT 0, -- migracion 038: dias marcados "DESCANSO_MEDICO" del dia 21 en adelante por año/contrato (bucket "Incapacidad por Enfermedad")
+    -- Migracion 048 (reconstruida desde backend_dist): mismo criterio que
+    -- dias_subsidio_maternidad/dias_licencia_paternidad de arriba - foto
+    -- informativa del periodo, ver asistencia_periodo.
+    dias_feriado_trabajado NUMERIC(6,2) NOT NULL DEFAULT 0,
+    dias_dominical_no_laborado NUMERIC(6,2) NOT NULL DEFAULT 0,
 
     -- ingresos
     jornal_diario          NUMERIC(10,2) NOT NULL DEFAULT 0,
     sueldo_basico          NUMERIC(10,2) NOT NULL DEFAULT 0,
     remuneracion_dominical NUMERIC(10,2) NOT NULL DEFAULT 0,
+    -- Migracion 048: prorrateo del descanso dominical NO laborado
+    -- (migracion 023) - se guarda aparte de remuneracion_dominical solo
+    -- para trazabilidad/auditoria (ambos se declaran bajo el mismo
+    -- concepto REM_DOMINICAL, ver motorCalculo.ts).
+    remuneracion_dominical_proporcional NUMERIC(10,2) NOT NULL DEFAULT 0,
     remuneracion_feriado   NUMERIC(10,2) NOT NULL DEFAULT 0,
+    -- Migracion 048: sobretasas legales (D.Leg. 713) por trabajar el
+    -- descanso semanal o un feriado sin sustitutorio.
+    sobretasa_dominical    NUMERIC(10,2) NOT NULL DEFAULT 0,
+    sobretasa_feriado      NUMERIC(10,2) NOT NULL DEFAULT 0,
     importe_horas_extra    NUMERIC(10,2) NOT NULL DEFAULT 0,
     asignacion_familiar    NUMERIC(10,2) NOT NULL DEFAULT 0,
     asignacion_escolaridad NUMERIC(10,2) NOT NULL DEFAULT 0,
@@ -609,6 +663,10 @@ CREATE TABLE detalle_planilla (
     incapacidad_enfermedad NUMERIC(10,2) NOT NULL DEFAULT 0, -- migracion 038: pago del bucket "Incapacidad por Enfermedad" (dia 21+), mismas afectaciones que tenia SUBSIDIO_ENFERMEDAD antes de esta migracion (solo SCTR/AFP)
     licencia_paternidad    NUMERIC(10,2) NOT NULL DEFAULT 0, -- migracion 030: pago real de la licencia por paternidad, sin tope, afecto a todo
     otras_bonificaciones   NUMERIC(10,2) NOT NULL DEFAULT 0,
+    -- Migracion 048 (026 original): monto FIJO por contrato (D.S.
+    -- 003-97-TR), copiado tal cual del contrato a cada boleta del periodo -
+    -- no remunerativo, no se prorratea, no se declara en el PLAME.
+    condicion_trabajo      NUMERIC(10,2) NOT NULL DEFAULT 0,
     gratificacion          NUMERIC(10,2) NOT NULL DEFAULT 0,
     bonificacion_extraordinaria NUMERIC(10,2) NOT NULL DEFAULT 0, -- Ley 29351/30334: 9% de la gratificacion, pagado al trabajador
     cts                    NUMERIC(10,2) NOT NULL DEFAULT 0,
@@ -842,6 +900,10 @@ CREATE TABLE detalle_planilla_mensual (
     dias_dominical         NUMERIC(6,2) NOT NULL DEFAULT 0,
     dias_dominical_no_laborado NUMERIC(6,2) NOT NULL DEFAULT 0,
     dias_feriado           NUMERIC(6,2) NOT NULL DEFAULT 0,
+    -- Migracion 048: faltaba en esta tabla (el resto de columnas de
+    -- "dominical proporcional/feriado no laborado" ya se habian agregado
+    -- antes, ver RECONSTRUCCION_BRECHAS.md).
+    dias_feriado_trabajado NUMERIC(6,2) NOT NULL DEFAULT 0,
     dias_falta             NUMERIC(6,2) NOT NULL DEFAULT 0,
     horas_extra_25         NUMERIC(6,2) NOT NULL DEFAULT 0,
     horas_extra_35         NUMERIC(6,2) NOT NULL DEFAULT 0,
@@ -922,8 +984,24 @@ VALUES
      NULL, NULL, NULL, NULL, NULL, NULL,
      true, true, true, true, true, true, true),
 
+    -- migracion 048 (reconstruida desde backend_dist, ver
+    -- RECONSTRUCCION_BRECHAS.md): recargo legal (D.Leg. 713) por trabajar el
+    -- dia de descanso semanal (domingo) sin sustitutorio - se paga ADEMAS de
+    -- REM_DOMINICAL, no en su lugar.
+    ('SOBRETASA_DOMINICAL', 'Sobretasa por trabajo en dia de descanso (domingo)', 'Recargo legal (D.Leg. 713) por trabajar el dia de descanso semanal sin sustitutorio: 100% adicional sobre el jornal, ademas de la Remuneracion Dominical.', 22, NULL,
+     1.00, 'Recargo sobre el jornal (multiplicador, 1.00 = 100%)', NULL, NULL, NULL, NULL,
+     true, true, true, true, true, true, true),
+
     ('REM_FERIADO', 'Remuneración feriado', 'Pago por feriados no laborados.', 30, NULL,
      NULL, NULL, NULL, NULL, NULL, NULL,
+     true, true, true, true, true, true, false),
+
+    -- migracion 048: junto con REM_FERIADO (pago garantizado del dia)
+    -- completa el "pago triple" legal por trabajar un feriado sin
+    -- sustitutorio (100% pago del dia + 100% por el trabajo + 100% de
+    -- sobretasa).
+    ('SOBRETASA_FERIADO', 'Sobretasa por trabajo en feriado', 'Recargo legal (D.Leg. 713) por trabajar un feriado sin sustitutorio: junto con la Remuneracion Feriado (pago garantizado) completa el "pago triple".', 32, NULL,
+     2.00, 'Recargo sobre el jornal de los dias feriado TRABAJADOS (multiplicador, 2.00 = 200%)', NULL, NULL, NULL, NULL,
      true, true, true, true, true, true, false),
 
     -- migracion 035: las horas extra NO usan codigo_plame (no son editables
@@ -980,8 +1058,21 @@ VALUES
      NULL, NULL, NULL, NULL, NULL, NULL,
      false, false, false, false, false, true, false),
 
+    -- migracion 048 (reconstruida desde backend_dist, ver
+    -- RECONSTRUCCION_BRECHAS.md): monto fijo mensual por contrato
+    -- (D.S. 003-97-TR), configurado en Contratos. No remunerativo: no
+    -- afecta ningun aporte ni se declara en el PLAME.
+    ('CONDICION_TRABAJO', 'Condicion de trabajo', 'Monto fijo mensual por contrato (D.S. 003-97-TR), configurado en Contratos. No remunerativo: no afecta ningun aporte ni se declara en el PLAME.', 105, NULL,
+     NULL, NULL, NULL, NULL, NULL, NULL,
+     false, false, false, false, false, false, false),
+
+    -- migracion 048 (reconstruida desde backend_dist, ver
+    -- RECONSTRUCCION_BRECHAS.md): la Gratificacion de construccion civil
+    -- tiene 2 denominadores segun el semestre (enero-julio=210,
+    -- agosto-diciembre=150 - ver el comentario completo en
+    -- calcularGratificacion, motorCalculo.ts), no uno solo para todo el año.
     ('GRATIFICACION', 'Gratificación (Fiestas Patrias / Navidad)', 'Construcción civil: se paga cada período (factor diario). Empleado: pago semestral con fórmula fija (jul/dic), no editable aquí. Su afectación a Renta de 5ta ya está incorporada en la fórmula anual de Empleado, por eso esa columna no aplica para este concepto.', 110, NULL,
-     40, 'Numerador en jornales básicos (solo construcción civil)', 210, 'Denominador en días (solo construcción civil)', NULL, NULL,
+     40, 'Numerador en jornales básicos (solo construcción civil)', 210, 'Denominador dias ENERO-JULIO (solo construcción civil)', 150, 'Denominador dias AGOSTO-DICIEMBRE (solo construcción civil)',
      false, false, false, false, false, NULL, false),
 
     -- migracion 035: '0313' ("proporcional") en vez de '0312' ("temporal"):

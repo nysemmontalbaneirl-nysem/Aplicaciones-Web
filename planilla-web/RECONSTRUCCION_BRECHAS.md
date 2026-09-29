@@ -1535,3 +1535,124 @@ algún punto anterior del proceso — ver parche #22/46 SALTADO como
 ejemplo de ese mecanismo). Con este parche, el manifiesto queda
 agotado: no quedan más parches `.patch` por aplicar de los que se
 recuperaron del respaldo original.
+
+---
+
+## 30. Migración 048 — dominical proporcional / feriado no laborado / sobretasas / condición de trabajo / Gratificación con 2 denominadores — RESUELVE las brechas #4 y #15, reconstruida desde `backend_dist` (NO desde un `.patch`)
+
+**Estado: resuelta por completo** (cierra la brecha #4 "Dominical
+proporcional / feriado no laborado / sobretasa / condición de trabajo"
+y la brecha #15 "catálogo `dias_feriados`"). La brecha #4.1 (catálogo
+de códigos PLAME para descuentos/aportes) y la brecha #5 (Asiento
+Contable) siguen pendientes — no dependían de esta migración.
+
+**Por qué esta sección es distinta a las demás de este documento:** el
+manifiesto de 46 parches `.patch` quedó agotado en la sección 29. Esta
+reconstrucción NO viene de un parche recuperado — viene de leer el
+código YA COMPILADO de producción real (`/root/work/backend_dist` y
+`/root/work/frontend_dist`, subido por el usuario el 27-sept-2026,
+`dist/*.js` de `tsc` — que solo borra anotaciones de tipo, conservando
+comentarios y nombres de variable intactos). Se usó como fuente de
+verdad para reconstruir fielmente la lógica de negocio (fórmulas,
+redondeos, comentarios) en vez de inventar o adivinar una fórmula legal
+peruana — dado lo sensible (legal/financiero) de este dominio, y
+siguiendo la misma disciplina de verificación (`tsc`+`jest` antes de
+cada commit) que el resto de la reconstrucción por parches.
+
+**Alcance (migración SQL `sql/migracion_048_dominical_proporcional_feriados_condicion_trabajo.sql`, consolida lo que originalmente eran 4 migraciones separadas: 022/023/026/042):**
+
+- **Catálogo `dias_feriados`** (brecha #15): tabla nueva con
+  `ambito` (`NACIONAL`/`REGIONAL`/`LOCAL`) + ubicación UBIGEO opcional,
+  con un `CHECK` de consistencia ámbito↔ubicación (reforzado también en
+  la API) y un índice único (`fecha, ambito, ubigeo_*` con `COALESCE`
+  para que Postgres trate los `NULL` como iguales entre sí). CRUD
+  completo en `routes/conceptos.ts` (`filaAFeriado`,
+  `validarAmbitoFeriado`, `GET/POST/PUT/DELETE /api/conceptos/dias-feriados`),
+  con bitácora, y una pantalla nueva ("Días feriados", tarjeta apilada
+  en Configuración, mismo criterio que "Límites de tareo"/"Horario por
+  proyecto" — el sub-menú de pestañas de Configuración sigue siendo la
+  brecha #12, no reconstruido aquí). Semilla vacía: el usuario carga las
+  fechas oficiales de cada año.
+- **`obtenerFeriadosVigentes(periodoId, contratoId, fechaDesde, fechaHasta)`**
+  (routes/planilla.ts): reemplaza los 2 stubs `const esFeriado = false`
+  que habían dejado las secciones 28/29 — consulta `dias_feriados` con
+  el emparejamiento ámbito↔ubicación del proyecto del periodo (un
+  NACIONAL siempre cuenta; un REGIONAL/LOCAL solo si el proyecto tiene
+  la ubicación UBIGEO configurada y coincide), acotado a la vigencia del
+  contrato (`rangoVigenciaEnPeriodo`, `src/vigenciaContrato.ts` — nuevo
+  módulo, faithful port del `dist`, con sus propias 16 pruebas en
+  `tests/vigencia_contrato.test.ts`).
+- **`agregarTareoDiario` reescrita por completo** (antes: solo sumaba
+  horas por tipo de día): ahora, además, (a) acredita automáticamente
+  el feriado NO laborado (D.Leg. 713, el feriado se paga se trabaje o
+  no) para cada fecha del catálogo dentro del periodo que no tenga
+  horas de "Feriado trabajado" cargadas ni una marca explícita de
+  FALTA/SUBSIDIO/LICENCIA ese día — `dias_feriado` pasa a ser el TOTAL
+  a pagar (trabajado + no laborado), y el nuevo `dias_feriado_trabajado`
+  es el subconjunto SÍ trabajado (insumo de la sobretasa); y (b) arma,
+  día por día, la lista cruda que necesita
+  `calcularDiasDominicalProporcional` (agrupación lunes-a-domingo: un
+  día feriado o con marca especial cuenta 8h fijas, un domingo
+  trabajado excluye esa semana completa del prorrateo, una semana
+  partida entre 2 periodos se prorratea sola porque cada periodo solo
+  ve sus propios días).
+- **`calcularDiasDominicalProporcional`/`calcularRemuneracionDominicalProporcional`/`calcularSobretasaDominical`/`calcularSobretasaFeriado`**
+  (motorCalculo.ts, funciones puras nuevas): el prorrateo del descanso
+  semanal (domingo) NO laborado y las 2 sobretasas legales (D.Leg. 713)
+  por trabajar sin descanso sustitutorio — la sobretasa de feriado usa
+  `dias_feriado_trabajado` (no `dias_feriado` total, que incluye días
+  no laborados que no generan sobretasa).
+- **`calcularGratificacion` con 2 denominadores por tramo** (antes:
+  un solo denominador para todo el año, lo que pagaba de MENOS en
+  agosto-diciembre — caso real confirmado con el usuario: contrato
+  ALVAREZ CALDERON, periodo 08/2026, jornal 89.30, 17.01/día con el
+  denominador viejo vs. 23.81/día real): ahora usa
+  `factorDenominadorEneroJulio` (210, sin cambios) o
+  `factorDenominadorAgostoDiciembre` (150, nuevo) según `mes >= 8`. Los
+  "días computables" de Gratificación y de Asignación por Escolaridad
+  ahora también incluyen `dias_dominical_no_laborado` (no lo hacían
+  antes de esta migración).
+- **`condicion_trabajo`** (D.S. 003-97-TR): monto FIJO mensual por
+  contrato (columna nueva en `contratos`, editable desde el formulario
+  de Trabajadores), copiado tal cual a cada boleta del periodo
+  (`detalle_planilla.condicion_trabajo`) — no remunerativo, no se
+  prorratea, no afecta ningún aporte ni se declara en el PLAME (todos
+  sus `afecto_*` en `false` en `conceptos_planilla`).
+- **3 conceptos nuevos sembrados en `conceptos_planilla`**
+  (`SOBRETASA_DOMINICAL`, `SOBRETASA_FERIADO`, `CONDICION_TRABAJO`),
+  todos con el interruptor `activo` (migración 039) ya funcionando
+  desde el primer commit.
+- **`planillaMensual.ts`**: el `INSERT INTO detalle_planilla_mensual`
+  ahora persiste los 6 campos nuevos leyéndolos de `resultado.detalle`
+  (antes quedaban en su `DEFAULT 0` de tabla, con una `NOTA` explícita
+  de que `d` no los tenía todavía).
+
+**Verificación:** `tsc --noEmit` limpio (backend y frontend, incluyendo
+un `npm run build` completo de ambos). 449/449 tests (422 previos + 27
+nuevos de `tests/dominical_feriado_condicion_trabajo.test.ts`:
+Gratificación con el caso real ALVAREZ CALDERON en las 3 categorías de
+obrero y en ambos tramos del año, `calcularDiasDominicalProporcional`
+con semana completa/parcial/domingo trabajado/múltiples semanas,
+sobretasas, y el CRUD completo de `dias_feriados` con sus reglas de
+validación ámbito↔ubicación) — más 1 test nuevo en
+`tests/dias_computables_construccion_civil.test.ts` (el dominical
+proporcional no laborado SÍ entra a la fórmula de Escolaridad, a
+diferencia del dominical SÍ trabajado) y actualizaciones a los
+fixtures de `AsistenciaEntrada`/`Contrato` en 3 archivos de prueba que
+ya anticipaban estos campos con una `NOTA (recon N/46)` explícita.
+
+**Qué queda pendiente, fuera del alcance de esta migración puntual:**
+- Brecha #4.1 (catálogo `conceptos_aportes` para códigos PLAME de
+  descuentos/aportes) y brecha #5 (`asientoContable.ts`) — ambas
+  reconstructibles desde el mismo `backend_dist` en una sesión futura,
+  si el usuario lo pide.
+- `avisosVigencia`/`avisosUbicacionFeriados` (`POST /:id/calcular`):
+  el `dist` agrega 2 avisos puramente informativos (nunca bloquean el
+  cálculo ni alteran un monto) — un contrato con tareo cargado fuera de
+  su vigencia, y un feriado REGIONAL/LOCAL que no se aplicó a nadie
+  porque el proyecto no tiene ubicación configurada. Se dejaron fuera
+  de esta migración a propósito (UI/informativo, no afecta montos);
+  candidatos para una mejora pequeña posterior si el usuario los quiere.
+- Pantalla "Feriados" implementada como tarjeta apilada simple (sin el
+  sub-menú de pestañas de Configuración, brecha #12 ya documentada) —
+  funcional, pero no exactamente igual a como luce en producción real.
