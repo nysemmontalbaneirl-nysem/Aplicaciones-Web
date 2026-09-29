@@ -127,6 +127,7 @@ interface FilaExportacion {
   vacaciones: string;
   bonificacion_extraordinaria: string;
   subsidio_enfermedad: string;
+  incapacidad_enfermedad: string;
   licencia_paternidad: string;
   gratificacion: string;
   cts: string;
@@ -174,7 +175,20 @@ interface CodigosPlame {
   CODIGO_BONIFICACION_EXTRAORDINARIA: string;
   CODIGO_GRATIFICACION: string;
   CODIGO_CTS: string;
-  CODIGO_SUBSIDIO_ENFERMEDAD: string;
+  // Migracion 038: "SUBSIDIO_ENFERMEDAD" se dividio en 2 conceptos con
+  // casillas PLAME distintas (antes de esta migracion, TODOS los dias
+  // marcados se declaraban por error bajo 0916, aunque los primeros 20/año
+  // debian ir en 0121 igual que un dia normal de trabajo - bug reportado
+  // por el usuario en produccion):
+  // - CODIGO_DESCANSO_MEDICO ("Dias de Descanso Medico", <=20 dias/año,
+  //   concepto DESCANSO_MEDICO) comparte la MISMA casilla 0121 que
+  //   CODIGO_SUELDO_BASICO (confirmado con el usuario: "los descansos
+  //   medicos remunerados van en la casilla 0121").
+  // - CODIGO_INCAPACIDAD_ENFERMEDAD ("Dias por Incapacidad por Enfermedad",
+  //   21+ dias/año, concepto INCAPACIDAD_ENFERMEDAD) sigue usando la
+  //   casilla 0916 que antes usaba SUBSIDIO_ENFERMEDAD completo.
+  CODIGO_DESCANSO_MEDICO: string;
+  CODIGO_INCAPACIDAD_ENFERMEDAD: string;
   CODIGO_LICENCIA_PATERNIDAD: string;
   // Horas extra: 2 codigos fijos (0105/0106), no editables desde
   // Configuracion como los demas - ver calcularLineasHorasExtra. Los
@@ -224,7 +238,8 @@ async function resolverCodigosPlame(): Promise<CodigosPlame> {
     CODIGO_BONIFICACION_EXTRAORDINARIA: codigoConcepto("BONIFICACION_EXTRAORDINARIA", CONCEPTO.BONIFICACION_EXTRAORDINARIA),
     CODIGO_GRATIFICACION: codigoConcepto("GRATIFICACION", CONCEPTO.GRATIFICACION),
     CODIGO_CTS: codigoConcepto("CTS", CONCEPTO.CTS),
-    CODIGO_SUBSIDIO_ENFERMEDAD: codigoConcepto("SUBSIDIO_ENFERMEDAD", CONCEPTO.SUBSIDIO_INCAPACIDAD_ENFERMEDAD),
+    CODIGO_DESCANSO_MEDICO: codigoConcepto("DESCANSO_MEDICO", CONCEPTO.REMUNERACION_BASICA),
+    CODIGO_INCAPACIDAD_ENFERMEDAD: codigoConcepto("INCAPACIDAD_ENFERMEDAD", CONCEPTO.SUBSIDIO_INCAPACIDAD_ENFERMEDAD),
     CODIGO_LICENCIA_PATERNIDAD: codigoConcepto("LICENCIA_PATERNIDAD", CONCEPTO.LICENCIA_CON_GOCE_DE_HABER),
     FACTORES_HORAS_EXTRA_CONSTRUCCION: [
       obtenerFactor(conceptos, "HORAS_EXTRA_CONSTRUCCION", "factor1"),
@@ -292,7 +307,8 @@ function construirLineasREM(
     CODIGO_BONIFICACION_EXTRAORDINARIA,
     CODIGO_GRATIFICACION,
     CODIGO_CTS,
-    CODIGO_SUBSIDIO_ENFERMEDAD,
+    CODIGO_DESCANSO_MEDICO,
+    CODIGO_INCAPACIDAD_ENFERMEDAD,
     CODIGO_LICENCIA_PATERNIDAD,
   } = codigos;
 
@@ -318,7 +334,21 @@ function construirLineasREM(
     const sobretasa = num(fila.sobretasa_dominical) + num(fila.sobretasa_feriado);
 
     const candidatas: Array<[string, number]> = [
-      [CODIGO_SUELDO_BASICO, num(fila.sueldo_basico)],
+      // Migracion 038: "Dias de Descanso Medico" (<=20/año, concepto
+      // DESCANSO_MEDICO) comparte por defecto la MISMA casilla PLAME que
+      // SUELDO_BASICO (0121, confirmado con el usuario). Si el codigo_plame
+      // de DESCANSO_MEDICO coincide con el de SUELDO_BASICO (el caso
+      // normal, sin editar nada en Configuracion), se suman en UNA sola
+      // linea - mismo criterio ya usado para REM_DOMINICAL+REM_FERIADO
+      // (CODIGO_DESCANSO_FERIADO, abajo). Si el usuario edita el codigo
+      // PLAME de DESCANSO_MEDICO en Configuracion para que sea distinto del
+      // de SUELDO_BASICO, se declaran en 2 lineas separadas.
+      ...(CODIGO_DESCANSO_MEDICO === CODIGO_SUELDO_BASICO
+        ? ([[CODIGO_SUELDO_BASICO, num(fila.sueldo_basico) + num(fila.subsidio_enfermedad)]] as Array<[string, number]>)
+        : ([
+            [CODIGO_SUELDO_BASICO, num(fila.sueldo_basico)],
+            [CODIGO_DESCANSO_MEDICO, num(fila.subsidio_enfermedad)],
+          ] as Array<[string, number]>)),
       [
         CODIGO_DESCANSO_FERIADO,
         num(fila.remuneracion_dominical) + num(fila.remuneracion_dominical_proporcional) + num(fila.remuneracion_feriado),
@@ -330,7 +360,7 @@ function construirLineasREM(
       [CODIGO_MOVILIDAD, num(fila.bonificacion_movilidad)],
       [CODIGO_VACACIONES, num(fila.vacaciones)],
       [CODIGO_BONIFICACION_EXTRAORDINARIA, num(fila.bonificacion_extraordinaria)],
-      [CODIGO_SUBSIDIO_ENFERMEDAD, num(fila.subsidio_enfermedad)],
+      [CODIGO_INCAPACIDAD_ENFERMEDAD, num(fila.incapacidad_enfermedad)],
       [CODIGO_LICENCIA_PATERNIDAD, num(fila.licencia_paternidad)],
       [CODIGO_GRATIFICACION, num(fila.gratificacion)],
       [CODIGO_CTS, num(fila.cts)],
@@ -385,7 +415,7 @@ const COLUMNAS_FILA_EXPORTACION = `sueldo_basico, remuneracion_dominical, remune
             horas_extra_25, horas_extra_35, horas_extra_100, jornal_diario,
             asignacion_familiar, asignacion_escolaridad, bonificacion_buc,
             bonificacion_movilidad, vacaciones, bonificacion_extraordinaria,
-            subsidio_enfermedad, licencia_paternidad,
+            subsidio_enfermedad, incapacidad_enfermedad, licencia_paternidad,
             gratificacion, cts, aporte_pension, descuento_sindicato,
             conafovicer, renta_5ta, seguro_vida, essalud, sctr, senati,
             detalle_json`;

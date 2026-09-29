@@ -210,22 +210,41 @@ export interface AsistenciaEntrada {
   // se mantiene puramente informativo (no genera pago), dias_subsidio_enfermedad
   // y dias_licencia_paternidad ahora SI generan pago (ver
   // calcularSubsidioEnfermedad/calcularLicenciaPaternidad en motorCalculo.ts).
+  // Migracion 038: este campo se renombro de significado (no de nombre, por
+  // compatibilidad de columna/codigo) - pasa a representar SOLO el
+  // subconjunto "Dias de Descanso Medico" (primeros 20 dias/año calendario
+  // por CONTRATO, a cargo del EMPLEADOR, D.S. 009-97-SA, concepto
+  // DESCANSO_MEDICO, casilla PLAME 0121) de los dias marcados
+  // "DESCANSO_MEDICO" en el Tareo Diario. El resto (dia 21 en adelante) va
+  // en dias_incapacidad_enfermedad (ver abajo). Antes de esta migracion el
+  // sistema bloqueaba cargar mas de 20 dias/año (por eso este campo nunca
+  // superaba 20) y ademas los calculaba TODOS con el tratamiento tributario
+  // del dia 21+ por error (bug real reportado por el usuario) - ahora la
+  // division es automatica (agregarTareoDiario, routes/planilla.ts) y ya no
+  // hay bloqueo de carga.
   dias_subsidio_enfermedad: number;
+  // Migracion 038: dias marcados "DESCANSO_MEDICO" que, por superar el
+  // acumulado de 20 dias/año calendario por CONTRATO, se pagan como
+  // "Incapacidad por Enfermedad" (subsidiados por EsSalud directamente al
+  // trabajador, fuera de planilla en la practica pero declarados en el
+  // PLAME bajo la casilla 0916, concepto INCAPACIDAD_ENFERMEDAD) en vez de
+  // como dia normal de trabajo. Se calcula automaticamente en
+  // agregarTareoDiario a partir del mismo acumulado anual que topa
+  // dias_subsidio_enfermedad a 20 - ver el comentario completo alli.
+  dias_incapacidad_enfermedad: number;
   dias_subsidio_maternidad: number;
   dias_licencia_paternidad: number;
-  // Migracion 032: subconjunto de dias_subsidio_enfermedad que cuenta como
-  // "dia computable" para Gratificacion/Vacaciones/CTS/Asignacion por
+  // Migracion 032: subconjunto de (dias_subsidio_enfermedad +
+  // dias_incapacidad_enfermedad, es decir TODOS los dias marcados
+  // "DESCANSO_MEDICO" sin importar quien los paga) que cuenta como "dia
+  // computable" para Gratificacion/Vacaciones/CTS/Asignacion por
   // Escolaridad de construccion civil, topado a 60 dias por año calendario
   // por CONTRATO ("descansos medicos debidamente acreditados hasta por un
   // periodo de 60 dias al año" - RSD N°450-90-2SD-NEC). Es un tope DISTINTO
-  // del de 20 dias/año ya existente (ese es sobre el PAGO del subsidio a
-  // cargo del empleador, D.S. 009-97-SA, ver la validacion en
-  // PUT /:id/tareo-diario/:contratoId) - dias_subsidio_enfermedad (el campo
-  // de arriba) sigue siendo el que se usa para PAGAR el subsidio y para el
-  // aviso informativo de la boleta, sin cambios. Como hoy el sistema ya
-  // bloquea cargar mas de 20 dias/año de SUBSIDIO_ENFERMEDAD por contrato,
-  // este tope de 60 en la practica nunca se activa todavia (20 < 60) - se
-  // deja implementado correctamente para cuando ese otro tope se revise.
+  // del de 20 dias/año de arriba (ese es sobre QUIEN PAGA el dia, este es
+  // sobre la ELEGIBILIDAD para beneficios sociales) - ambos ejes son
+  // legalmente independientes y se calculan por separado en
+  // agregarTareoDiario.
   dias_subsidio_enfermedad_computable: number;
 }
 
@@ -245,7 +264,13 @@ export interface DetallePlanilla {
   // foto historica, puramente informativa - dias_subsidio_maternidad NUNCA
   // genera pago; dias_subsidio_enfermedad/dias_licencia_paternidad SI
   // (migracion 030, ver subsidio_enfermedad/licencia_paternidad mas abajo).
+  // Migracion 038: dias_subsidio_enfermedad = solo el bucket "Dias de
+  // Descanso Medico" (<=20/año, concepto DESCANSO_MEDICO); ver el
+  // comentario completo en AsistenciaEntrada.
   dias_subsidio_enfermedad: number;
+  // Migracion 038: bucket "Dias por Incapacidad por Enfermedad" (dia 21 en
+  // adelante, concepto INCAPACIDAD_ENFERMEDAD) - ver AsistenciaEntrada.
+  dias_incapacidad_enfermedad: number;
   dias_subsidio_maternidad: number;
   dias_licencia_paternidad: number;
   // Migracion 032: subconjunto de dias_subsidio_enfermedad efectivamente
@@ -266,13 +291,20 @@ export interface DetallePlanilla {
   bonificacion_movilidad: number;
   // Migracion 030: pago REAL de los dias de arriba (dias_subsidio_enfermedad/
   // dias_licencia_paternidad) - antes (migracion 027) esos campos eran
-  // puramente informativos. subsidio_enfermedad = jornal_diario x
-  // dias_subsidio_enfermedad, topado en el origen a 20 dias/año por contrato
-  // (ver la validacion en PUT /:id/tareo-diario/:contratoId); sin tope para
-  // licencia_paternidad. dias_subsidio_maternidad NO tiene equivalente
-  // pagado: se mantiene puramente informativo (lo paga EsSalud desde el
-  // dia 1, nunca por planilla).
+  // puramente informativos. Migracion 038: subsidio_enfermedad = jornal_diario
+  // x dias_subsidio_enfermedad (solo el bucket <=20 dias/año, concepto
+  // DESCANSO_MEDICO - afecto a todos los aportes, igual que un dia normal de
+  // trabajo); sin tope para licencia_paternidad. dias_subsidio_maternidad NO
+  // tiene equivalente pagado: se mantiene puramente informativo (lo paga
+  // EsSalud desde el dia 1, nunca por planilla).
   subsidio_enfermedad: number;
+  // Migracion 038: pago del bucket "Dias por Incapacidad por Enfermedad"
+  // (dia 21 en adelante, concepto INCAPACIDAD_ENFERMEDAD, casilla PLAME
+  // 0916) = jornal_diario x dias_incapacidad_enfermedad. Mantiene las
+  // mismas afectaciones que tenia el concepto SUBSIDIO_ENFERMEDAD original
+  // antes de esta migracion (SI SCTR/AFP, NO EsSalud/SENATI/ONP/Renta5ta/
+  // Conafovicer) - confirmado con el usuario.
+  incapacidad_enfermedad: number;
   licencia_paternidad: number;
   otras_bonificaciones: number;
   gratificacion: number;
@@ -332,6 +364,8 @@ export interface DetallePlanillaMensual {
   horas_extra_35: number;
   horas_extra_100: number;
   dias_subsidio_enfermedad: number;
+  // Migracion 038: ver el comentario completo en DetallePlanilla.
+  dias_incapacidad_enfermedad: number;
   dias_subsidio_maternidad: number;
   dias_licencia_paternidad: number;
   dias_subsidio_enfermedad_computable: number;
@@ -351,6 +385,7 @@ export interface DetallePlanillaMensual {
   bonificacion_movilidad: number;
   condicion_trabajo: number;
   subsidio_enfermedad: number;
+  incapacidad_enfermedad: number;
   licencia_paternidad: number;
   otras_bonificaciones: number;
   gratificacion: number;

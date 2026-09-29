@@ -5,23 +5,51 @@
 // sumaba al total de ingresos ni generaba los aportes/descuentos
 // correspondientes).
 //
-// Decisiones de negocio confirmadas con el usuario (2 rondas de preguntas):
-// 1) Tope de 20 dias/año por CONTRATO para descanso medico por enfermedad:
-//    se BLOQUEA el registro (no solo aviso) al llegar al dia 21.
-// 2) Licencia por paternidad: se paga igual que un dia trabajado, SIN tope.
-// 3) Descanso medico por MATERNIDAD: se mantiene puramente informativo (lo
+// ACTUALIZADO por la migracion 038 (17/09/2026): en produccion se detecto
+// que el sistema estaba tratando TODOS los dias de descanso medico como si
+// fueran "subsidiados por EsSalud" (afecto solo a SCTR/AFP, PLAME 0916),
+// cuando en realidad eso solo es correcto a partir del dia 21 del año
+// calendario por contrato (D.S. 009-97-SA) - los primeros 20 dias/año los
+// paga integro el empleador, exactamente igual que un dia de trabajo
+// normal (afecto a todo, PLAME 0121). Esta migracion:
+// 1) Renombra el concepto SUBSIDIO_ENFERMEDAD a DESCANSO_MEDICO y le da el
+//    tratamiento de "dia normal" (afecto a todo, PLAME 0121 - se fusiona
+//    con SUELDO_BASICO en el REM, mismo criterio ya usado para
+//    REM_DOMINICAL+REM_FERIADO bajo 0115).
+// 2) Crea el concepto nuevo INCAPACIDAD_ENFERMEDAD (PLAME 0916), que
+//    hereda los flags de afectacion que tenia ANTES el viejo
+//    SUBSIDIO_ENFERMEDAD (NO afecto a EsSalud/SENATI/ONP, SI afecto a
+//    SCTR/AFP), para el dia 21 en adelante.
+// 3) La clasificacion entre ambos es AUTOMATICA: agregarTareoDiario
+//    (routes/planilla.ts) cuenta, por año calendario y por contrato,
+//    cuantos dias de DESCANSO_MEDICO ya estan marcados FUERA del rango de
+//    fechas que se esta guardando/calculando, y reparte los dias de ESTE
+//    rango entre el cupo normal restante (hasta completar 20) y el
+//    excedente (INCAPACIDAD_ENFERMEDAD). El bloqueo con error 400 que
+//    antes existia al llegar al dia 21 se ELIMINO a proposito: ahora el
+//    dia 21 se guarda y se clasifica solo, no se rechaza.
+//
+// Decisiones de negocio confirmadas con el usuario (varias rondas de
+// preguntas, la ultima el 17/09/2026):
+// 1) DESCANSO_MEDICO (dias 1-20/año/contrato): se paga y se afecta a
+//    aportes EXACTAMENTE igual que un dia de trabajo normal (afecto a
+//    todo), declarado en el PLAME bajo el codigo 0121 (fusionado con
+//    SUELDO_BASICO).
+// 2) INCAPACIDAD_ENFERMEDAD (dia 21 en adelante, mismo año/contrato):
+//    mantiene el tratamiento tributario que antes tenia TODO el concepto -
+//    NO afecto a EsSalud/SENATI/ONP, SI afecto a SCTR y AFP -, declarado
+//    en el PLAME bajo el codigo oficial 0916 "SUBSIDIOS DE INCAPACIDAD POR
+//    ENFERMEDAD" (Anexo 22 SUNAT, docs/tabla22_plame.json).
+// 3) Licencia por paternidad: se paga igual que un dia trabajado, SIN
+//    tope, afecto a todo - codigo 0907 "LICENCIA CON GOCE DE HABER" (no
+//    existe un codigo especifico de "paternidad" en el catalogo). Sin
+//    cambios en esta migracion.
+// 4) Descanso medico por MATERNIDAD: se mantiene puramente informativo (lo
 //    paga EsSalud desde el dia 1, nunca por planilla) - sin cambios.
-// 4) Valorizacion: el mismo jornal diario de un dia normal trabajado.
-// 5) Tratamiento tributario del descanso medico por enfermedad: NO afecto a
-//    EsSalud/SENATI/ONP, SI afecto a SCTR y AFP - segun el codigo oficial
-//    PLAME 0916 "SUBSIDIOS DE INCAPACIDAD POR ENFERMEDAD" (Anexo 22 SUNAT,
-//    docs/tabla22_plame.json), que el usuario confirmo seguir tal cual
-//    (respetar el Anexo 22), incluso sobre su primera respuesta ("afecto a
-//    todo"). La licencia por paternidad usa el codigo 0907 "LICENCIA CON
-//    GOCE DE HABER" (no existe un codigo especifico de "paternidad" en el
-//    catalogo), afecto a todo segun ese mismo Anexo 22.
-//    (migracion 035, 17/09/2026: los codigos se corrigieron de "916"/"907"
-//    a "0916"/"0907" - les faltaba el 0 inicial en conceptos_planilla.)
+// 5) Valorizacion: el mismo jornal diario de un dia normal trabajado.
+//    (migracion 035, 17/09/2026: los codigos PLAME se corrigieron de
+//    "916"/"907" a "0916"/"0907" - les faltaba el 0 inicial en
+//    conceptos_planilla. Sigue vigente tal cual.)
 import request from "supertest";
 import { app } from "../src/app";
 import { pool } from "../src/db";
@@ -40,10 +68,11 @@ function auth() {
 // Se usa categoria EMPLEADO (regimen general) en vez de PEON/construccion
 // civil a proposito: la gratificacion de construccion civil se paga CADA
 // periodo y su formula usa "dias computables" que YA incluyen
-// dias_subsidio_enfermedad/dias_subsidio_maternidad/dias_licencia_paternidad
-// desde la migracion 025 (para no perjudicar al trabajador). La
-// gratificacion de EMPLEADO es semestral (solo julio/diciembre) y el
-// periodo de esta prueba es Febrero, asi que no interfiere.
+// dias_subsidio_enfermedad/dias_incapacidad_enfermedad/dias_subsidio_maternidad/
+// dias_licencia_paternidad desde la migracion 025/038 (para no perjudicar
+// al trabajador). La gratificacion de EMPLEADO es semestral (solo
+// julio/diciembre) y el periodo de esta prueba es Febrero, asi que no
+// interfiere.
 async function crearContratoEmpleado(dni: string, nombre: string): Promise<number> {
   const e = await pool.query(
     `INSERT INTO empleados (tipo_documento, numero_documento, apellidos_nombres, numero_hijos)
@@ -89,7 +118,7 @@ async function obtenerDetalle(contratoId: number) {
 // "semana calendario" en ambos contratos comparados, para que el dominical
 // proporcional (jornal/6, migracion 023 - un mecanismo YA existente y
 // totalmente ajeno a esta migracion) de igual en los 2 casos y no contamine
-// la comparacion: un dia SUBSIDIO_ENFERMEDAD/SUBSIDIO_MATERNIDAD/
+// la comparacion: un dia DESCANSO_MEDICO/SUBSIDIO_MATERNIDAD/
 // LICENCIA_PATERNIDAD cuenta 8h fijas para ese calculo, igual que un dia
 // normal trabajado - por eso el contrato "con" REEMPLAZA uno de estos 10
 // dias por el dia especial (en vez de agregar un dia 11 aparte), y el
@@ -139,17 +168,17 @@ afterAll(async () => {
   await pool.end();
 });
 
-describe("SUBSIDIO_ENFERMEDAD: se paga igual que un dia trabajado, afecto solo a SCTR/AFP (codigo PLAME 916)", () => {
+describe("DESCANSO_MEDICO (dias 1-20/año/contrato): se paga y se afecta a aportes IGUAL que un dia trabajado normal (PLAME 0121, fusionado con SUELDO_BASICO)", () => {
   let contratoConId: number;
   let contratoSinId: number;
 
   it("aparece en detalle_planilla.subsidio_enfermedad y el total_ingresos es equivalente a pagar ese dia como trabajado", async () => {
-    contratoConId = await crearContratoEmpleado("77791001", "PRUEBA SUBSIDIO ENFERMEDAD CON DIA");
-    contratoSinId = await crearContratoEmpleado("77791002", "PRUEBA SUBSIDIO ENFERMEDAD SIN DIA");
+    contratoConId = await crearContratoEmpleado("77791001", "PRUEBA DESCANSO MEDICO CON DIA");
+    contratoSinId = await crearContratoEmpleado("77791002", "PRUEBA DESCANSO MEDICO SIN DIA");
 
     const guardadoCon = await guardarTareoDiario(contratoConId, [
       ...NUEVE_DIAS_NORMALES,
-      { fecha: DECIMO_DIA, tipo_dia_especial: "SUBSIDIO_ENFERMEDAD" },
+      { fecha: DECIMO_DIA, tipo_dia_especial: "DESCANSO_MEDICO" },
     ]);
     expect(guardadoCon.status).toBe(204);
     const guardadoSin = await guardarTareoDiario(contratoSinId, DIEZ_DIAS_NORMALES);
@@ -161,32 +190,35 @@ describe("SUBSIDIO_ENFERMEDAD: se paga igual que un dia trabajado, afecto solo a
     const sin = await obtenerDetalle(contratoSinId);
 
     expect(Number(con.dias_subsidio_enfermedad)).toBe(1);
+    expect(Number(con.dias_incapacidad_enfermedad)).toBe(0);
     expect(Number(sin.dias_subsidio_enfermedad)).toBe(0);
-    expect(Number(con.dias_trabajados)).toBe(9); // el dia de subsidio NO cuenta como dia trabajado
+    expect(Number(con.dias_trabajados)).toBe(9); // el dia de descanso medico NO cuenta como dia trabajado
     expect(Number(sin.dias_trabajados)).toBe(10);
 
     expect(Number(con.subsidio_enfermedad)).toBeCloseTo(Number(con.jornal_diario), 2);
+    expect(Number(con.incapacidad_enfermedad)).toBe(0);
     expect(Number(sin.subsidio_enfermedad)).toBe(0);
 
-    // El dia de subsidio paga lo mismo que hubiera pagado como dia
+    // El dia de descanso medico paga lo mismo que hubiera pagado como dia
     // trabajado normal (mismo jornal diario) - el total_ingresos de ambos
     // contratos (10 dias "pagados" en ambos casos, solo que por conceptos
     // distintos) debe ser equivalente.
     expect(Number(con.total_ingresos)).toBeCloseTo(Number(sin.total_ingresos), 1);
   });
 
-  it("NO afecta EsSalud, SENATI ni ONP (afecto_essalud/afecto_senati/afecto_onp = false)", async () => {
+  it("SI afecta EsSalud, SENATI y ONP igual que un dia trabajado normal (afecto a todo, a diferencia del viejo SUBSIDIO_ENFERMEDAD)", async () => {
     const con = await obtenerDetalle(contratoConId);
     const sin = await obtenerDetalle(contratoSinId);
 
-    // "sin" tiene 10 dias trabajados (todos afectos), "con" tiene 9 dias
-    // trabajados + 1 dia de subsidio que NO es afecto - por eso con.essalud
-    // debe ser MENOR (base de 9 dias en vez de 10), y por la misma razon
-    // aporte_pension (base ONP) tambien.
-    expect(Number(con.essalud)).toBeLessThan(Number(sin.essalud));
-    expect(Number(con.aporte_pension)).toBeLessThan(Number(sin.aporte_pension));
+    // Antes de la migracion 038, "con" tenia 9 dias trabajados + 1 dia de
+    // subsidio NO afecto, asi que su EsSalud/ONP eran MENORES que "sin". A
+    // partir de esta migracion, el dia 1-20 de descanso medico se afecta
+    // igual que un dia normal - por eso ambos deben quedar equivalentes
+    // (ambos con base de 10 dias).
+    expect(Number(con.essalud)).toBeCloseTo(Number(sin.essalud), 2);
+    expect(Number(con.aporte_pension)).toBeCloseTo(Number(sin.aporte_pension), 2);
     // SENATI (EMPLEADO no es construccion civil): 0 en ambos casos, sin
-    // relacion con el subsidio - se verifica igual para no perder la
+    // relacion con el descanso medico - se verifica igual para no perder la
     // regresion si esto cambiara.
     expect(Number(con.senati)).toBeCloseTo(Number(sin.senati), 2);
   });
@@ -194,17 +226,26 @@ describe("SUBSIDIO_ENFERMEDAD: se paga igual que un dia trabajado, afecto solo a
   it("SI afecta SCTR (afecto_sctr = true): la base de 10 dias es la misma en ambos casos", async () => {
     const con = await obtenerDetalle(contratoConId);
     const sin = await obtenerDetalle(contratoSinId);
-    // A diferencia de EsSalud/ONP, SCTR SI incluye el subsidio en su base -
-    // por eso, a pesar de que "con" tiene 1 dia trabajado menos, su aporte
-    // SCTR (activado en ambos contratos via sctr_salud) es equivalente al
-    // de "sin" (ambos con base de 10 dias).
     expect(Number(con.sctr)).toBeCloseTo(Number(sin.sctr), 2);
   });
 
-  it("aparece en el PLAME/REM bajo el codigo oficial 0916 (Anexo 22 SUNAT)", async () => {
+  it("aparece en el PLAME/REM FUSIONADO con SUELDO_BASICO bajo el codigo 0121 (NO genera una linea 0916 aparte)", async () => {
     const lineas = await generarLineasREM(periodoId);
-    const lineaDelContrato = lineas.find((l) => l.includes("|77791001|0916|"));
-    expect(lineaDelContrato).toBeDefined();
+    const linea0121 = lineas.find((l) => l.includes("|77791001|0121|"));
+    expect(linea0121).toBeDefined();
+
+    const con = await obtenerDetalle(contratoConId);
+    const [, , , devengadoTexto] = (linea0121 as string).split("|");
+    // La linea 0121 debe traer sueldo_basico + subsidio_enfermedad SUMADOS
+    // en un solo monto (mismo criterio ya usado para REM_DOMINICAL +
+    // REM_FERIADO bajo 0115).
+    expect(Number(devengadoTexto)).toBeCloseTo(
+      Number(con.sueldo_basico) + Number(con.subsidio_enfermedad),
+      1
+    );
+
+    const linea0916 = lineas.find((l) => l.includes("|77791001|0916|"));
+    expect(linea0916).toBeUndefined();
   });
 });
 
@@ -232,15 +273,15 @@ describe("LICENCIA_PATERNIDAD: se paga igual que un dia trabajado, sin tope, afe
     expect(Number(con.total_ingresos)).toBeCloseTo(Number(sin.total_ingresos), 1);
   });
 
-  it("SI afecta EsSalud y ONP igual que un dia trabajado (afecto a todo, a diferencia de SUBSIDIO_ENFERMEDAD)", async () => {
+  it("SI afecta EsSalud y ONP igual que un dia trabajado (afecto a todo, igual que DESCANSO_MEDICO dentro del tope de 20 dias)", async () => {
     const con = await obtenerDetalle(contratoConId);
     const sin = await obtenerDetalle(contratoSinId);
 
-    // A diferencia del caso SUBSIDIO_ENFERMEDAD (afecto_essalud/onp=false),
-    // aqui la licencia de paternidad SI cuenta para EsSalud/ONP igual que
-    // un dia trabajado - por eso, aunque "con" tenga 1 dia trabajado menos,
-    // su EsSalud/aporte_pension deben ser equivalentes a "sin" (ambos con
-    // base de 10 dias).
+    // A diferencia de INCAPACIDAD_ENFERMEDAD (dia 21+ de descanso medico,
+    // no afecto a EsSalud/ONP), la licencia de paternidad SI cuenta para
+    // EsSalud/ONP igual que un dia trabajado - por eso, aunque "con" tenga
+    // 1 dia trabajado menos, su EsSalud/aporte_pension deben ser
+    // equivalentes a "sin" (ambos con base de 10 dias).
     expect(Number(con.essalud)).toBeCloseTo(Number(sin.essalud), 2);
     expect(Number(con.aporte_pension)).toBeCloseTo(Number(sin.aporte_pension), 2);
   });
@@ -269,79 +310,120 @@ describe("SUBSIDIO_MATERNIDAD: se mantiene puramente informativo (regresion - NU
     const sin = await obtenerDetalle(contratoSinId);
 
     expect(Number(con.dias_subsidio_maternidad)).toBe(1);
-    // A diferencia de SUBSIDIO_ENFERMEDAD/LICENCIA_PATERNIDAD (que si
-    // reemplazan el pago del dia), aqui NO existe ningun concepto que pague
-    // ese decimo dia - "con" queda con 1 dia MENOS de sueldo pagado que
-    // "sin", sin ninguna compensacion. La diferencia debe ser
-    // aproximadamente 1 jornal diario.
+    // A diferencia de DESCANSO_MEDICO/LICENCIA_PATERNIDAD (que si reemplazan
+    // el pago del dia), aqui NO existe ningun concepto que pague ese decimo
+    // dia - "con" queda con 1 dia MENOS de sueldo pagado que "sin", sin
+    // ninguna compensacion. La diferencia debe ser aproximadamente 1 jornal
+    // diario.
     expect(Number(sin.total_ingresos) - Number(con.total_ingresos)).toBeCloseTo(Number(con.jornal_diario), 1);
   });
 });
 
-describe("Tope de 20 dias/año de SUBSIDIO_ENFERMEDAD por contrato: se BLOQUEA al superarlo", () => {
-  it("bloquea (400) el registro del dia 21 de SUBSIDIO_ENFERMEDAD en el mismo año para el mismo contrato", async () => {
-    const contratoId = await crearContratoEmpleado("77791007", "PRUEBA TOPE 20 DIAS ENFERMEDAD");
+describe("Migracion 038: division automatica 20/21+ de DESCANSO_MEDICO por año calendario y por contrato", () => {
+  it("el dia 21 (20 ya marcados este año, fuera de este periodo) YA NO se bloquea (204) y se clasifica como INCAPACIDAD_ENFERMEDAD", async () => {
+    const contratoId = await crearContratoEmpleado("77791007", "PRUEBA DIA 21 DESCANSO MEDICO");
 
-    // Siembra directa de 20 dias ya cargados (simula que ya se guardaron en
-    // este u otro periodo del mismo año) - evita depender de 20 llamadas
-    // HTTP y deja claro que el tope es ACUMULADO por año calendario, no solo
-    // "por request".
+    // Siembra directa de 20 dias ya marcados DESCANSO_MEDICO (simula que ya
+    // se guardaron en este u otro periodo del mismo año, todos FUERA del
+    // rango del periodo de esta prueba - Febrero) - deja claro que el
+    // conteo es ACUMULADO por año calendario, no solo "por request".
     const fechasExistentes = Array.from({ length: 20 }, (_, i) => `2026-01-${String(i + 1).padStart(2, "0")}`);
     for (const fecha of fechasExistentes) {
       await pool.query(
         `INSERT INTO tareo_diario (periodo_id, contrato_id, fecha, tipo_dia_especial)
-         VALUES ($1, $2, $3, 'SUBSIDIO_ENFERMEDAD')`,
+         VALUES ($1, $2, $3, 'DESCANSO_MEDICO')`,
         [periodoId, contratoId, fecha]
       );
     }
 
-    // El dia 21 (fecha nueva, no incluida arriba) debe rechazarse - todo el
-    // request se descarta, ni siquiera ese dia se guarda.
-    const bloqueado = await guardarTareoDiario(contratoId, [
-      { fecha: "2026-02-20", tipo_dia_especial: "SUBSIDIO_ENFERMEDAD" },
+    // El dia 21 (fecha nueva, dentro de este periodo) ya NO se rechaza -
+    // se guarda normalmente.
+    const guardado = await guardarTareoDiario(contratoId, [
+      { fecha: "2026-02-20", tipo_dia_especial: "DESCANSO_MEDICO" },
     ]);
-    expect(bloqueado.status).toBe(400);
-    expect(bloqueado.body.error).toMatch(/20 dias/);
+    expect(guardado.status).toBe(204);
 
-    const noSeGuardo = await pool.query(
-      "SELECT 1 FROM tareo_diario WHERE contrato_id = $1 AND fecha = '2026-02-20'",
-      [contratoId]
-    );
-    expect(noSeGuardo.rowCount).toBe(0);
+    await calcular();
+    const detalle = await obtenerDetalle(contratoId);
+
+    // El cupo normal (20) ya estaba agotado por los dias de enero - este
+    // dia nuevo cae 100% en INCAPACIDAD_ENFERMEDAD (PLAME 0916), no en
+    // DESCANSO_MEDICO (PLAME 0121).
+    expect(Number(detalle.dias_subsidio_enfermedad)).toBe(0);
+    expect(Number(detalle.dias_incapacidad_enfermedad)).toBe(1);
+    expect(Number(detalle.subsidio_enfermedad)).toBe(0);
+    expect(Number(detalle.incapacidad_enfermedad)).toBeCloseTo(Number(detalle.jornal_diario), 2);
+
+    const lineas = await generarLineasREM(periodoId);
+    expect(lineas.find((l) => l.includes("|77791007|0916|"))).toBeDefined();
   });
 
-  it("permite re-guardar una fecha YA marcada SUBSIDIO_ENFERMEDAD (no se cuenta dos veces)", async () => {
-    const contratoId = await crearContratoEmpleado("77791008", "PRUEBA TOPE 20 DIAS RE-GUARDAR");
+  it("permite llegar EXACTAMENTE a 20 dias sin pasar a INCAPACIDAD_ENFERMEDAD (el excedente es solo al SUPERAR 20)", async () => {
+    const contratoId = await crearContratoEmpleado("77791008", "PRUEBA TOPE EXACTO 20 DIAS");
+    const fechasExistentes = Array.from({ length: 19 }, (_, i) => `2026-01-${String(i + 1).padStart(2, "0")}`);
+    for (const fecha of fechasExistentes) {
+      await pool.query(
+        `INSERT INTO tareo_diario (periodo_id, contrato_id, fecha, tipo_dia_especial)
+         VALUES ($1, $2, $3, 'DESCANSO_MEDICO')`,
+        [periodoId, contratoId, fecha]
+      );
+    }
+    const dia20 = await guardarTareoDiario(contratoId, [
+      { fecha: "2026-02-20", tipo_dia_especial: "DESCANSO_MEDICO" },
+    ]);
+    expect(dia20.status).toBe(204);
+
+    await calcular();
+    const detalle = await obtenerDetalle(contratoId);
+    expect(Number(detalle.dias_subsidio_enfermedad)).toBe(1);
+    expect(Number(detalle.dias_incapacidad_enfermedad)).toBe(0);
+  });
+
+  it("permite re-guardar una fecha YA marcada DESCANSO_MEDICO sin contarla dos veces", async () => {
+    const contratoId = await crearContratoEmpleado("77791009", "PRUEBA RE-GUARDAR DESCANSO MEDICO");
     const fechasExistentes = Array.from({ length: 20 }, (_, i) => `2026-01-${String(i + 1).padStart(2, "0")}`);
     for (const fecha of fechasExistentes) {
       await pool.query(
         `INSERT INTO tareo_diario (periodo_id, contrato_id, fecha, tipo_dia_especial)
-         VALUES ($1, $2, $3, 'SUBSIDIO_ENFERMEDAD')`,
+         VALUES ($1, $2, $3, 'DESCANSO_MEDICO')`,
         [periodoId, contratoId, fecha]
       );
     }
 
     // Re-guardar EXACTAMENTE una de las 20 fechas ya existentes (no agrega
-    // un dia 21) - no debe bloquearse.
+    // un dia 21) - no debe bloquearse ni generar incapacidad_enfermedad.
     const reguardado = await guardarTareoDiario(contratoId, [
-      { fecha: "2026-01-01", tipo_dia_especial: "SUBSIDIO_ENFERMEDAD" },
+      { fecha: "2026-01-01", tipo_dia_especial: "DESCANSO_MEDICO" },
     ]);
     expect(reguardado.status).toBe(204);
   });
 
-  it("permite llegar EXACTAMENTE a 20 dias (el bloqueo es solo al SUPERAR 20)", async () => {
-    const contratoId = await crearContratoEmpleado("77791009", "PRUEBA TOPE EXACTO 20 DIAS");
-    const fechasExistentes = Array.from({ length: 19 }, (_, i) => `2026-01-${String(i + 1).padStart(2, "0")}`);
-    for (const fecha of fechasExistentes) {
-      await pool.query(
-        `INSERT INTO tareo_diario (periodo_id, contrato_id, fecha, tipo_dia_especial)
-         VALUES ($1, $2, $3, 'SUBSIDIO_ENFERMEDAD')`,
-        [periodoId, contratoId, fecha]
-      );
-    }
-    const dia20 = await guardarTareoDiario(contratoId, [
-      { fecha: "2026-02-20", tipo_dia_especial: "SUBSIDIO_ENFERMEDAD" },
-    ]);
-    expect(dia20.status).toBe(204);
+  it("un solo periodo con MAS de 20 dias de DESCANSO_MEDICO se auto-divide: los primeros 20 a subsidio_enfermedad, el resto a incapacidad_enfermedad", async () => {
+    const contratoId = await crearContratoEmpleado("77791010", "PRUEBA AUTO-DIVISION 25 DIAS EN UN PERIODO");
+
+    // 25 dias de DESCANSO_MEDICO cargados de una sola vez en este periodo,
+    // sin ningun dia marcado antes en el año - el cupo normal (20) se
+    // agota DENTRO de este mismo periodo, y el excedente (5 dias) debe
+    // clasificarse solo como incapacidad_enfermedad, sin necesidad de un
+    // periodo aparte.
+    const veinticincoDias = Array.from({ length: 25 }, (_, i) => ({
+      fecha: `2026-02-${String(i + 1).padStart(2, "0")}`,
+      tipo_dia_especial: "DESCANSO_MEDICO",
+    }));
+    const guardado = await guardarTareoDiario(contratoId, veinticincoDias);
+    expect(guardado.status).toBe(204);
+
+    await calcular();
+    const detalle = await obtenerDetalle(contratoId);
+
+    expect(Number(detalle.dias_subsidio_enfermedad)).toBe(20);
+    expect(Number(detalle.dias_incapacidad_enfermedad)).toBe(5);
+    // Precision 0 (no 1): jornal_diario en detalle_planilla se guarda YA
+    // redondeado a 2 decimales, pero el monto real se calcula con el valor
+    // sin redondear (sueldo_base/dias_periodo) antes de multiplicar por 20 -
+    // eso acumula una diferencia de centimos que un tolerance de 1 decimal
+    // rechaza aunque el calculo sea correcto.
+    expect(Number(detalle.subsidio_enfermedad)).toBeCloseTo(Number(detalle.jornal_diario) * 20, 0);
+    expect(Number(detalle.incapacidad_enfermedad)).toBeCloseTo(Number(detalle.jornal_diario) * 5, 0);
   });
 });

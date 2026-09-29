@@ -19,6 +19,7 @@ interface AvisoSubsidio {
   dni: string;
   nombre: string;
   dias_subsidio_enfermedad: number;
+  dias_incapacidad_enfermedad: number;
   dias_subsidio_maternidad: number;
   dias_licencia_paternidad: number;
 }
@@ -139,18 +140,20 @@ export default function Calculo({ periodo, onVerBoletas }: Props) {
           <>
             <h3>Trabajadores con dias de subsidio/licencia este periodo ({avisosSubsidio.length})</h3>
             <div className="mensaje-advertencia" style={{ marginBottom: 12 }}>
-              El calculo NO ajusto automaticamente el monto ni los aportes por estos dias
-              (descanso medico, maternidad o paternidad) — revisa cada boleta a mano segun la
-              regla legal (dias 1-20 los paga la empresa igual que un dia trabajado y con
-              aportes normales, desde el dia 21 lo asume EsSalud sobre el promedio de los
-              ultimos 4 meses y sin aportes; maternidad desde el dia 1).
+              El calculo YA aplico la division legal de "Descanso médico" (dias 1-20 por año,
+              pagados por la empresa igual que un dia normal de trabajo, con todos los aportes) e
+              "Incapacidad por enfermedad" (dia 21 en adelante, subsidiado por EsSalud, solo
+              afecto a SCTR/AFP) - esta tabla es solo informativa, para que revises los dias
+              considerados en cada boleta. La licencia por maternidad sigue sin pago por planilla
+              (la asume EsSalud desde el dia 1).
             </div>
             <table>
               <thead>
                 <tr>
                   <th>DNI</th>
                   <th>Trabajador</th>
-                  <th>Dias subs. enfermedad</th>
+                  <th>Dias descanso médico</th>
+                  <th>Dias incapacidad enfermedad</th>
                   <th>Dias subs. maternidad</th>
                   <th>Dias lic. paternidad</th>
                 </tr>
@@ -161,6 +164,7 @@ export default function Calculo({ periodo, onVerBoletas }: Props) {
                     <td>{a.dni}</td>
                     <td>{a.nombre}</td>
                     <td>{a.dias_subsidio_enfermedad}</td>
+                    <td>{a.dias_incapacidad_enfermedad}</td>
                     <td>{a.dias_subsidio_maternidad}</td>
                     <td>{a.dias_licencia_paternidad}</td>
                   </tr>

@@ -98,7 +98,7 @@ describe("PUT /api/periodos/:id/tareo-diario/:contratoId", () => {
           { fecha: "2026-02-02", horas_normales: 8, minutos_normales: 0 },
           { fecha: "2026-02-03", horas_normales: 8, minutos_normales: 0, horas_extra_tramo1: 2, minutos_extra_tramo1: 0 },
           { fecha: "2026-02-04", tipo_dia_especial: "FALTA" },
-          { fecha: "2026-02-05", tipo_dia_especial: "SUBSIDIO_ENFERMEDAD" },
+          { fecha: "2026-02-05", tipo_dia_especial: "DESCANSO_MEDICO" },
         ],
       });
     expect(r.status).toBe(204);
@@ -235,7 +235,7 @@ describe("La edicion manual de totales (PUT /:id/tareo) no borra el subsidio car
     await request(app)
       .put(`/api/periodos/${periodoId}/tareo-diario/${contratoId}`)
       .set(auth())
-      .send({ dias: [{ fecha: "2026-02-02", tipo_dia_especial: "SUBSIDIO_ENFERMEDAD" }] });
+      .send({ dias: [{ fecha: "2026-02-02", tipo_dia_especial: "DESCANSO_MEDICO" }] });
 
     let asistencia = await obtenerAsistencia(contratoId);
     expect(Number(asistencia.dias_subsidio_enfermedad)).toBe(1);
@@ -275,7 +275,7 @@ describe("POST /api/periodos/:id/calcular con tareo diario cargado", () => {
       .send({
         dias: [
           { fecha: "2026-02-02", horas_normales: 8 },
-          { fecha: "2026-02-03", tipo_dia_especial: "SUBSIDIO_ENFERMEDAD" },
+          { fecha: "2026-02-03", tipo_dia_especial: "DESCANSO_MEDICO" },
         ],
       });
     await request(app)

@@ -223,3 +223,63 @@ función por primera vez, comparar su cuerpo con el reconstruido aquí (en
 `src/routes/planilla.ts`, buscar el comentario `NOTA (recon 23/46)`) por si
 hay alguna diferencia de detalle (por ejemplo, algún manejo de error o
 caso borde que no se haya podido inferir del contexto disponible).
+
+## 10. Migración 038 (parche #24/46) — "Días informativos" de la boleta PDF, nunca reconstruidos
+
+El patch `#24` (`7971eef6`, "Migracion 038: separar Descanso Medico de
+Incapacidad por Enfermedad") es la migración más grande reconstruida hasta
+ahora (26 archivos): renombra el concepto `SUBSIDIO_ENFERMEDAD` a
+`DESCANSO_MEDICO` (≤20 días/año por contrato, a cargo del EMPLEADOR, PLAME
+0121, afecto a TODO igual que un día normal de trabajo) y agrega el
+concepto nuevo `INCAPACIDAD_ENFERMEDAD` (21+ días, PLAME 0916, mismas
+afectaciones que tenía el viejo `SUBSIDIO_ENFERMEDAD` — solo SCTR/AFP). La
+división 20/21+ ahora es automática por año calendario y por contrato
+(`agregarTareoDiario`, `routes/planilla.ts`) — el bloqueo HTTP 400 que
+antes existía al superar 20 días se eliminó a propósito. Reconstruida casi
+en su totalidad (SQL, `motorCalculo.ts`, `plame.ts`, `tipos.ts`,
+`formulas.ts`, `validaciones.ts`, `routes/planilla.ts`,
+`planillaMensual.ts`, `boletaPdf.ts`, frontend `Boleta.tsx`/`Calculo.tsx`/
+`Tareo.tsx`/`PlanillaMensual.tsx`/`types.ts`), con 282 tests pasando.
+
+Dos piezas del parche original NO se pudieron aplicar, por depender de
+infraestructura que ya faltaba de brechas ANTERIORES (no una brecha nueva
+introducida por este parche):
+
+- **`TareoDiario.tsx`: `requiereCertificado()` y `TIPOS_CON_CERTIFICADO`**
+  (subida de certificado médico por día especial) — no existen en este
+  árbol porque dependen del "formulario flotante" de `TareoDiario.tsx`
+  (brecha 1 de arriba, patches #16-18 saltados). El único cambio de este
+  parche ahí era un rename (`SUBSIDIO_ENFERMEDAD` → `DESCANSO_MEDICO`
+  dentro de esas funciones) — no aplica hasta que se reconstruya la brecha
+  1. Mismo motivo para el describe completo "Certificado (imagen) de un
+  día de Tareo Diario" en `tests/tareo_diario.test.ts` (no existe en nuestro
+  árbol).
+- **`src/boletaPdf.ts` — sección "días informativos" de la boleta PDF**
+  (conteo de días de descanso médico/maternidad/licencia por paternidad,
+  mostrados aparte de los montos pagados): el parche original asumía que
+  `DetalleBoletaPdf` ya tenía `dias_subsidio_enfermedad`/
+  `dias_subsidio_maternidad`/`dias_licencia_paternidad` como campos de
+  conteo (además de los montos pagados `subsidio_enfermedad`/etc., que sí
+  existen) y una sección `diasInformativos` en el PDF que los renderiza -
+  ninguno de los dos existe en `boletaPdf.ts` en este árbol (nunca llegó
+  como parche independiente, a diferencia del frontend `Boleta.tsx`, que sí
+  tiene su propia sección `diasInformativos` — confirmado que son
+  implementaciones independientes, backend/PDF vs. frontend/pantalla). Por
+  eso `tests/boleta_dias_informativos.test.ts` tampoco existe (el intento
+  de aplicar ese archivo del parche falló con "file to patch" al no
+  encontrarlo). Se aplicó solo la parte que sí corresponde a este árbol:
+  agregar `incapacidad_enfermedad` a `DetalleBoletaPdf` y a la lista de
+  "conceptos pagados" (montos), sin la sección de conteo de días. **Cómo
+  cerrarla:** si aparece el parche que agregó esa sección a `boletaPdf.ts`
+  (probablemente parte de la migración 027, "Ronda B"), aplicarlo primero;
+  si no, se puede construir a mano imitando la sección equivalente ya
+  existente en `frontend/src/components/Boleta.tsx` (`diasInformativos`,
+  `filasSinCero`), pero eso es una decisión de diseño nueva a confirmar con
+  el usuario, no una reconstrucción fiel.
+
+Otros 3 archivos de test del parche original tampoco se pudieron aplicar
+por el mismo motivo general (asumen archivos/infraestructura que no existe
+en este árbol, ninguno de los 3 es una brecha NUEVA de este parche):
+`tests/asiento_contable.test.ts` y `tests/gratificacion_construccion_civil.test.ts`
+no existen (brechas 5 y 2 de arriba), y `tests/dominical_proporcional.test.ts`
+tampoco (brecha 4 de arriba).

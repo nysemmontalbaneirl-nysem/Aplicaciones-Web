@@ -19,7 +19,12 @@ const DIAS_SEMANA = ["Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viern
 const OPCIONES_DIA_ESPECIAL: { valor: TipoDiaEspecial | ""; etiqueta: string }[] = [
   { valor: "", etiqueta: "" },
   { valor: "FALTA", etiqueta: "Falta" },
-  { valor: "SUBSIDIO_ENFERMEDAD", etiqueta: "Subsidio enfermedad" },
+  // Migracion 038: "SUBSIDIO_ENFERMEDAD" se renombro a "DESCANSO_MEDICO" -
+  // el sistema ya no bloquea marcar mas de 20 dias/año (antes lo hacia): el
+  // dia 21 en adelante se paga automaticamente como "Incapacidad por
+  // Enfermedad" al calcular la planilla, sin que el usuario tenga que
+  // elegir un tipo de dia distinto aqui.
+  { valor: "DESCANSO_MEDICO", etiqueta: "Descanso médico" },
   { valor: "SUBSIDIO_MATERNIDAD", etiqueta: "Subsidio maternidad" },
   { valor: "LICENCIA_PATERNIDAD", etiqueta: "Licencia paternidad" },
 ];

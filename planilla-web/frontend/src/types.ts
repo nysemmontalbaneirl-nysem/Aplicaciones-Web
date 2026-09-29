@@ -221,7 +221,11 @@ export interface DetallePlanilla {
   // foto historica, puramente informativa - dias_subsidio_maternidad NUNCA
   // genera pago; dias_subsidio_enfermedad/dias_licencia_paternidad SI
   // (migracion 030, ver subsidio_enfermedad/licencia_paternidad mas abajo).
+  // Migracion 038: dias_subsidio_enfermedad = solo el bucket "Dias de
+  // Descanso Medico" (<=20/año); dias_incapacidad_enfermedad = bucket
+  // "Incapacidad por Enfermedad" (21+).
   dias_subsidio_enfermedad: number;
+  dias_incapacidad_enfermedad: number;
   dias_subsidio_maternidad: number;
   dias_licencia_paternidad: number;
 
@@ -235,10 +239,13 @@ export interface DetallePlanilla {
   bonificacion_buc: number;
   bonificacion_bae: number;
   bonificacion_movilidad: number;
-  // Migracion 030: pago REAL de dias_subsidio_enfermedad/dias_licencia_paternidad
-  // (antes, migracion 027, esos campos eran puramente informativos).
-  // dias_subsidio_maternidad se mantiene sin pago (solo informativo).
+  // Migracion 030 (corregido en 038): pago REAL de dias_subsidio_enfermedad
+  // (bucket <=20/año)/dias_incapacidad_enfermedad (bucket 21+)/
+  // dias_licencia_paternidad (antes, migracion 027, esos campos eran
+  // puramente informativos). dias_subsidio_maternidad se mantiene sin pago
+  // (solo informativo).
   subsidio_enfermedad: number;
+  incapacidad_enfermedad: number;
   licencia_paternidad: number;
   otras_bonificaciones: number;
   gratificacion: number;
@@ -280,6 +287,7 @@ export interface AsistenciaEntrada {
   // Agregados desde el Tareo Diario (migracion 017) - solo informativos,
   // no afectan ningun monto calculado todavia.
   dias_subsidio_enfermedad?: number;
+  dias_incapacidad_enfermedad?: number;
   dias_subsidio_maternidad?: number;
   dias_licencia_paternidad?: number;
 }
@@ -295,9 +303,11 @@ export interface AsistenciaTareo extends AsistenciaEntrada {
 // Tareo Diario (migracion 017): registro dia por dia, ademas del Excel
 // agregado y la edicion manual de totales de arriba.
 // ---------------------------------------------------------------------
+// Migracion 038: "SUBSIDIO_ENFERMEDAD" se renombro a "DESCANSO_MEDICO" (ver
+// el comentario completo en routes/planilla.ts, backend).
 export type TipoDiaEspecial =
   | "FALTA"
-  | "SUBSIDIO_ENFERMEDAD"
+  | "DESCANSO_MEDICO"
   | "SUBSIDIO_MATERNIDAD"
   | "LICENCIA_PATERNIDAD";
 
@@ -432,6 +442,7 @@ export interface DetallePlanillaMensualFila {
   horas_extra_35: number;
   horas_extra_100: number;
   dias_subsidio_enfermedad: number;
+  dias_incapacidad_enfermedad: number;
   dias_subsidio_maternidad: number;
   dias_licencia_paternidad: number;
 
@@ -450,6 +461,7 @@ export interface DetallePlanillaMensualFila {
   bonificacion_movilidad: number;
   condicion_trabajo: number;
   subsidio_enfermedad: number;
+  incapacidad_enfermedad: number;
   licencia_paternidad: number;
   otras_bonificaciones: number;
   gratificacion: number;

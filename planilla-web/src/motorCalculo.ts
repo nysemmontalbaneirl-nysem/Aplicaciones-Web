@@ -171,6 +171,11 @@ export function sumarResultadosLinea(resultados: ResultadoCalculoLinea[]): Resul
     horas_extra_35: sumar("horas_extra_35"),
     horas_extra_100: sumar("horas_extra_100"),
     dias_subsidio_enfermedad: sumar("dias_subsidio_enfermedad"),
+    // Migracion 038: proporcional igual que dias_subsidio_enfermedad (cada
+    // tramo ya calculo su propia division de 20/21+ sobre su propio rango
+    // de fechas, ver agregarTareoDiario) - se suma tal cual, sin volver a
+    // dividir aqui.
+    dias_incapacidad_enfermedad: sumar("dias_incapacidad_enfermedad"),
     dias_subsidio_maternidad: sumar("dias_subsidio_maternidad"),
     dias_licencia_paternidad: sumar("dias_licencia_paternidad"),
     // Migracion 032: proporcional igual que los demas "dias_*" (cada tramo
@@ -195,6 +200,7 @@ export function sumarResultadosLinea(resultados: ResultadoCalculoLinea[]): Resul
     // NOTA (recon 11/46): "condicion_trabajo" no existe todavia en
     // DetallePlanilla (ver comentario de la funcion) - se omite.
     subsidio_enfermedad: sumar("subsidio_enfermedad"),
+    incapacidad_enfermedad: sumar("incapacidad_enfermedad"),
     licencia_paternidad: sumar("licencia_paternidad"),
     otras_bonificaciones: sumar("otras_bonificaciones"),
     gratificacion: sumar("gratificacion"),
@@ -230,6 +236,7 @@ export function sumarResultadosLinea(resultados: ResultadoCalculoLinea[]): Resul
       detalle.bonificacion_bae +
       detalle.bonificacion_movilidad +
       detalle.subsidio_enfermedad +
+      detalle.incapacidad_enfermedad +
       detalle.licencia_paternidad +
       detalle.gratificacion +
       detalle.bonificacion_extraordinaria +
@@ -402,19 +409,46 @@ export function calcularRemuneracionFeriado(
 }
 
 /**
- * Migracion 030: pago real de los primeros 20 dias/año de descanso medico
- * por enfermedad, a cargo del empleador (D.S. 009-97-SA). Valorizado igual
- * que un dia normal trabajado (confirmado con el usuario) - el tope de 20
- * dias/año por contrato NO se aplica aqui (seria demasiado tarde: este
- * calculo solo ve UN periodo a la vez, no el acumulado del año) sino al
- * momento de CARGAR el dia en el Tareo Diario (ver la validacion en
- * PUT /:id/tareo-diario/:contratoId, routes/planilla.ts), que bloquea el
- * registro completo si se superarian los 20 dias/año - por eso
+ * Migracion 030 (renombrado y corregido en la migracion 038): pago real de
+ * los primeros 20 dias/año de "Descanso Medico" por enfermedad, a cargo del
+ * empleador (D.S. 009-97-SA, concepto DESCANSO_MEDICO, casilla PLAME 0121).
+ * Valorizado igual que un dia normal trabajado (confirmado con el usuario:
+ * afecto a EsSalud/SCTR/SENATI/ONP-AFP/Renta5ta/Conafovicer igual que
+ * SUELDO_BASICO). El tope de 20 dias/año por contrato NO se aplica aqui
+ * (seria demasiado tarde: este calculo solo ve UN periodo/tramo a la vez, no
+ * el acumulado del año) sino en agregarTareoDiario (routes/planilla.ts),
+ * que divide automaticamente, por contrato y por año calendario, cuantos de
+ * los dias marcados "DESCANSO_MEDICO" caen en este bucket (<=20, aqui) y
+ * cuantos en el de calcularIncapacidadEnfermedad (21+, ver abajo) - por eso
  * asistencia.dias_subsidio_enfermedad que llega aqui ya viene garantizado
- * dentro del tope.
+ * dentro del tope de 20.
+ *
+ * Antes de la migracion 038, el sistema BLOQUEABA registrar mas de 20
+ * dias/año (en vez de dividir automaticamente) y, por un error de diseño de
+ * la migracion 030 original, calculaba TODOS los dias marcados (incluidos
+ * los primeros 20) con el tratamiento tributario del dia 21+ (afecto a
+ * EsSalud=false) - bug real reportado por el usuario en produccion, ya
+ * corregido.
  */
 export function calcularSubsidioEnfermedad(jornalDiario: number, asistencia: AsistenciaEntrada): number {
   return redondear(jornalDiario * asistencia.dias_subsidio_enfermedad);
+}
+
+/**
+ * Migracion 038: pago del bucket "Incapacidad por Enfermedad" (dia 21 en
+ * adelante por año calendario y por contrato, subsidiado por EsSalud
+ * directamente al trabajador - D.S. 009-97-SA, concepto
+ * INCAPACIDAD_ENFERMEDAD, casilla PLAME 0916). Valorizado igual que un dia
+ * normal trabajado (mismo criterio que descanso medico), pero con las
+ * afectaciones que ya tenia el concepto SUBSIDIO_ENFERMEDAD original antes
+ * de esta migracion (SI SCTR/AFP, NO EsSalud/SENATI/ONP/Renta5ta/
+ * Conafovicer - confirmado con el usuario, "mantener las que ya existian").
+ * asistencia.dias_incapacidad_enfermedad ya viene calculado por
+ * agregarTareoDiario (routes/planilla.ts) como el excedente sobre el cupo
+ * de 20 dias/año que calcularSubsidioEnfermedad de arriba SI puede pagar.
+ */
+export function calcularIncapacidadEnfermedad(jornalDiario: number, asistencia: AsistenciaEntrada): number {
+  return redondear(jornalDiario * asistencia.dias_incapacidad_enfermedad);
 }
 
 /**
@@ -1058,6 +1092,7 @@ function calcularLineaEventual(contrato: Contrato, asistencia: AsistenciaEntrada
       horas_extra_35: 0,
       horas_extra_100: 0,
       dias_subsidio_enfermedad: asistencia.dias_subsidio_enfermedad,
+      dias_incapacidad_enfermedad: asistencia.dias_incapacidad_enfermedad,
       dias_subsidio_maternidad: asistencia.dias_subsidio_maternidad,
       dias_licencia_paternidad: asistencia.dias_licencia_paternidad,
       dias_subsidio_enfermedad_computable: 0,
@@ -1072,6 +1107,7 @@ function calcularLineaEventual(contrato: Contrato, asistencia: AsistenciaEntrada
       bonificacion_bae: 0,
       bonificacion_movilidad: 0,
       subsidio_enfermedad: 0,
+      incapacidad_enfermedad: 0,
       licencia_paternidad: 0,
       otras_bonificaciones: 0,
       gratificacion: 0,
@@ -1209,6 +1245,8 @@ export function calcularLineaPlanilla(
   // criterio que horas extra/sobretasas: son variables/ocasionales, no
   // remuneracion "regular" para gratificacion/CTS de EMPLEADO).
   const subsidioEnfermedad = calcularSubsidioEnfermedad(jornalDiario, asistencia);
+  // Migracion 038: ver el comentario completo en calcularIncapacidadEnfermedad.
+  const incapacidadEnfermedad = calcularIncapacidadEnfermedad(jornalDiario, asistencia);
   const licenciaPaternidad = calcularLicenciaPaternidad(jornalDiario, asistencia);
 
   // Remuneracion computable del periodo actual (solo para mostrar en el detalle)
@@ -1269,6 +1307,7 @@ export function calcularLineaPlanilla(
       bonificacionBAE +
       bonificacionMovilidad +
       subsidioEnfermedad +
+      incapacidadEnfermedad +
       licenciaPaternidad +
       gratificacion +
       bonificacionExtraordinaria +
@@ -1291,7 +1330,12 @@ export function calcularLineaPlanilla(
     BUC: bonificacionBUC,
     BAE: bonificacionBAE,
     MOVILIDAD: bonificacionMovilidad,
-    SUBSIDIO_ENFERMEDAD: subsidioEnfermedad,
+    // Migracion 038: el concepto se renombro de SUBSIDIO_ENFERMEDAD a
+    // DESCANSO_MEDICO (ver el comentario completo en calcularSubsidioEnfermedad)
+    // - se agrega ademas el concepto nuevo INCAPACIDAD_ENFERMEDAD para el
+    // bucket del dia 21 en adelante.
+    DESCANSO_MEDICO: subsidioEnfermedad,
+    INCAPACIDAD_ENFERMEDAD: incapacidadEnfermedad,
     LICENCIA_PATERNIDAD: licenciaPaternidad,
     GRATIFICACION: gratificacion,
     BONIFICACION_EXTRAORDINARIA: bonificacionExtraordinaria,
@@ -1321,6 +1365,7 @@ export function calcularLineaPlanilla(
     dias_feriado: asistencia.dias_feriado,
     dias_falta: asistencia.dias_falta,
     dias_subsidio_enfermedad: asistencia.dias_subsidio_enfermedad,
+    dias_incapacidad_enfermedad: asistencia.dias_incapacidad_enfermedad,
     dias_subsidio_enfermedad_computable: asistencia.dias_subsidio_enfermedad_computable,
     dias_subsidio_maternidad: asistencia.dias_subsidio_maternidad,
     dias_licencia_paternidad: asistencia.dias_licencia_paternidad,
@@ -1429,6 +1474,7 @@ export function calcularLineaPlanilla(
       horas_extra_35: asistencia.horas_extra_35,
       horas_extra_100: asistencia.horas_extra_100,
       dias_subsidio_enfermedad: asistencia.dias_subsidio_enfermedad,
+      dias_incapacidad_enfermedad: asistencia.dias_incapacidad_enfermedad,
       dias_subsidio_maternidad: asistencia.dias_subsidio_maternidad,
       dias_licencia_paternidad: asistencia.dias_licencia_paternidad,
       // Migracion 032: foto historica del valor topado (60 dias/año/
@@ -1446,6 +1492,7 @@ export function calcularLineaPlanilla(
       bonificacion_bae: bonificacionBAE,
       bonificacion_movilidad: bonificacionMovilidad,
       subsidio_enfermedad: subsidioEnfermedad,
+      incapacidad_enfermedad: incapacidadEnfermedad,
       licencia_paternidad: licenciaPaternidad,
       otras_bonificaciones: 0,
       gratificacion,

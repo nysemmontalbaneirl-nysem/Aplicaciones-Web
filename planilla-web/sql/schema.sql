@@ -402,6 +402,11 @@ CREATE TABLE asistencia_periodo (
     -- el PAGO del subsidio. Ver el comentario completo en tipos.ts
     -- (AsistenciaEntrada.dias_subsidio_enfermedad_computable).
     dias_subsidio_enfermedad_computable NUMERIC(6,2) NOT NULL DEFAULT 0,
+    -- Migracion 038: dias marcados "DESCANSO_MEDICO" que exceden el cupo de
+    -- 20 dias/año calendario por contrato y se pagan como "Incapacidad por
+    -- Enfermedad" (subsidiada por EsSalud) en vez de como dia normal de
+    -- trabajo. Ver el comentario completo en tipos.ts (AsistenciaEntrada).
+    dias_incapacidad_enfermedad NUMERIC(6,2) NOT NULL DEFAULT 0,
     actualizado_en  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (periodo_id, contrato_id)
 );
@@ -429,10 +434,16 @@ CREATE TABLE tareo_diario (
     minutos_extra_tramo2 INT NOT NULL DEFAULT 0,
     horas_extra_tramo3   INT NOT NULL DEFAULT 0,
     minutos_extra_tramo3 INT NOT NULL DEFAULT 0,
+    -- Migracion 038: 'SUBSIDIO_ENFERMEDAD' se renombro a 'DESCANSO_MEDICO'
+    -- (el nombre real de lo que se marca aqui: un dia de descanso medico por
+    -- enfermedad - la division entre "se paga como dia normal" (<=20/año) y
+    -- "se paga como incapacidad subsidiada por EsSalud" (21+) se resuelve
+    -- automaticamente al calcular la planilla, ver agregarTareoDiario en
+    -- routes/planilla.ts, no con un tipo de dia especial distinto).
     tipo_dia_especial    VARCHAR(20)
                          CHECK (tipo_dia_especial IN (
                            'FALTA',
-                           'SUBSIDIO_ENFERMEDAD',
+                           'DESCANSO_MEDICO',
                            'SUBSIDIO_MATERNIDAD',
                            'LICENCIA_PATERNIDAD'
                          )),
@@ -466,7 +477,8 @@ CREATE TABLE detalle_planilla (
     dias_subsidio_enfermedad NUMERIC(6,2) NOT NULL DEFAULT 0,
     dias_subsidio_maternidad NUMERIC(6,2) NOT NULL DEFAULT 0,
     dias_licencia_paternidad NUMERIC(6,2) NOT NULL DEFAULT 0,
-    dias_subsidio_enfermedad_computable NUMERIC(6,2) NOT NULL DEFAULT 0, -- migracion 032: subconjunto de dias_subsidio_enfermedad usado como "dia computable" en Gratificacion/Vacaciones/CTS/Escolaridad, topado a 60 dias/año/contrato
+    dias_subsidio_enfermedad_computable NUMERIC(6,2) NOT NULL DEFAULT 0, -- migracion 032: subconjunto de (dias_subsidio_enfermedad + dias_incapacidad_enfermedad) usado como "dia computable" en Gratificacion/Vacaciones/CTS/Escolaridad, topado a 60 dias/año/contrato
+    dias_incapacidad_enfermedad NUMERIC(6,2) NOT NULL DEFAULT 0, -- migracion 038: dias marcados "DESCANSO_MEDICO" del dia 21 en adelante por año/contrato (bucket "Incapacidad por Enfermedad")
 
     -- ingresos
     jornal_diario          NUMERIC(10,2) NOT NULL DEFAULT 0,
@@ -479,7 +491,8 @@ CREATE TABLE detalle_planilla (
     bonificacion_buc       NUMERIC(10,2) NOT NULL DEFAULT 0,
     bonificacion_bae       NUMERIC(10,2) NOT NULL DEFAULT 0,
     bonificacion_movilidad NUMERIC(10,2) NOT NULL DEFAULT 0,
-    subsidio_enfermedad    NUMERIC(10,2) NOT NULL DEFAULT 0, -- migracion 030: pago real de los primeros 20 dias/año (a cargo del empleador), afecto solo a SCTR/AFP
+    subsidio_enfermedad    NUMERIC(10,2) NOT NULL DEFAULT 0, -- migracion 030 (corregido en 038): pago real de los primeros 20 dias/año "Dias de Descanso Medico" (a cargo del empleador), afecto a TODOS los aportes igual que un dia normal de trabajo
+    incapacidad_enfermedad NUMERIC(10,2) NOT NULL DEFAULT 0, -- migracion 038: pago del bucket "Incapacidad por Enfermedad" (dia 21+), mismas afectaciones que tenia SUBSIDIO_ENFERMEDAD antes de esta migracion (solo SCTR/AFP)
     licencia_paternidad    NUMERIC(10,2) NOT NULL DEFAULT 0, -- migracion 030: pago real de la licencia por paternidad, sin tope, afecto a todo
     otras_bonificaciones   NUMERIC(10,2) NOT NULL DEFAULT 0,
     gratificacion          NUMERIC(10,2) NOT NULL DEFAULT 0,
@@ -725,6 +738,10 @@ CREATE TABLE detalle_planilla_mensual (
 
     detalle_json           JSONB,
 
+    -- migracion 038: espejo de detalle_planilla, ver el comentario completo alli.
+    dias_incapacidad_enfermedad NUMERIC(6,2) NOT NULL DEFAULT 0,
+    incapacidad_enfermedad NUMERIC(10,2) NOT NULL DEFAULT 0,
+
     UNIQUE (planilla_mensual_id, contrato_id)
 );
 CREATE INDEX idx_detalle_planilla_mensual_planilla ON detalle_planilla_mensual(planilla_mensual_id);
@@ -842,8 +859,25 @@ VALUES
     -- migracion 035: codigo_plame corregido de '916'/'907' a '0916'/'0907'
     -- (les faltaba el 0 inicial - el archivo .rem espera codigos de 4
     -- digitos, igual que el resto del catalogo).
-    ('SUBSIDIO_ENFERMEDAD', 'Subsidio por incapacidad temporal (descanso médico)',
-     'Pago de los primeros 20 dias por año calendario de descanso medico por enfermedad, a cargo del empleador (D.S. 009-97-SA) - del dia 21 en adelante lo paga EsSalud directamente, fuera de planilla (el sistema bloquea el registro de mas de 20 dias/año por contrato, ver Tareo Diario). Valorizado igual que un dia normal trabajado.', 145, '0916',
+    --
+    -- migracion 038: 'SUBSIDIO_ENFERMEDAD' se reemplaza por 2 conceptos
+    -- separados (ver sql/migracion_038_descanso_medico_incapacidad_enfermedad.sql
+    -- para el rename seguro contra las tablas ya existentes en produccion -
+    -- aqui, en el seed de una base nueva, se insertan directo ya separados).
+    -- 'DESCANSO_MEDICO' (<=20 dias/año por contrato, a cargo del EMPLEADOR,
+    -- D.S. 009-97-SA): afecto a TODO como si fuese un dia de trabajo normal,
+    -- mismos flags que SUELDO_BASICO, y comparte su misma casilla PLAME 0121.
+    ('DESCANSO_MEDICO', 'Días de Descanso Médico',
+     'Pago de los primeros 20 dias por año calendario de descanso medico por enfermedad, a cargo del empleador (D.S. 009-97-SA) - se paga y se afecta a aportes igual que un dia normal de trabajo. Del dia 21 en adelante, ver el concepto "Días por Incapacidad por Enfermedad".', 145, '0121',
+     NULL, NULL, NULL, NULL, NULL, NULL,
+     true, true, true, true, true, true, true),
+
+    -- 'INCAPACIDAD_ENFERMEDAD' (21+ dias/año por contrato, subsidiado por
+    -- EsSalud directamente al trabajador): mantiene EXACTAMENTE los mismos
+    -- flags de afectacion que tenia 'SUBSIDIO_ENFERMEDAD' antes de esta
+    -- migracion, y la misma casilla PLAME 0916.
+    ('INCAPACIDAD_ENFERMEDAD', 'Días por Incapacidad por Enfermedad',
+     'Pago de los dias de descanso medico por enfermedad a partir del dia 21 por año calendario y por contrato, subsidiado por EsSalud directamente al trabajador (D.S. 009-97-SA). Valorizado igual que un dia normal trabajado.', 147, '0916',
      NULL, NULL, NULL, NULL, NULL, NULL,
      false, true, false, false, true, false, false),
 

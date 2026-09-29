@@ -126,6 +126,8 @@ const CAMPOS_ASISTENCIA_SUMABLES = [
   "horas_extra_35",
   "horas_extra_100",
   "dias_subsidio_enfermedad",
+  // Migracion 038: ver el comentario completo en AsistenciaEntrada (tipos.ts).
+  "dias_incapacidad_enfermedad",
   "dias_subsidio_maternidad",
   "dias_licencia_paternidad",
   "dias_subsidio_enfermedad_computable",
@@ -339,10 +341,11 @@ export async function consolidarPlanillaMensual(
            bonificacion_buc, bonificacion_bae, bonificacion_movilidad,
            subsidio_enfermedad, licencia_paternidad, otras_bonificaciones, gratificacion, bonificacion_extraordinaria,
            cts, vacaciones, total_ingresos, aporte_pension, descuento_sindicato, seguro_vida, conafovicer, renta_5ta,
-           otros_descuentos, total_descuentos, essalud, sctr, senati, neto_pagar, detalle_json
+           otros_descuentos, total_descuentos, essalud, sctr, senati, neto_pagar, detalle_json,
+           dias_incapacidad_enfermedad, incapacidad_enfermedad
          ) VALUES (
            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
-           $23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43
+           $23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45
          )
          RETURNING id`,
         [
@@ -389,6 +392,8 @@ export async function consolidarPlanillaMensual(
           d.senati,
           d.neto_pagar,
           JSON.stringify(d.detalle_json ?? {}),
+          d.dias_incapacidad_enfermedad,
+          d.incapacidad_enfermedad,
         ]
       );
       const detalleId = r.rows[0].id;

@@ -44,6 +44,7 @@ export const VARIABLES_FORMULA = [
   "dias_feriado",
   "dias_falta",
   "dias_subsidio_enfermedad",
+  "dias_incapacidad_enfermedad",
   "dias_subsidio_enfermedad_computable",
   "dias_subsidio_maternidad",
   "dias_licencia_paternidad",

@@ -139,6 +139,10 @@ export function validarAsistenciaEntrada(valor: unknown): AsistenciaEntrada {
     horas_extra_35: validarMontoPositivo(v.horas_extra_35 ?? 0, "horas_extra_35"),
     horas_extra_100: validarMontoPositivo(v.horas_extra_100 ?? 0, "horas_extra_100"),
     dias_subsidio_enfermedad: validarMontoPositivo(v.dias_subsidio_enfermedad ?? 0, "dias_subsidio_enfermedad"),
+    // Migracion 038: tampoco aplica a la carga por Excel en bloque, mismo
+    // criterio que dias_subsidio_enfermedad de arriba - queda en 0 salvo que
+    // agregarTareoDiario lo calcule de verdad.
+    dias_incapacidad_enfermedad: validarMontoPositivo(v.dias_incapacidad_enfermedad ?? 0, "dias_incapacidad_enfermedad"),
     dias_subsidio_maternidad: validarMontoPositivo(v.dias_subsidio_maternidad ?? 0, "dias_subsidio_maternidad"),
     dias_licencia_paternidad: validarMontoPositivo(v.dias_licencia_paternidad ?? 0, "dias_licencia_paternidad"),
     // Migracion 032: tampoco aplica a la carga por Excel en bloque (sin

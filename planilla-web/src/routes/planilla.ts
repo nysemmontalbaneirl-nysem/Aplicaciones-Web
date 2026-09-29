@@ -473,6 +473,12 @@ interface FilaAsistencia {
   // toca. Ver el comentario completo en tipos.ts
   // (AsistenciaEntrada.dias_subsidio_enfermedad_computable).
   dias_subsidio_enfermedad_computable?: number | null;
+  // Migracion 038: subconjunto del dia 21 en adelante (por año calendario y
+  // por contrato) de dias marcados "DESCANSO_MEDICO" - se paga como
+  // subsidio de EsSalud, no como dia normal de trabajo (ver el comentario
+  // completo en agregarTareoDiario, mas abajo). Mismo criterio opcional que
+  // los demas campos agregados desde Tareo Diario.
+  dias_incapacidad_enfermedad?: number | null;
 }
 
 async function guardarAsistencia(periodoId: string, fila: FilaAsistencia) {
@@ -481,15 +487,15 @@ async function guardarAsistencia(periodoId: string, fila: FilaAsistencia) {
        periodo_id, contrato_id, dias_trabajados, dias_dominical, dias_feriado,
        dias_falta, horas_extra_25, horas_extra_35, horas_extra_100,
        dias_subsidio_enfermedad, dias_subsidio_maternidad, dias_licencia_paternidad,
-       dias_subsidio_enfermedad_computable
+       dias_subsidio_enfermedad_computable, dias_incapacidad_enfermedad
      -- El "0" de respaldo en cada COALESCE debe llevar el cast ::numeric:
-     -- sin el, Postgres infiere el TIPO del parametro ($10-$13) a partir del
+     -- sin el, Postgres infiere el TIPO del parametro ($10-$14) a partir del
      -- literal "0" (entero) en vez de la columna destino (numeric), y luego
      -- rechaza cualquier valor con decimales con "invalid input syntax for
      -- integer" - el destino real de la columna no importa para esto, el
      -- tipo del parametro ya quedo fijado como integer desde el parseo de
      -- la sentencia.
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10,0::numeric),COALESCE($11,0::numeric),COALESCE($12,0::numeric),COALESCE($13,0::numeric))
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10,0::numeric),COALESCE($11,0::numeric),COALESCE($12,0::numeric),COALESCE($13,0::numeric),COALESCE($14,0::numeric))
      ON CONFLICT (periodo_id, contrato_id) DO UPDATE SET
        dias_trabajados = EXCLUDED.dias_trabajados,
        dias_dominical = EXCLUDED.dias_dominical,
@@ -498,13 +504,14 @@ async function guardarAsistencia(periodoId: string, fila: FilaAsistencia) {
        horas_extra_25 = EXCLUDED.horas_extra_25,
        horas_extra_35 = EXCLUDED.horas_extra_35,
        horas_extra_100 = EXCLUDED.horas_extra_100,
-       -- $10/$11/$12/$13 en null = "no tocar" (lo manda la edicion manual de
-       -- totales, que no conoce estos campos); un numero explicito (incluido
-       -- 0) si viene, por ejemplo, del recalculo desde tareo_diario.
+       -- $10/$11/$12/$13/$14 en null = "no tocar" (lo manda la edicion manual
+       -- de totales, que no conoce estos campos); un numero explicito
+       -- (incluido 0) si viene, por ejemplo, del recalculo desde tareo_diario.
        dias_subsidio_enfermedad = COALESCE($10, asistencia_periodo.dias_subsidio_enfermedad),
        dias_subsidio_maternidad = COALESCE($11, asistencia_periodo.dias_subsidio_maternidad),
        dias_licencia_paternidad = COALESCE($12, asistencia_periodo.dias_licencia_paternidad),
        dias_subsidio_enfermedad_computable = COALESCE($13, asistencia_periodo.dias_subsidio_enfermedad_computable),
+       dias_incapacidad_enfermedad = COALESCE($14, asistencia_periodo.dias_incapacidad_enfermedad),
        actualizado_en = now()`,
     [
       periodoId,
@@ -520,6 +527,7 @@ async function guardarAsistencia(periodoId: string, fila: FilaAsistencia) {
       fila.dias_subsidio_maternidad ?? null,
       fila.dias_licencia_paternidad ?? null,
       fila.dias_subsidio_enfermedad_computable ?? null,
+      fila.dias_incapacidad_enfermedad ?? null,
     ]
   );
 }
@@ -621,9 +629,17 @@ planillaRouter.delete("/:id/tareo/:contratoId", asyncHandler(async (req: Request
 // sigue leyendo solo de asistencia_periodo, sin ningun cambio.
 // -----------------------------------------------------------------------
 
+// Migracion 038: "SUBSIDIO_ENFERMEDAD" se renombro a "DESCANSO_MEDICO" (el
+// nombre real de lo que se marca en el Tareo Diario: un dia de descanso
+// medico por enfermedad, sin importar si termina pagandose como dia normal
+// -primeros 20 dias/año- o como incapacidad subsidiada por EsSalud -del 21
+// en adelante-, division que ahora se resuelve automaticamente en
+// agregarTareoDiario, ver routes/planilla.ts mas abajo). No existe un tipo
+// de dia separado para "incapacidad": es el MISMO dia marcado el que, segun
+// el acumulado del año, se paga de una forma u otra.
 const TIPOS_DIA_ESPECIAL = [
   "FALTA",
-  "SUBSIDIO_ENFERMEDAD",
+  "DESCANSO_MEDICO",
   "SUBSIDIO_MATERNIDAD",
   "LICENCIA_PATERNIDAD",
 ] as const;
@@ -727,7 +743,7 @@ export async function agregarTareoDiario(
       case "FALTA":
         diasFalta += 1;
         continue;
-      case "SUBSIDIO_ENFERMEDAD":
+      case "DESCANSO_MEDICO":
         diasSubsidioEnfermedad += 1;
         continue;
       case "SUBSIDIO_MATERNIDAD":
@@ -747,28 +763,52 @@ export async function agregarTareoDiario(
 
   // Migracion 032: tope de 60 dias/año calendario por CONTRATO para que un
   // dia de descanso medico cuente como "dia computable" en Gratificacion/
-  // Vacaciones/CTS/Asignacion por Escolaridad (distinto del tope de 20
-  // dias/año ya existente sobre el PAGO del subsidio, ver PUT
-  // /:id/tareo-diario/:contratoId mas abajo). Se cuentan los dias de
-  // SUBSIDIO_ENFERMEDAD ya acreditados en OTROS periodos del MISMO año
-  // calendario de fechaDesde (fuera del rango [fechaDesde, fechaHasta] que
-  // se esta procesando aqui, para no contar dos veces los de este mismo
-  // tramo/periodo), y se topa lo que este periodo puede aportar para que el
-  // acumulado del año no supere 60. Simplificacion documentada: si un
-  // periodo cruzara de año calendario (caso muy raro en quincenal/semanal),
-  // se usa el año de fechaDesde para todo el rango.
+  // Vacaciones/CTS/Asignacion por Escolaridad (eje LEGAL DISTINTO al tope de
+  // 20 dias/año de la migracion 038 sobre quien PAGA el dia, ver abajo - no
+  // confundir). Se cuentan los dias de DESCANSO_MEDICO ya marcados en OTROS
+  // periodos del MISMO año calendario de fechaDesde (fuera del rango
+  // [fechaDesde, fechaHasta] que se esta procesando aqui, para no contar dos
+  // veces los de este mismo tramo/periodo), y se topa lo que este periodo
+  // puede aportar para que el acumulado del año no supere 60.
+  // Simplificacion documentada: si un periodo cruzara de año calendario
+  // (caso muy raro en quincenal/semanal), se usa el año de fechaDesde para
+  // todo el rango. Esta MISMA consulta (diasYaMarcadosEnElAnio) tambien se
+  // reutiliza abajo para la division de 20 dias (migracion 038) - es el
+  // mismo acumulado anual de dias marcados, con un tope distinto cada vez.
   const anioVigente = Number(fechaDesde.slice(0, 4));
   let diasSubsidioEnfermedadComputable = 0;
+  // Migracion 038: division automatica entre "Dias de Descanso Medico"
+  // (primeros 20 dias/año por contrato, a cargo del EMPLEADOR, casilla PLAME
+  // 0121 - se paga y se afecta a aportes igual que un dia normal de
+  // trabajo, confirmado con el usuario) y "Dias por Incapacidad por
+  // Enfermedad" (del dia 21 en adelante, subsidiados por EsSalud
+  // directamente al trabajador fuera de planilla, casilla PLAME 0916 -
+  // mismas afectaciones que ya tenia el concepto antes de esta migracion).
+  // Antes de esta migracion, el sistema BLOQUEABA el registro de mas de 20
+  // dias/año (ver el bloqueo ya eliminado en PUT /:id/tareo-diario/:contratoId)
+  // y, por un error de diseño de la migracion 030 original, TODOS los dias
+  // marcados (incluidos los primeros 20) se calculaban con el tratamiento
+  // tributario del dia 21+ - bug real reportado por el usuario en
+  // produccion. Ahora la division es automatica: no se le pide al usuario
+  // elegir un tipo de dia distinto para el dia 21, se resuelve aqui con el
+  // mismo acumulado anual por contrato que ya usa el tope de 60 dias
+  // computable de arriba (misma consulta, tope distinto: 20 en vez de 60).
+  let diasDescansoMedicoNormal = diasSubsidioEnfermedad;
+  let diasIncapacidadEnfermedad = 0;
   if (diasSubsidioEnfermedad > 0) {
     const acreditadosResult = await pool.query(
       `SELECT COUNT(*)::int AS dias FROM tareo_diario
-       WHERE contrato_id = $1 AND tipo_dia_especial = 'SUBSIDIO_ENFERMEDAD'
+       WHERE contrato_id = $1 AND tipo_dia_especial = 'DESCANSO_MEDICO'
          AND EXTRACT(YEAR FROM fecha) = $2
          AND fecha NOT BETWEEN $3 AND $4`,
       [contratoId, anioVigente, fechaDesde, fechaHasta]
     );
-    const diasYaAcreditadosEnElAnio = Number(acreditadosResult.rows[0]?.dias ?? 0);
-    diasSubsidioEnfermedadComputable = Math.max(0, Math.min(diasSubsidioEnfermedad, 60 - diasYaAcreditadosEnElAnio));
+    const diasYaMarcadosEnElAnio = Number(acreditadosResult.rows[0]?.dias ?? 0);
+    diasSubsidioEnfermedadComputable = Math.max(0, Math.min(diasSubsidioEnfermedad, 60 - diasYaMarcadosEnElAnio));
+
+    const cupoNormalDisponible = Math.max(0, 20 - diasYaMarcadosEnElAnio);
+    diasDescansoMedicoNormal = Math.min(diasSubsidioEnfermedad, cupoNormalDisponible);
+    diasIncapacidadEnfermedad = diasSubsidioEnfermedad - diasDescansoMedicoNormal;
   }
 
   return {
@@ -779,7 +819,13 @@ export async function agregarTareoDiario(
     horas_extra_25: redondear2(horasTramo1),
     horas_extra_35: redondear2(horasTramo2),
     horas_extra_100: redondear2(horasTramo3),
-    dias_subsidio_enfermedad: diasSubsidioEnfermedad,
+    // Ver comentario de la migracion 038 arriba: dias_subsidio_enfermedad
+    // (nombre de columna/campo sin cambios, por compatibilidad) pasa a
+    // representar SOLO el bucket "Dias de Descanso Medico" (<=20/año,
+    // concepto DESCANSO_MEDICO); el resto del dia 21 en adelante va en el
+    // campo nuevo dias_incapacidad_enfermedad (concepto INCAPACIDAD_ENFERMEDAD).
+    dias_subsidio_enfermedad: diasDescansoMedicoNormal,
+    dias_incapacidad_enfermedad: diasIncapacidadEnfermedad,
     dias_subsidio_maternidad: diasSubsidioMaternidad,
     dias_licencia_paternidad: diasLicenciaPaternidad,
     dias_subsidio_enfermedad_computable: diasSubsidioEnfermedadComputable,
@@ -895,51 +941,21 @@ planillaRouter.put(
       }
     }
 
-    // Migracion 030: el descanso medico por enfermedad ahora SI se paga
-    // (ver SUBSIDIO_ENFERMEDAD en motorCalculo.ts), pero la ley solo pone
-    // ese pago a cargo del EMPLEADOR durante los primeros 20 dias por año
-    // calendario y por CONTRATO (D.S. 009-97-SA) - del dia 21 en adelante
-    // el subsidio lo paga EsSalud directamente al trabajador, fuera de
-    // planilla. Este sistema no tiene forma de pagar "fuera de planilla",
-    // asi que en vez de calcular mal se BLOQUEA el registro completo
-    // (decision confirmada con el usuario: bloquear, no solo avisar) si,
-    // sumando lo ya cargado en tareo_diario para este MISMO contrato mas
-    // los dias SUBSIDIO_ENFERMEDAD de este request, se superarian los 20
-    // dias en algun año calendario. Se excluyen del conteo "ya cargado" las
-    // fechas que este mismo request va a sobreescribir (ON CONFLICT DO
-    // UPDATE mas abajo), para no contar dos veces un dia que ya estaba
-    // marcado SUBSIDIO_ENFERMEDAD y se esta volviendo a guardar tal cual.
-    const diasEnfermedadNuevos = dias.filter((d) => d.tipo_dia_especial === "SUBSIDIO_ENFERMEDAD");
-    if (diasEnfermedadNuevos.length > 0) {
-      const fechasDelRequest = dias.map((d) => d.fecha);
-      const existentes = await pool.query(
-        `SELECT EXTRACT(YEAR FROM fecha)::int AS anio, COUNT(*)::int AS dias
-         FROM tareo_diario
-         WHERE contrato_id = $1 AND tipo_dia_especial = 'SUBSIDIO_ENFERMEDAD' AND fecha <> ALL($2::date[])
-         GROUP BY anio`,
-        [req.params.contratoId, fechasDelRequest]
-      );
-      const acumuladoPorAnio = new Map<number, number>();
-      for (const fila of existentes.rows) {
-        acumuladoPorAnio.set(fila.anio, fila.dias);
-      }
-      for (const d of diasEnfermedadNuevos) {
-        const anio = Number(d.fecha.slice(0, 4));
-        acumuladoPorAnio.set(anio, (acumuladoPorAnio.get(anio) ?? 0) + 1);
-      }
-      const anioExcedido = [...acumuladoPorAnio.entries()].find(([, total]) => total > 20);
-      if (anioExcedido) {
-        const [anio, total] = anioExcedido;
-        return res.status(400).json({
-          error:
-            `El descanso medico por enfermedad superaria los 20 dias pagados por el empleador ` +
-            `en el año ${anio} para este contrato (quedarian ${total} dias marcados). ` +
-            `A partir del dia 21, el subsidio lo paga EsSalud directamente (fuera de planilla). ` +
-            `Revise las fechas marcadas como SUBSIDIO_ENFERMEDAD en ese año.`,
-        });
-      }
-    }
-
+    // Migracion 038: ANTES de esta migracion, aqui se BLOQUEABA el registro
+    // completo si el contrato superaba 20 dias/año de "SUBSIDIO_ENFERMEDAD"
+    // marcados (D.S. 009-97-SA) - por un error de diseño de la migracion 030
+    // original, ese bloqueo ademas escondia un bug real: los dias 1-20
+    // (pagados por el EMPLEADOR, como un dia normal de trabajo) se
+    // calculaban con el tratamiento tributario del dia 21+ (subsidiado por
+    // EsSalud, fuera de planilla), reportado por el usuario en produccion.
+    // Ahora el dia 21 en adelante SI se puede registrar: se guarda con el
+    // mismo tipo de dia especial ("DESCANSO_MEDICO", ver TIPOS_DIA_ESPECIAL),
+    // y es agregarTareoDiario (mas abajo, al calcular la planilla) quien
+    // divide automaticamente, por contrato y por año calendario, cuantos de
+    // esos dias se pagan como "Dias de Descanso Medico" (primeros 20,
+    // casilla PLAME 0121) y cuantos como "Dias por Incapacidad por
+    // Enfermedad" (del 21 en adelante, casilla PLAME 0916) - ver el
+    // comentario completo alli. Ya no hace falta bloquear nada aqui.
     const cliente = await pool.connect();
     try {
       await cliente.query("BEGIN");
@@ -1214,7 +1230,7 @@ planillaRouter.post(
     const asistenciaResult = await pool.query(
       `SELECT a.contrato_id, a.dias_trabajados, a.dias_dominical, a.dias_feriado, a.dias_falta,
               a.horas_extra_25, a.horas_extra_35, a.horas_extra_100,
-              a.dias_subsidio_enfermedad, a.dias_subsidio_maternidad, a.dias_licencia_paternidad,
+              a.dias_subsidio_enfermedad, a.dias_incapacidad_enfermedad, a.dias_subsidio_maternidad, a.dias_licencia_paternidad,
               a.dias_subsidio_enfermedad_computable,
               c.*, e.numero_hijos, e.numero_documento, e.apellidos_nombres,
               -- migracion_029: cuota_sindical_categoria (proyecto+categoria) tiene
@@ -1307,15 +1323,19 @@ planillaRouter.post(
 
     const lineasCalculadas = [];
     const erroresCalculo: Array<{ contrato_id: number; dni: string; nombre: string; motivo: string }> = [];
-    // Puramente informativo: dias de subsidio/licencia cargados via Tareo
-    // Diario para este periodo, que el motor de calculo (mas abajo) NO usa
-    // para ningun monto ni aporte todavia (ver migracion_017_tareo_diario.sql).
-    // Se avisa aqui para que el responsable los revise a mano.
+    // Dias de subsidio/licencia cargados via Tareo Diario para este periodo.
+    // Desde la migracion 025 SI entran al motor de calculo (dias computables
+    // de la gratificacion, ver calcularGratificacion en motorCalculo.ts) y
+    // desde la migracion 030 (corregida en la 038) el descanso
+    // medico/incapacidad/licencia por paternidad SI se pagan de verdad, con
+    // la division automatica de 20 dias/año ya aplicada - este aviso queda
+    // como informativo/de revision, no indica que algo quedo sin calcular.
     const avisosSubsidio: Array<{
       contrato_id: number;
       dni: string;
       nombre: string;
       dias_subsidio_enfermedad: number;
+      dias_incapacidad_enfermedad: number;
       dias_subsidio_maternidad: number;
       dias_licencia_paternidad: number;
     }> = [];
@@ -1349,14 +1369,16 @@ planillaRouter.post(
       }
 
       const diasSubsidioEnfermedad = Number(fila.dias_subsidio_enfermedad) || 0;
+      const diasIncapacidadEnfermedad = Number(fila.dias_incapacidad_enfermedad) || 0;
       const diasSubsidioMaternidad = Number(fila.dias_subsidio_maternidad) || 0;
       const diasLicenciaPaternidad = Number(fila.dias_licencia_paternidad) || 0;
-      if (diasSubsidioEnfermedad > 0 || diasSubsidioMaternidad > 0 || diasLicenciaPaternidad > 0) {
+      if (diasSubsidioEnfermedad > 0 || diasIncapacidadEnfermedad > 0 || diasSubsidioMaternidad > 0 || diasLicenciaPaternidad > 0) {
         avisosSubsidio.push({
           contrato_id: contrato.id,
           dni: contrato.numero_documento,
           nombre: contrato.apellidos_nombres,
           dias_subsidio_enfermedad: diasSubsidioEnfermedad,
+          dias_incapacidad_enfermedad: diasIncapacidadEnfermedad,
           dias_subsidio_maternidad: diasSubsidioMaternidad,
           dias_licencia_paternidad: diasLicenciaPaternidad,
         });
@@ -1376,6 +1398,11 @@ planillaRouter.post(
         // informativo, ver avisosSubsidio mas arriba) - dias_subsidio_enfermedad
         // y dias_licencia_paternidad si generan pago (calcularLineaPlanilla).
         dias_subsidio_enfermedad: diasSubsidioEnfermedad,
+        // Migracion 038: dia 21 en adelante (por año calendario y por
+        // contrato) de dias marcados "DESCANSO_MEDICO" - se paga como
+        // incapacidad subsidiada por EsSalud, no como dia normal de
+        // trabajo. Ver el comentario completo en agregarTareoDiario.
+        dias_incapacidad_enfermedad: diasIncapacidadEnfermedad,
         dias_subsidio_maternidad: diasSubsidioMaternidad,
         dias_licencia_paternidad: diasLicenciaPaternidad,
         // Migracion 032: version topada (60 dias/año/contrato) de
@@ -1460,10 +1487,11 @@ planillaRouter.post(
              otros_descuentos, total_descuentos, essalud, sctr, senati, neto_pagar, detalle_json,
              subsidio_enfermedad, licencia_paternidad,
              dias_subsidio_enfermedad, dias_subsidio_maternidad, dias_licencia_paternidad,
-             dias_subsidio_enfermedad_computable
+             dias_subsidio_enfermedad_computable,
+             dias_incapacidad_enfermedad, incapacidad_enfermedad
            ) VALUES (
              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
-             $24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43
+             $24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45
            )
            ON CONFLICT (periodo_id, contrato_id) DO UPDATE SET
              dias_trabajados = EXCLUDED.dias_trabajados,
@@ -1507,6 +1535,8 @@ planillaRouter.post(
              dias_subsidio_maternidad = EXCLUDED.dias_subsidio_maternidad,
              dias_licencia_paternidad = EXCLUDED.dias_licencia_paternidad,
              dias_subsidio_enfermedad_computable = EXCLUDED.dias_subsidio_enfermedad_computable,
+             dias_incapacidad_enfermedad = EXCLUDED.dias_incapacidad_enfermedad,
+             incapacidad_enfermedad = EXCLUDED.incapacidad_enfermedad,
              calculado_en = now()
            RETURNING *`,
           [
@@ -1553,6 +1583,8 @@ planillaRouter.post(
             detalle.dias_subsidio_maternidad,
             detalle.dias_licencia_paternidad,
             detalle.dias_subsidio_enfermedad_computable,
+            detalle.dias_incapacidad_enfermedad,
+            detalle.incapacidad_enfermedad,
           ]
         );
         lineasCalculadas.push(r.rows[0]);

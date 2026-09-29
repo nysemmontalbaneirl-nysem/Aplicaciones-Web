@@ -84,6 +84,7 @@ function asistencia(parcial: Partial<AsistenciaEntrada>): AsistenciaEntrada {
     horas_extra_35: 0,
     horas_extra_100: 0,
     dias_subsidio_enfermedad: 0,
+    dias_incapacidad_enfermedad: 0,
     dias_subsidio_maternidad: 0,
     dias_licencia_paternidad: 0,
     dias_subsidio_enfermedad_computable: 0,
@@ -253,7 +254,7 @@ afterAll(async () => {
 });
 
 describe("Integracion: Vacaciones/CTS/Escolaridad via Tareo Diario + /calcular creditan el descanso medico", () => {
-  it("un dia de SUBSIDIO_ENFERMEDAD dentro del tope de 60 aumenta Vacaciones/CTS/Escolaridad", async () => {
+  it("un dia de DESCANSO_MEDICO dentro del tope de 60 aumenta Vacaciones/CTS/Escolaridad", async () => {
     const periodo = await pool.query(
       `INSERT INTO periodos_planilla (anio, mes, tipo, fecha_inicio, fecha_fin, dias_periodo)
        VALUES (2026, 8, 'SEMANAL', '2026-08-03', '2026-08-09', 8) RETURNING id`
@@ -287,7 +288,7 @@ describe("Integracion: Vacaciones/CTS/Escolaridad via Tareo Diario + /calcular c
     );
     const contratoSinId = contratoSin.rows[0].id as number;
 
-    // 6 dias trabajados normales, un dia con SUBSIDIO_ENFERMEDAD (certificado).
+    // 6 dias trabajados normales, un dia con DESCANSO_MEDICO (certificado).
     const cargarCon = await request(app)
       .put(`/api/periodos/${periodoId}/tareo-diario/${contratoId}`)
       .set(auth())
@@ -298,7 +299,7 @@ describe("Integracion: Vacaciones/CTS/Escolaridad via Tareo Diario + /calcular c
           { fecha: "2026-08-05", horas_normales: 8, minutos_normales: 0 },
           { fecha: "2026-08-06", horas_normales: 8, minutos_normales: 0 },
           { fecha: "2026-08-07", horas_normales: 8, minutos_normales: 0 },
-          { fecha: "2026-08-08", tipo_dia_especial: "SUBSIDIO_ENFERMEDAD" },
+          { fecha: "2026-08-08", tipo_dia_especial: "DESCANSO_MEDICO" },
         ],
       });
     expect(cargarCon.status).toBe(204);
@@ -386,7 +387,7 @@ async function sembrarSubsidioEnfermedad(periodoId: number, contratoId: number, 
   for (const fecha of fechas) {
     await pool.query(
       `INSERT INTO tareo_diario (periodo_id, contrato_id, fecha, tipo_dia_especial)
-       VALUES ($1, $2, $3, 'SUBSIDIO_ENFERMEDAD')`,
+       VALUES ($1, $2, $3, 'DESCANSO_MEDICO')`,
       [periodoId, contratoId, fecha]
     );
   }
@@ -436,7 +437,7 @@ describe("Tope de 60 dias/año de dias_subsidio_enfermedad_computable (migracion
     );
     const contratoId = contrato.rows[0].id as number;
 
-    // 59 dias de SUBSIDIO_ENFERMEDAD ya "acreditados" en el año 2026, en un
+    // 59 dias de DESCANSO_MEDICO ya "acreditados" en el año 2026, en un
     // periodo previo (fuera del rango del periodo actual) - simula que ya se
     // guardaron en un calculo anterior.
     await sembrarSubsidioEnfermedad(periodoAnteriorId, contratoId, fechasConsecutivas("2026-01-01", 59));
@@ -455,7 +456,14 @@ describe("Tope de 60 dias/año de dias_subsidio_enfermedad_computable (migracion
         contratoId,
       ])
     ).rows[0];
-    expect(Number(asistencia.dias_subsidio_enfermedad)).toBe(3);
+    // Migracion 038: el cupo normal de 20 dias/año ya estaba agotado por los
+    // 59 dias sembrados antes - los 3 dias de este periodo caen 100% en
+    // dias_incapacidad_enfermedad (no en dias_subsidio_enfermedad). Esta
+    // division de "pago" (20/21+) es un eje totalmente distinto del tope de
+    // 60 dias "computables" para gratificacion/vacaciones/CTS que prueba
+    // este describe, y no lo afecta.
+    expect(Number(asistencia.dias_subsidio_enfermedad)).toBe(0);
+    expect(Number(asistencia.dias_incapacidad_enfermedad)).toBe(3);
     // El tope: solo 1 de los 3 dias de este periodo puede computar, porque
     // ya habia 59 acreditados en el año.
     expect(Number(asistencia.dias_subsidio_enfermedad_computable)).toBe(1);
@@ -499,7 +507,12 @@ describe("Tope de 60 dias/año de dias_subsidio_enfermedad_computable (migracion
         contratoId,
       ])
     ).rows[0];
-    expect(Number(asistencia.dias_subsidio_enfermedad)).toBe(1);
+    // Migracion 038: cupo normal ya agotado (60 dias ya acreditados) - el
+    // dia de este periodo cae en dias_incapacidad_enfermedad, no en
+    // dias_subsidio_enfermedad. El tope de 60 dias computables (eje
+    // independiente) sigue en 0, como antes.
+    expect(Number(asistencia.dias_subsidio_enfermedad)).toBe(0);
+    expect(Number(asistencia.dias_incapacidad_enfermedad)).toBe(1);
     expect(Number(asistencia.dias_subsidio_enfermedad_computable)).toBe(0);
   });
 });

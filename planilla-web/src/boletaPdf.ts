@@ -69,12 +69,16 @@ export interface DetalleBoletaPdf {
   bonificacion_buc: number;
   bonificacion_bae: number;
   bonificacion_movilidad: number;
-  // Migracion 030: pago REAL de descanso medico por enfermedad/licencia por
-  // paternidad, valorizado igual que un dia normal trabajado (jornal_diario
-  // x dias). subsidio_enfermedad viene topado en el origen a 20 dias/año
-  // por contrato (ver la validacion en PUT /:id/tareo-diario/:contratoId);
+  // Migracion 030 (corregido en 038): pago REAL de descanso medico por
+  // enfermedad/licencia por paternidad, valorizado igual que un dia normal
+  // trabajado (jornal_diario x dias). subsidio_enfermedad = bucket <=20
+  // dias/año por contrato ("Dias de Descanso Medico", afecto a todo, igual
+  // que un dia normal); incapacidad_enfermedad = bucket 21+ ("Dias por
+  // Incapacidad por Enfermedad", afecto solo a SCTR/AFP, mismas
+  // afectaciones que tenia el concepto original antes de esta migracion).
   // licencia_paternidad no tiene tope.
   subsidio_enfermedad: number;
+  incapacidad_enfermedad: number;
   licencia_paternidad: number;
   otras_bonificaciones: number;
   gratificacion: number;
@@ -182,7 +186,8 @@ function dibujarBoleta(
     { etiqueta: "Bonificacion Unificada Construccion (BUC)", valor: detalle.bonificacion_buc },
     { etiqueta: "Bonificacion por Alta Especializacion (BAE)", valor: detalle.bonificacion_bae },
     { etiqueta: "Bonificacion por movilidad", valor: detalle.bonificacion_movilidad },
-    { etiqueta: "Subsidio incapacidad temporal (descanso medico)", valor: detalle.subsidio_enfermedad },
+    { etiqueta: "Descanso medico", valor: detalle.subsidio_enfermedad },
+    { etiqueta: "Incapacidad por enfermedad", valor: detalle.incapacidad_enfermedad },
     { etiqueta: "Licencia por paternidad", valor: detalle.licencia_paternidad },
     { etiqueta: "Otras bonificaciones", valor: detalle.otras_bonificaciones },
     { etiqueta: "Gratificacion", valor: detalle.gratificacion },

@@ -332,7 +332,8 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
               <th>H.E. 1</th>
               <th>H.E. 2</th>
               <th>H.E. 3</th>
-              <th title="Cargado desde Registrar Tareo Diario - solo informativo">Subs. enfermedad</th>
+              <th title="Cargado desde Registrar Tareo Diario - dias <=20/año, se pagan como dia normal de trabajo">Desc. médico</th>
+              <th title="Cargado desde Registrar Tareo Diario - dias 21+/año, subsidiados por EsSalud">Incap. enfermedad</th>
               <th title="Cargado desde Registrar Tareo Diario - solo informativo">Subs. maternidad</th>
               <th title="Cargado desde Registrar Tareo Diario - solo informativo">Lic. paternidad</th>
               <th></th>
@@ -362,6 +363,7 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
                   </td>
                 ))}
                 <td style={{ textAlign: "center", color: "#5a6172" }}>{fila.dias_subsidio_enfermedad ?? 0}</td>
+                <td style={{ textAlign: "center", color: "#5a6172" }}>{fila.dias_incapacidad_enfermedad ?? 0}</td>
                 <td style={{ textAlign: "center", color: "#5a6172" }}>{fila.dias_subsidio_maternidad ?? 0}</td>
                 <td style={{ textAlign: "center", color: "#5a6172" }}>{fila.dias_licencia_paternidad ?? 0}</td>
                 <td>
