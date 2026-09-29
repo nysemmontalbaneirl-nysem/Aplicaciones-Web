@@ -6,12 +6,40 @@ import {
   CatalogoUbigeoDistrito,
   CatalogoUbigeoProvincia,
   ClaveConceptoLimiteTareo,
+  ConceptoAporte,
   ConceptoPlanilla,
+  CuentaContable,
   DiaFeriado,
   HorarioProyecto,
   LimitesTareo,
+  MapeoContable,
   Proyecto,
 } from "../types";
+
+// Movimientos contables que requiere cada concepto de INGRESO/APORTE/
+// DESCUENTO (conceptos_planilla.tipo) - usado por el Mapeo Contable
+// (migracion_049) para saber si mostrar la columna "Cuenta (Debe)",
+// "Cuenta (Haber)" o ambas para ese concepto.
+function movimientosDeConceptoIngreso(tipo: string): Array<"DEBE" | "HABER"> {
+  if (tipo === "DESCUENTO") return ["HABER"];
+  if (tipo === "APORTE") return ["DEBE", "HABER"];
+  return ["DEBE"]; // INGRESO (o cualquier otro valor, por defecto)
+}
+
+// Movimientos contables que requiere cada aporte/retencion
+// (conceptos_aportes.tipo_movimiento): "DEBE"/"HABER" literal = solo ese
+// movimiento; cualquier otro valor ("APORTE", usado por los aportes
+// patronales) = requiere cuenta en AMBOS (Debe y Haber) - mismo criterio
+// que asientoContable.ts (acumula Debe+Haber por el mismo monto para
+// ESSALUD/SCTR/SENATI/SEGURO_VIDA).
+function movimientosDeAporte(tipoMovimiento: string): Array<"DEBE" | "HABER"> {
+  if (tipoMovimiento === "DEBE" || tipoMovimiento === "HABER") return [tipoMovimiento];
+  return ["DEBE", "HABER"];
+}
+
+function claveMapeo(conceptoCodigo: string, tipoMovimiento: "DEBE" | "HABER"): string {
+  return `${conceptoCodigo}|${tipoMovimiento}`;
+}
 
 type CampoAfecto = "afecto_essalud" | "afecto_sctr" | "afecto_senati" | "afecto_onp" | "afecto_afp" | "afecto_renta5ta" | "afecto_conafovicer";
 
@@ -113,6 +141,29 @@ export default function Configuracion() {
   // tareo"/"Horario por proyecto" de mas arriba (el sub-menu de
   // Configuracion con pestañas nunca se reconstruyo en este arbol).
   // ------------------------------------------------------------------
+  // ------------------------------------------------------------------
+  // Aportes patronales/retenciones (conceptos_aportes), Plan de Cuentas
+  // (plan_cuentas) y Mapeo Contable (mapeo_cuentas_contables) - migracion
+  // 049, prerequisito del Asiento Contable (ver src/asientoContable.ts).
+  // Igual criterio que las tarjetas de arriba: se agregan como tarjetas
+  // simples apiladas, no como pestañas de un sub-menu (ese sub-menu de
+  // produccion nunca se reconstruyo en este arbol - ver la NOTA de arriba).
+  // ------------------------------------------------------------------
+  const [aportes, setAportes] = useState<ConceptoAporte[]>([]);
+  const [edicionesAporte, setEdicionesAporte] = useState<Record<string, Partial<Pick<ConceptoAporte, "nombre" | "descripcion" | "codigo_plame">>>>({});
+  const [guardandoAporte, setGuardandoAporte] = useState<string | null>(null);
+
+  const [cuentas, setCuentas] = useState<CuentaContable[]>([]);
+  const [edicionesCuenta, setEdicionesCuenta] = useState<Record<number, Partial<Pick<CuentaContable, "codigo" | "denominacion" | "activa">>>>({});
+  const [guardandoCuentaId, setGuardandoCuentaId] = useState<number | null>(null);
+  const [nuevaCuenta, setNuevaCuenta] = useState({ codigo: "", denominacion: "" });
+  const [agregandoCuenta, setAgregandoCuenta] = useState(false);
+
+  const [mapeo, setMapeo] = useState<MapeoContable[]>([]);
+  const [proyectoMapeoId, setProyectoMapeoId] = useState<number | null>(null);
+  const [edicionesMapeo, setEdicionesMapeo] = useState<Record<string, number | "">>({});
+  const [guardandoMapeo, setGuardandoMapeo] = useState(false);
+
   const [feriados, setFeriados] = useState<DiaFeriado[]>([]);
   const [ubigeoDepartamentos, setUbigeoDepartamentos] = useState<CatalogoItem[]>([]);
   const [ubigeoProvincias, setUbigeoProvincias] = useState<CatalogoUbigeoProvincia[]>([]);
@@ -136,18 +187,22 @@ export default function Configuracion() {
     setCargando(true);
     setError(null);
     try {
-      const [datos, datosLimites, datosProyectos, datosHorarios, datosFeriados, datosCatalogos] = await Promise.all([
-        apiGet<ConceptoPlanilla[]>("/conceptos"),
-        apiGet<LimitesTareo>("/conceptos/limites-tareo"),
-        apiGet<Proyecto[]>("/proyectos"),
-        apiGet<HorarioProyecto[]>("/conceptos/horarios-proyecto"),
-        apiGet<DiaFeriado[]>("/conceptos/dias-feriados"),
-        apiGet<{
-          ubigeo_departamento: CatalogoItem[];
-          ubigeo_provincia: CatalogoUbigeoProvincia[];
-          ubigeo_distrito: CatalogoUbigeoDistrito[];
-        }>("/catalogos"),
-      ]);
+      const [datos, datosLimites, datosProyectos, datosHorarios, datosFeriados, datosCatalogos, datosAportes, datosCuentas, datosMapeo] =
+        await Promise.all([
+          apiGet<ConceptoPlanilla[]>("/conceptos"),
+          apiGet<LimitesTareo>("/conceptos/limites-tareo"),
+          apiGet<Proyecto[]>("/proyectos"),
+          apiGet<HorarioProyecto[]>("/conceptos/horarios-proyecto"),
+          apiGet<DiaFeriado[]>("/conceptos/dias-feriados"),
+          apiGet<{
+            ubigeo_departamento: CatalogoItem[];
+            ubigeo_provincia: CatalogoUbigeoProvincia[];
+            ubigeo_distrito: CatalogoUbigeoDistrito[];
+          }>("/catalogos"),
+          apiGet<ConceptoAporte[]>("/conceptos/aportes"),
+          apiGet<CuentaContable[]>("/conceptos/plan-cuentas"),
+          apiGet<MapeoContable[]>("/conceptos/mapeo-contable"),
+        ]);
       setConceptos(datos);
       setEdiciones({});
       setLimitesTareo(datosLimites);
@@ -158,6 +213,12 @@ export default function Configuracion() {
       setUbigeoDepartamentos(datosCatalogos.ubigeo_departamento);
       setUbigeoProvincias(datosCatalogos.ubigeo_provincia);
       setUbigeoDistritos(datosCatalogos.ubigeo_distrito);
+      setAportes(datosAportes);
+      setEdicionesAporte({});
+      setCuentas(datosCuentas);
+      setEdicionesCuenta({});
+      setMapeo(datosMapeo);
+      setProyectoMapeoId((actual) => actual ?? datosProyectos[0]?.id ?? null);
       const edicionInicial: Record<string, string> = {};
       for (const c of CONCEPTOS_LIMITE_TAREO) {
         for (const tipoDia of TIPOS_DIA_LIMITE_TAREO) {
@@ -525,6 +586,170 @@ export default function Configuracion() {
       ? ubigeoDistritos.find((d) => d.codigo === f.ubigeo_distrito_codigo)?.nombre ?? f.ubigeo_distrito_codigo
       : null;
     return distrito ? `${provincia} - ${distrito}` : `${provincia}`;
+  }
+
+  // ------------------------------------------------------------------
+  // Aportes patronales/retenciones (conceptos_aportes, migracion_049).
+  // ------------------------------------------------------------------
+  function valorAporte<K extends "nombre" | "descripcion" | "codigo_plame">(a: ConceptoAporte, campo: K): ConceptoAporte[K] {
+    const edicion = edicionesAporte[a.codigo];
+    if (edicion && campo in edicion) return edicion[campo] as ConceptoAporte[K];
+    return a[campo];
+  }
+
+  function editarAporte(codigo: string, campo: "nombre" | "descripcion" | "codigo_plame", valor: string) {
+    setEdicionesAporte((prev) => ({ ...prev, [codigo]: { ...prev[codigo], [campo]: valor } }));
+    setMensaje(null);
+  }
+
+  async function guardarAporte(a: ConceptoAporte) {
+    const cambios = edicionesAporte[a.codigo];
+    if (!cambios) return;
+    setGuardandoAporte(a.codigo);
+    setError(null);
+    try {
+      const actualizado = await apiPut<ConceptoAporte>(`/conceptos/aportes/${a.codigo}`, cambios);
+      setAportes((prev) => prev.map((x) => (x.codigo === a.codigo ? actualizado : x)));
+      setEdicionesAporte((prev) => {
+        const copia = { ...prev };
+        delete copia[a.codigo];
+        return copia;
+      });
+      setMensaje(`Guardado: ${a.nombre}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al guardar el concepto de aporte");
+    } finally {
+      setGuardandoAporte(null);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Plan de Cuentas contable (plan_cuentas, migracion_049). El codigo NO
+  // es unico (la empresa reutiliza codigos entre denominaciones distintas).
+  // ------------------------------------------------------------------
+  function valorCuenta<K extends "codigo" | "denominacion" | "activa">(c: CuentaContable, campo: K): CuentaContable[K] {
+    const edicion = edicionesCuenta[c.id];
+    if (edicion && campo in edicion) return edicion[campo] as CuentaContable[K];
+    return c[campo];
+  }
+
+  function editarCuenta(id: number, campo: "codigo" | "denominacion" | "activa", valor: string | boolean) {
+    setEdicionesCuenta((prev) => ({ ...prev, [id]: { ...prev[id], [campo]: valor } }));
+    setMensaje(null);
+  }
+
+  async function guardarCuenta(c: CuentaContable) {
+    const cambios = edicionesCuenta[c.id];
+    if (!cambios) return;
+    setGuardandoCuentaId(c.id);
+    setError(null);
+    try {
+      const actualizado = await apiPut<CuentaContable>(`/conceptos/plan-cuentas/${c.id}`, cambios);
+      setCuentas((prev) => prev.map((x) => (x.id === c.id ? actualizado : x)));
+      setEdicionesCuenta((prev) => {
+        const copia = { ...prev };
+        delete copia[c.id];
+        return copia;
+      });
+      setMensaje(`Guardado: ${actualizado.codigo} - ${actualizado.denominacion}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al guardar la cuenta contable");
+    } finally {
+      setGuardandoCuentaId(null);
+    }
+  }
+
+  async function agregarCuenta() {
+    if (!nuevaCuenta.codigo.trim() || !nuevaCuenta.denominacion.trim()) {
+      setError("Código y denominación son obligatorios para agregar una cuenta.");
+      return;
+    }
+    setAgregandoCuenta(true);
+    setError(null);
+    try {
+      const creada = await apiPost<CuentaContable>("/conceptos/plan-cuentas", {
+        codigo: nuevaCuenta.codigo.trim(),
+        denominacion: nuevaCuenta.denominacion.trim(),
+        activa: true,
+      });
+      setCuentas((prev) => [...prev, creada].sort((a, b) => a.codigo.localeCompare(b.codigo) || a.denominacion.localeCompare(b.denominacion)));
+      setNuevaCuenta({ codigo: "", denominacion: "" });
+      setMensaje(`Cuenta agregada: ${creada.codigo} - ${creada.denominacion}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al agregar la cuenta contable");
+    } finally {
+      setAgregandoCuenta(false);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Mapeo Contable por proyecto (mapeo_cuentas_contables, migracion_049):
+  // concepto x proyecto x movimiento -> cuenta, usado por el Asiento
+  // Contable (ver src/asientoContable.ts). Se edita un proyecto a la vez
+  // (selector arriba de la tabla) para no armar una matriz gigante con
+  // TODOS los proyectos a la vez.
+  // ------------------------------------------------------------------
+  const filasMapeoConceptos = useMemo(
+    () => [
+      ...conceptos.map((c) => ({ codigo: c.codigo, nombre: c.nombre, movimientos: movimientosDeConceptoIngreso(c.tipo) })),
+      ...aportes.map((a) => ({ codigo: a.codigo, nombre: a.nombre, movimientos: movimientosDeAporte(a.tipo_movimiento) })),
+    ],
+    [conceptos, aportes]
+  );
+
+  useEffect(() => {
+    if (proyectoMapeoId === null) return;
+    const inicial: Record<string, number | ""> = {};
+    for (const fila of filasMapeoConceptos) {
+      for (const movimiento of fila.movimientos) {
+        const existente = mapeo.find(
+          (m) => m.concepto_codigo === fila.codigo && m.proyecto_id === proyectoMapeoId && m.tipo_movimiento === movimiento
+        );
+        inicial[claveMapeo(fila.codigo, movimiento)] = existente?.cuenta_id ?? "";
+      }
+    }
+    setEdicionesMapeo(inicial);
+    // Solo se recalcula al cambiar de proyecto o al recargar el mapeo desde
+    // el servidor (guardar) - no en cada tecla del propio formulario.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proyectoMapeoId, mapeo, filasMapeoConceptos]);
+
+  function editarMapeo(conceptoCodigo: string, movimiento: "DEBE" | "HABER", cuentaId: string) {
+    setEdicionesMapeo((prev) => ({ ...prev, [claveMapeo(conceptoCodigo, movimiento)]: cuentaId === "" ? "" : Number(cuentaId) }));
+    setMensaje(null);
+  }
+
+  async function guardarMapeoProyecto() {
+    if (proyectoMapeoId === null) return;
+    // Solo se envian las celdas con una cuenta seleccionada: la API es un
+    // upsert (no hay ruta para "desconfigurar" una cuenta ya guardada), asi
+    // que dejar una celda en "— sin cuenta —" simplemente no la reenvia (la
+    // fila existente, si la habia, queda sin cambios).
+    const entradas: { concepto_codigo: string; proyecto_id: number; tipo_movimiento: "DEBE" | "HABER"; cuenta_id: number }[] = [];
+    for (const fila of filasMapeoConceptos) {
+      for (const movimiento of fila.movimientos) {
+        const valor = edicionesMapeo[claveMapeo(fila.codigo, movimiento)];
+        if (valor !== "" && valor !== undefined) {
+          entradas.push({ concepto_codigo: fila.codigo, proyecto_id: proyectoMapeoId, tipo_movimiento: movimiento, cuenta_id: valor });
+        }
+      }
+    }
+    if (entradas.length === 0) {
+      setError("No hay ninguna cuenta seleccionada para guardar.");
+      return;
+    }
+    setGuardandoMapeo(true);
+    setError(null);
+    try {
+      await apiPut<MapeoContable[]>("/conceptos/mapeo-contable", { entradas });
+      const actualizado = await apiGet<MapeoContable[]>("/conceptos/mapeo-contable");
+      setMapeo(actualizado);
+      setMensaje("Mapeo contable guardado.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al guardar el mapeo contable");
+    } finally {
+      setGuardandoMapeo(false);
+    }
   }
 
   return (
@@ -922,6 +1147,247 @@ export default function Configuracion() {
               </tr>
             </tbody>
           </table>
+        </div>
+      </div>
+    )}
+
+    {!cargando && (
+      <div className="card" style={{ marginTop: 18 }}>
+        <h2 className="titulo-reporte">Aportes y retenciones</h2>
+        <p style={{ color: "#5a6172", maxWidth: 900 }}>
+          Catálogo de aportes patronales (EsSalud, SCTR, SENATI, seguro de vida), retenciones al trabajador (ONP,
+          AFP, Renta 5ta, CONAFOVICER, cuota sindical) y el neto a pagar. El código PLAME es editable (igual
+          criterio que "Conceptos de ingreso"); el tipo de movimiento contable no se puede editar aquí — es fijo
+          según el modelo del Asiento Contable.
+        </p>
+        <div className="tabla-scroll-horizontal">
+          <table>
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th style={{ minWidth: 200 }}>Nombre</th>
+                <th style={{ minWidth: 260 }}>Descripción</th>
+                <th>Código PLAME</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {aportes.map((a) => (
+                <tr key={a.codigo}>
+                  <td>
+                    <code>{a.codigo}</code>
+                  </td>
+                  <td>
+                    <input
+                      type="text"
+                      style={{ width: 200 }}
+                      value={valorAporte(a, "nombre")}
+                      onChange={(e) => editarAporte(a.codigo, "nombre", e.target.value)}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="text"
+                      style={{ width: 260 }}
+                      value={valorAporte(a, "descripcion") ?? ""}
+                      onChange={(e) => editarAporte(a.codigo, "descripcion", e.target.value)}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="text"
+                      style={{ width: 90 }}
+                      maxLength={10}
+                      value={valorAporte(a, "codigo_plame") ?? ""}
+                      onChange={(e) => editarAporte(a.codigo, "codigo_plame", e.target.value)}
+                    />
+                  </td>
+                  <td>
+                    {!!edicionesAporte[a.codigo] && (
+                      <button
+                        type="button"
+                        className="primario"
+                        onClick={() => guardarAporte(a)}
+                        disabled={guardandoAporte === a.codigo}
+                      >
+                        {guardandoAporte === a.codigo ? "..." : "Guardar"}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )}
+
+    {!cargando && (
+      <div className="card" style={{ marginTop: 18 }}>
+        <h2 className="titulo-reporte">Plan de cuentas</h2>
+        <p style={{ color: "#5a6172", maxWidth: 900 }}>
+          Catálogo de cuentas contables para el Asiento Contable. El código no es único: la empresa puede reutilizar
+          el mismo código bajo denominaciones distintas.
+        </p>
+        <div className="tabla-scroll-horizontal">
+          <table>
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th style={{ minWidth: 260 }}>Denominación</th>
+                <th style={{ textAlign: "center" }}>Activa</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {cuentas.length === 0 && (
+                <tr>
+                  <td colSpan={4} style={{ color: "#8a90a0" }}>
+                    Todavía no hay cuentas registradas.
+                  </td>
+                </tr>
+              )}
+              {cuentas.map((c) => (
+                <tr key={c.id}>
+                  <td>
+                    <input
+                      type="text"
+                      style={{ width: 100 }}
+                      maxLength={20}
+                      value={valorCuenta(c, "codigo")}
+                      onChange={(e) => editarCuenta(c.id, "codigo", e.target.value)}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="text"
+                      style={{ width: 320 }}
+                      value={valorCuenta(c, "denominacion")}
+                      onChange={(e) => editarCuenta(c.id, "denominacion", e.target.value)}
+                    />
+                  </td>
+                  <td style={{ textAlign: "center" }}>
+                    <input
+                      type="checkbox"
+                      checked={valorCuenta(c, "activa")}
+                      onChange={(e) => editarCuenta(c.id, "activa", e.target.checked)}
+                    />
+                  </td>
+                  <td>
+                    {!!edicionesCuenta[c.id] && (
+                      <button
+                        type="button"
+                        className="primario"
+                        onClick={() => guardarCuenta(c)}
+                        disabled={guardandoCuentaId === c.id}
+                      >
+                        {guardandoCuentaId === c.id ? "..." : "Guardar"}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              <tr>
+                <td>
+                  <input
+                    type="text"
+                    placeholder="Código"
+                    style={{ width: 100 }}
+                    maxLength={20}
+                    value={nuevaCuenta.codigo}
+                    onChange={(e) => setNuevaCuenta((v) => ({ ...v, codigo: e.target.value }))}
+                  />
+                </td>
+                <td>
+                  <input
+                    type="text"
+                    placeholder="Denominación"
+                    style={{ width: 320 }}
+                    value={nuevaCuenta.denominacion}
+                    onChange={(e) => setNuevaCuenta((v) => ({ ...v, denominacion: e.target.value }))}
+                  />
+                </td>
+                <td></td>
+                <td>
+                  <button type="button" className="primario" onClick={agregarCuenta} disabled={agregandoCuenta}>
+                    {agregandoCuenta ? "..." : "Agregar"}
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )}
+
+    {!cargando && (
+      <div className="card" style={{ marginTop: 18 }}>
+        <h2 className="titulo-reporte">Mapeo contable por proyecto</h2>
+        <p style={{ color: "#5a6172", maxWidth: 900 }}>
+          Para cada proyecto, asigna la cuenta contable de cada concepto de ingreso y de cada aporte/retención. El
+          Asiento Contable (Planilla Mensual y Reportes) no genera una línea sin esta configuración: si falta
+          alguna, se avisa con el detalle completo al intentar descargarlo. Elige un proyecto, completa las
+          cuentas que falten y guarda — las celdas ya guardadas antes se pueden cambiar, pero no "vaciar" desde
+          aquí.
+        </p>
+        <div style={{ marginBottom: 12 }}>
+          <label>
+            Proyecto:{" "}
+            <select
+              value={proyectoMapeoId ?? ""}
+              onChange={(e) => setProyectoMapeoId(e.target.value === "" ? null : Number(e.target.value))}
+            >
+              {proyectos.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.nombre}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {proyectoMapeoId !== null && (
+          <div className="tabla-scroll-horizontal">
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ minWidth: 220 }}>Concepto</th>
+                  <th>Cuenta (Debe)</th>
+                  <th>Cuenta (Haber)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filasMapeoConceptos.map((fila) => (
+                  <tr key={fila.codigo}>
+                    <td>{fila.nombre}</td>
+                    {(["DEBE", "HABER"] as const).map((movimiento) => (
+                      <td key={movimiento}>
+                        {fila.movimientos.includes(movimiento) ? (
+                          <select
+                            value={edicionesMapeo[claveMapeo(fila.codigo, movimiento)] ?? ""}
+                            onChange={(e) => editarMapeo(fila.codigo, movimiento, e.target.value)}
+                          >
+                            <option value="">— sin cuenta —</option>
+                            {cuentas.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.codigo} - {c.denominacion}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span style={{ color: "#b0b5c0" }}>—</span>
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div style={{ marginTop: 12 }}>
+          <button type="button" className="primario" onClick={guardarMapeoProyecto} disabled={guardandoMapeo || proyectoMapeoId === null}>
+            {guardandoMapeo ? "Guardando..." : "Guardar mapeo de este proyecto"}
+          </button>
         </div>
       </div>
     )}

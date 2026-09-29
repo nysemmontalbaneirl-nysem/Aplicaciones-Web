@@ -27,6 +27,7 @@
 // =========================================================================
 
 import { Router, Request, Response, NextFunction } from "express";
+import ExcelJS from "exceljs";
 import { asyncHandler } from "../asyncHandler";
 import { requierePermiso } from "../authMiddleware";
 import { tieneAccesoProyecto } from "../permisos";
@@ -40,16 +41,9 @@ import {
 import { generarLineasREMMensual } from "../plame";
 import { generarCSVAFPnetMensual } from "../afpnet";
 import { generarFilasAFPnetExcel, construirWorkbookAFPnetExcel, obtenerDiagnosticoAfpnetMensual } from "../afpnetExcel";
-
-// NOTA (recon 19/46, reconfirmado en recon 33/46): el parche original
-// tambien agregaba/mantenia GET /:id/exportar/asiento-contable (Excel del
-// asiento contable mensual, usando generarAsientoContableMensual de
-// "../asientoContable"). Se omite por completo esa ruta: "src/asientoContable.ts"
-// no existe en este arbol (ver RECONSTRUCCION_BRECHAS.md punto 5 - confirmado
-// ausente ya 3 veces, en los patches 15/46, 19/46 y ahora 33/46). Si ese
-// modulo se reconstruye alguna vez, esta ruta (ahora con query params
-// anio/mes/proyecto, igual que el resto de este archivo) se puede agregar
-// siguiendo el mismo patron de REM/AFPnet de aqui abajo.
+import { generarAsientoContableMensual, LineaAsientoContable } from "../asientoContable";
+import { obtenerLogoEmpresa } from "./empresa";
+import { insertarLogoEnHoja } from "../reportesLogo";
 
 export const planillaMensualRouter = Router();
 
@@ -240,6 +234,57 @@ planillaMensualRouter.get(
     const workbook = construirWorkbookAFPnetExcel(filas);
     const nombreArchivo = `AFPnet_Oficial_${anio}${String(mes).padStart(2, "0")}_${proyecto ?? "TODOS"}.xlsx`;
 
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${nombreArchivo}"`);
+    await workbook.xlsx.write(res);
+    res.end();
+  })
+);
+
+const COLUMNAS_ASIENTO = [
+  "CODIGO", "D_H", "FECHA", "IMPORTE", "CODIGO_PRO", "NRO_DOC", "TIPO_DOC",
+  "ECPN", "EFE", "DETALLE", "MONTO_EXTR", "LUGAR", "GLOSA", "COD_LIBRO", "COD_MOVIM", "ESTADO",
+] as const;
+
+// GET /api/planilla-mensual/exportar/asiento-contable?anio=&mes=&proyecto=
+// -> Excel del asiento contable consolidado del mes. Si falta configurar la
+// cuenta de algun concepto/proyecto con monto en el mes, responde 400 con la
+// lista completa de lo que falta.
+planillaMensualRouter.get(
+  "/exportar/asiento-contable",
+  requierePermiso("planilla_mensual.gestionar"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const acceso = resolverAlcanceConAcceso(req, req.query as Record<string, unknown>);
+    if (acceso.tipo === "sin_acceso") return res.status(403).json({ error: "No tienes acceso a esta declaracion" });
+    if (acceso.tipo === "invalido") return res.status(400).json({ error: acceso.error });
+    const { anio, mes, proyecto } = acceso.alcance;
+
+    const resultado = await generarAsientoContableMensual(acceso.alcance);
+    if (resultado.faltantes.length > 0) {
+      return res.status(400).json({
+        error: "Faltan cuentas contables por configurar antes de poder generar el asiento",
+        faltantes: resultado.faltantes,
+      });
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    const nroDoc = `${anio}-${String(mes).padStart(2, "0")}`;
+    const hoja = workbook.addWorksheet(`Asiento Mensual ${nroDoc}`);
+    insertarLogoEnHoja(workbook, hoja, await obtenerLogoEmpresa());
+    hoja.addRow([...COLUMNAS_ASIENTO]);
+    hoja.getRow(1).font = { bold: true };
+    hoja.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: COLUMNAS_ASIENTO.length } };
+    hoja.views = [{ state: "frozen", ySplit: 1 }];
+    for (const linea of resultado.lineas) {
+      hoja.addRow(COLUMNAS_ASIENTO.map((col) => linea[col as keyof LineaAsientoContable]));
+    }
+    hoja.columns.forEach((col) => {
+      col.width = 16;
+    });
+    hoja.getColumn(10).width = 40; // DETALLE
+    hoja.getColumn(13).width = 55; // GLOSA
+
+    const nombreArchivo = `AsientoContable_${anio}${String(mes).padStart(2, "0")}_${proyecto ?? "empresa"}.xlsx`;
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="${nombreArchivo}"`);
     await workbook.xlsx.write(res);

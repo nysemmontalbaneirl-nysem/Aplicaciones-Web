@@ -58,7 +58,7 @@
 // =========================================================================
 
 import { pool } from "./db";
-import { obtenerConceptos } from "./routes/conceptos";
+import { obtenerAportes, obtenerConceptos } from "./routes/conceptos";
 import { esConstruccionCivil, obtenerFactor } from "./motorCalculo";
 import { CategoriaOcupacional } from "./tipos";
 import { AlcanceDeclaracionMensual, obtenerDetalleEmpleadosDelMes, resolverCabecerasObreros } from "./planillaMensual";
@@ -191,6 +191,18 @@ interface CodigosPlame {
   CODIGO_DESCANSO_MEDICO: string;
   CODIGO_INCAPACIDAD_ENFERMEDAD: string;
   CODIGO_LICENCIA_PATERNIDAD: string;
+  // migracion 049: codigos PLAME de los descuentos/retenciones, antes fijos
+  // en CONCEPTO.* - ahora editables desde Configuracion -> "Aportes y
+  // retenciones" (conceptos_aportes.codigo_plame), igual criterio que los
+  // conceptos de ingreso de arriba (ver obtenerAportes() en
+  // resolverCodigosPlame).
+  CODIGO_CUOTA_SINDICAL: string;
+  CODIGO_CONAFOVICER: string;
+  CODIGO_RENTA_5TA: string;
+  CODIGO_ONP: string;
+  CODIGO_AFP_APORTE_OBLIGATORIO: string;
+  CODIGO_AFP_COMISION: string;
+  CODIGO_AFP_PRIMA_SEGURO: string;
   // Horas extra: 2 codigos fijos (0105/0106), no editables desde
   // Configuracion como los demas - ver calcularLineasHorasExtra. Los
   // factores SI son editables (HORAS_EXTRA_CONSTRUCCION/GENERAL), por eso
@@ -207,16 +219,19 @@ interface CodigosPlame {
  * catalogo de codigos PLAME es el mismo, sin importar de que tabla salga
  * cada monto.
  *
- * NOTA (recon 19/46): el parche original tambien resolvia codigos PLAME
- * configurables para los DESCUENTOS/APORTES (CUOTA_SINDICAL, CONAFOVICER,
- * RENTA_5TA, ONP) via un "obtenerAportes()" - un catalogo/pantalla de
- * Configuracion paralelo al de "Conceptos de ingreso" que no existe en este
- * arbol (no llego como parte de ningun parche recuperado). Esos 4 codigos se
- * mantienen con su valor fijo de CONCEPTO.*, igual que antes de este parche.
+ * NOTA (recon 19/46, resuelto en migracion 049): el parche original tambien
+ * resolvia codigos PLAME configurables para los DESCUENTOS/APORTES
+ * (CUOTA_SINDICAL, CONAFOVICER, RENTA_5TA, ONP, y el desglose de AFP) via un
+ * "obtenerAportes()" - el catalogo/pantalla de Configuracion paralelo al de
+ * "Conceptos de ingreso" (conceptos_aportes, "Aportes y retenciones") que no
+ * existia en este arbol. Ya reconstruido (ver src/routes/conceptos.ts): esos
+ * 7 codigos ahora tambien son editables, con el valor fijo de CONCEPTO.*
+ * como respaldo si la fila no trajera codigo_plame.
  */
 async function resolverCodigosPlame(): Promise<CodigosPlame> {
-  const conceptos = await obtenerConceptos();
+  const [conceptos, aportes] = await Promise.all([obtenerConceptos(), obtenerAportes()]);
   const codigoConcepto = (codigo: string, respaldo: string): string => conceptos[codigo]?.codigo_plame ?? respaldo;
+  const codigoAporte = (codigo: string, respaldo: string): string => aportes[codigo]?.codigo_plame ?? respaldo;
 
   return {
     CODIGO_SUELDO_BASICO: codigoConcepto("SUELDO_BASICO", CONCEPTO.REMUNERACION_BASICA),
@@ -242,6 +257,13 @@ async function resolverCodigosPlame(): Promise<CodigosPlame> {
     CODIGO_DESCANSO_MEDICO: codigoConcepto("DESCANSO_MEDICO", CONCEPTO.REMUNERACION_BASICA),
     CODIGO_INCAPACIDAD_ENFERMEDAD: codigoConcepto("INCAPACIDAD_ENFERMEDAD", CONCEPTO.SUBSIDIO_INCAPACIDAD_ENFERMEDAD),
     CODIGO_LICENCIA_PATERNIDAD: codigoConcepto("LICENCIA_PATERNIDAD", CONCEPTO.LICENCIA_CON_GOCE_DE_HABER),
+    CODIGO_CUOTA_SINDICAL: codigoAporte("CUOTA_SINDICAL", CONCEPTO.CUOTA_SINDICAL),
+    CODIGO_CONAFOVICER: codigoAporte("CONAFOVICER", CONCEPTO.CONAFOVICER),
+    CODIGO_RENTA_5TA: codigoAporte("RENTA_5TA", CONCEPTO.RENTA_5TA),
+    CODIGO_ONP: codigoAporte("ONP", CONCEPTO.ONP),
+    CODIGO_AFP_APORTE_OBLIGATORIO: codigoAporte("AFP_APORTE_OBLIGATORIO", CONCEPTO.AFP_APORTE_OBLIGATORIO),
+    CODIGO_AFP_COMISION: codigoAporte("AFP_COMISION", CONCEPTO.AFP_COMISION),
+    CODIGO_AFP_PRIMA_SEGURO: codigoAporte("AFP_PRIMA_SEGURO", CONCEPTO.AFP_PRIMA_SEGURO),
     FACTORES_HORAS_EXTRA_CONSTRUCCION: [
       obtenerFactor(conceptos, "HORAS_EXTRA_CONSTRUCCION", "factor1"),
       obtenerFactor(conceptos, "HORAS_EXTRA_CONSTRUCCION", "factor2"),
@@ -311,6 +333,13 @@ function construirLineasREM(
     CODIGO_DESCANSO_MEDICO,
     CODIGO_INCAPACIDAD_ENFERMEDAD,
     CODIGO_LICENCIA_PATERNIDAD,
+    CODIGO_CUOTA_SINDICAL,
+    CODIGO_CONAFOVICER,
+    CODIGO_RENTA_5TA,
+    CODIGO_ONP,
+    CODIGO_AFP_APORTE_OBLIGATORIO,
+    CODIGO_AFP_COMISION,
+    CODIGO_AFP_PRIMA_SEGURO,
   } = codigos;
 
   // Conceptos PERSONALIZADOS (migracion 033, Ronda D "formula propia"): sus
@@ -366,9 +395,9 @@ function construirLineasREM(
       [CODIGO_GRATIFICACION, num(fila.gratificacion)],
       [CODIGO_CTS, num(fila.cts)],
 
-      [CONCEPTO.CUOTA_SINDICAL, num(fila.descuento_sindicato)],
-      [CONCEPTO.CONAFOVICER, num(fila.conafovicer)],
-      [CONCEPTO.RENTA_5TA, num(fila.renta_5ta)],
+      [CODIGO_CUOTA_SINDICAL, num(fila.descuento_sindicato)],
+      [CODIGO_CONAFOVICER, num(fila.conafovicer)],
+      [CODIGO_RENTA_5TA, num(fila.renta_5ta)],
       ...calcularLineasHorasExtra(fila, codigos),
     ];
 
@@ -381,11 +410,11 @@ function construirLineasREM(
     // concepto de pension declarado, lo cual es claramente peor que usar el codigo
     // oficial del catalogo aunque no se haya visto en la practica todavia.
     if (fila.sistema_pension === "ONP") {
-      candidatas.push([CONCEPTO.ONP, num(fila.aporte_pension)]);
+      candidatas.push([CODIGO_ONP, num(fila.aporte_pension)]);
     } else if (aporteDetalle) {
-      candidatas.push([CONCEPTO.AFP_APORTE_OBLIGATORIO, aporteDetalle.aporteObligatorio]);
-      candidatas.push([CONCEPTO.AFP_COMISION, aporteDetalle.comisionFlujo]);
-      candidatas.push([CONCEPTO.AFP_PRIMA_SEGURO, aporteDetalle.primaSeguro]);
+      candidatas.push([CODIGO_AFP_APORTE_OBLIGATORIO, aporteDetalle.aporteObligatorio]);
+      candidatas.push([CODIGO_AFP_COMISION, aporteDetalle.comisionFlujo]);
+      candidatas.push([CODIGO_AFP_PRIMA_SEGURO, aporteDetalle.primaSeguro]);
     }
 
     // NO se incluyen POLIZA_SEGURO_688 (0803), ESSALUD (0804) ni SENATI (0807):

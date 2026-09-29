@@ -1743,3 +1743,127 @@ ubigeo_departamento_codigo, ubigeo_provincia_codigo, ubigeo_distrito_codigo`
 048 ya endurecida no debería tener ningún problema. Si trajera columnas con
 otro nombre o tipo distinto, avisar antes de continuar — ese caso puntual
 no se puede resolver a ciegas sin ver el resultado real.
+
+## 32. Brecha #4.1 (códigos PLAME editables de descuentos/aportes) + brecha #5 (Asiento Contable) — `conceptos_aportes`, `plan_cuentas`, `mapeo_cuentas_contables`, `src/asientoContable.ts`
+
+Reconstruido siguiendo la instrucción "avanza con la siguiente" sobre la
+prioridad ya documentada en la sección 30 (brecha #4.1) y en las secciones
+17/28 (brecha #5, "confirmada ausente ya 3 veces"). Igual que la sección 30,
+no existe ningún `.patch` para esta funcionalidad — se reconstruye leyendo
+`backend_dist` (`routes/conceptos.js`, `asientoContable.js`, `plame.js`,
+`routes/exportaciones.js`, `routes/planillaMensual.js`) y, para la UI, el
+bundle minificado de producción (`frontend_dist/assets/index-*.js`, strings
+JSX legibles pese a los nombres de variable acortados).
+
+**Hallazgo que eleva el nivel de cuidado exigido:** la skill de despliegue de
+este proyecto (`planilla-web-jhcr-deploy`) ya registraba, de una sesión
+anterior, un error real de producción con
+`"permiso denegado a la secuencia mapeo_cuentas_contables_id_seq"` — es
+decir, estas 3 tablas YA CORREN en producción desde antes, con datos reales
+del usuario (su Plan de Cuentas y su Mapeo Contable configurados). Se aplica
+entonces, desde el primer momento, el mismo patrón defensivo aprendido en la
+sección 31 (no en retrospectiva, como ahí): `CREATE TABLE IF NOT EXISTS` con
+el mínimo indispensable + `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` por
+columna + bloques `DO` para cada `CHECK`/`FK`/`UNIQUE` guardados contra
+`pg_constraint`, más los `GRANT` de tabla Y secuencia para `grupojhc_boletas`
+al final de cada sección (`sql/migracion_049_conceptos_aportes_plan_cuentas_mapeo_contable.sql`).
+El catálogo de `conceptos_aportes` se siembra con `ON CONFLICT (codigo) DO
+NOTHING` (nunca sobreescribe un `nombre`/`codigo_plame` que el usuario ya
+haya editado en producción); `plan_cuentas`/`mapeo_cuentas_contables` se
+siembran VACÍAS (igual criterio que `dias_feriados`: son enteramente
+configurables por el usuario). Verificado con los mismos 2 escenarios que la
+048: archivo corrido 2 veces seguidas sobre una base vacía (idempotente, sin
+errores) y corrido sobre una base ya construida con `schema.sql` (sin
+constraints duplicados — se nombraron igual en ambos archivos).
+
+**`conceptos_aportes`** (`codigo` es su propia `PRIMARY KEY`, sin secuencia
+propia — todas las rutas identifican estas filas por código, nunca por id,
+confirmado en `routes/conceptos.js`): catálogo de 16 filas inferidas
+cruzando `asientoContable.js` (qué códigos usa `acumular()` y con qué
+movimiento) contra `plame.js` (qué códigos pasaron a ser editables vía
+`obtenerAportes()`/`codigoAporte()`, con su `codigo_plame` de respaldo
+tomado de las constantes `CONCEPTO.*` ya confirmadas en `src/plame.ts` contra
+archivos `.rem` reales de esta empresa): 4 aportes patronales (`ESSALUD`,
+`SCTR`, `SENATI`, `SEGURO_VIDA` — Debe y Haber, mismo monto), 4 retenciones
+con código PLAME propio (`CUOTA_SINDICAL`, `CONAFOVICER`, `RENTA_5TA`,
+`ONP`), 3 códigos de AFP desglosados para el PLAME (`AFP_APORTE_OBLIGATORIO`,
+`AFP_COMISION`, `AFP_PRIMA_SEGURO` — códigos SUNAT únicos sin importar la
+administradora), 4 retenciones de AFP POR administradora
+(`AFP_INTEGRA`/`AFP_PRIMA`/`AFP_PROFUTURO`/`AFP_HABITAT`, usadas solo por el
+Asiento Contable vía `AFP_${afp_nombre}`, sin código PLAME propio — el PLAME
+ya las declara desglosadas arriba) y `NETO_A_PAGAR` (balancea el asiento). El
+campo `tipo_movimiento` NO tiene `CHECK` en la base de datos (a diferencia de
+`mapeo_cuentas_contables.tipo_movimiento`, que sí lo tiene): el frontend de
+producción (`mx()` en el bundle minificado) trata literalmente `"DEBE"` y
+`"HABER"` como exclusivos y CUALQUIER OTRO valor como "requiere cuenta en
+Debe y en Haber" — se usa `"APORTE"` para ese tercer caso (decisión propia,
+no verificable contra el string exacto de producción, pero funcionalmente
+equivalente dado ese comportamiento de respaldo) — y como la tabla ya existe
+en producción con datos reales, no se arriesga un `CHECK` que pudiera
+rechazar un valor real no confirmado desde este árbol.
+
+**`plan_cuentas`** (`id` + `codigo` + `denominacion` + `activa`): el
+`codigo` NO es único (`routes/conceptos.js` lo confirma explícitamente en un
+comentario — la empresa reutiliza códigos entre denominaciones distintas),
+así que ni la migración ni la API validan unicidad.
+
+**`mapeo_cuentas_contables`** (`concepto_codigo` + `proyecto_id` +
+`tipo_movimiento` + `cuenta_id`, `UNIQUE` en los primeros 3): `concepto_codigo`
+puede venir de `conceptos_planilla` O de `conceptos_aportes` — no hay FK real
+posible entre 2 orígenes distintos, así que `PUT /mapeo-contable` valida
+contra ambas tablas a mano (igual que el dist). A diferencia de
+`conceptos_aportes.tipo_movimiento`, aquí SÍ hay `CHECK ('DEBE','HABER')`
+porque la API SIEMPRE lo validó así (sin riesgo de rechazar un dato real ya
+existente).
+
+**`src/asientoContable.ts`** (puerto directo y fiel de `asientoContable.js`,
+344 líneas): `generarAsientoContable(periodoId)` y
+`generarAsientoContableMensual(alcance)` comparten `construirAsiento()`, que
+acumula montos DEBE/HABER por proyecto y por `concepto_codigo` (ingresos vía
+el mapa fijo `COLUMNA_INGRESO`, aportes patronales Debe+Haber, retenciones
+solo Haber, conceptos personalizados según su `tipo` de
+`conceptos_planilla`), resuelve la cuenta contable de cada línea contra
+`mapeo_cuentas_contables` y, si falta alguna, la reporta en `faltantes` (el
+asiento NUNCA se genera incompleto o descuadrado — mismo criterio que los
+errores fila-por-fila del importador de marcaciones). Se agregó la ruta
+`GET /api/periodos/:id/exportar/asiento-contable` (`src/routes/exportaciones.ts`)
+y `GET /api/planilla-mensual/exportar/asiento-contable`
+(`src/routes/planillaMensual.ts`, en el punto exacto donde las secciones 17
+y 28 habían dejado la `NOTA` marcando dónde iría) — ambas responden 400 con
+el detalle de `faltantes` si corresponde, o el Excel de 16 columnas
+(formato ya confirmado contra un asiento real del usuario, ver el
+comentario de cabecera de `asientoContable.ts`) si no.
+
+**Frontend (`Configuracion.tsx`):** se agregaron 3 tarjetas apiladas más
+("Aportes y retenciones", "Plan de cuentas", "Mapeo contable por proyecto"),
+mismo criterio de toda esta pantalla (la brecha #12 del sub-menú con
+pestañas de producción sigue sin reconstruirse — no se justifica el riesgo
+de regresión solo para esto). Decisión explícita: NO se replicó el modal
+"Configurar por proyecto" compartido de producción (una grilla con TODOS los
+proyectos a la vez); en su lugar, "Mapeo contable por proyecto" tiene un
+selector de un proyecto a la vez y una tabla de conceptos con columnas
+"Cuenta (Debe)"/"Cuenta (Haber)" (mostradas u ocultas según lo que ese
+concepto realmente necesite — `movimientosDeConceptoIngreso`/
+`movimientosDeAporte`, mismo criterio que la función `mx()` de producción
+para los aportes) y un solo botón que guarda todo el proyecto seleccionado
+de una vez (`PUT /mapeo-contable`, que es un upsert — no hay ruta para
+"desconfigurar" una celda ya guardada, ni en producción ni aquí). El botón
+"Descargar Asiento Contable (Excel)" se agregó junto a REM/AFPnet en
+`Periodos.tsx` (por periodo) y en `PlanillaMensual.tsx` (mensual, con la
+lista de `faltantes` mostrada de forma estructurada bajo el mensaje de
+error — no solo el texto genérico, aprovechando que `ErrorApi.body` ya trae
+el arreglo completo).
+
+**Pruebas nuevas** (`tests/asiento_contable.test.ts`, 11 casos): catálogo de
+aportes (GET, PUT de un código real revirtiendo el cambio al final para no
+afectar `plame_conceptos_faltantes.test.ts`, 404 de código inexistente);
+Plan de Cuentas (alta, edición, 2 cuentas con el mismo código, 400 de
+validación); y el Asiento Contable de punta a punta insertando filas propias
+en `detalle_planilla` (sin correr todo el motor de cálculo) con montos
+elegidos para que Debe cuadre con Haber por contrato: primero SIN mapeo
+configurado (verifica la lista completa de `faltantes` y que la ruta
+responda 400), luego CON el mapeo configurado vía la propia API (verifica
+`faltantes: []`, `totalDebe === totalHaber`, los montos exactos de cada
+línea acumulada de 2 contratos de un mismo proyecto, y finalmente que el
+Excel descargado tenga esas mismas líneas leyéndolo de vuelta con
+`exceljs`).

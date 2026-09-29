@@ -585,6 +585,48 @@ export interface HorarioProyecto {
   tasa_tramo3: number | null;
 }
 
+// Catalogo de aportes patronales/retenciones/neto a pagar (migracion_049),
+// prerequisito de asientoContable.ts (brecha #5) y de los codigos PLAME
+// editables de CUOTA_SINDICAL/CONAFOVICER/RENTA_5TA/ONP/AFP_* (brecha #4.1).
+// No son conceptos de INGRESO (no pasan por conceptos_planilla): se
+// identifican por su propio "codigo" (sin id numerico - la API siempre
+// trabaja con el codigo, ver routes/conceptos.ts). tipo_movimiento no esta
+// limitado a "DEBE"/"HABER": el frontend trata cualquier otro valor
+// ("APORTE", usado por ESSALUD/SCTR/SENATI/SEGURO_VIDA) como "requiere
+// cuenta contable tanto al Debe como al Haber".
+export interface ConceptoAporte {
+  codigo: string;
+  nombre: string;
+  descripcion: string | null;
+  codigo_plame: string | null;
+  tipo_movimiento: string;
+  orden: number;
+}
+
+// Plan de Cuentas contable (migracion_049): catalogo editable por el
+// usuario desde Configuracion -> "Plan de cuentas". El codigo NO es unico
+// (la empresa reutiliza codigos entre denominaciones distintas), asi que no
+// se valida unicidad de codigo en la API.
+export interface CuentaContable {
+  id: number;
+  codigo: string;
+  denominacion: string;
+  activa: boolean;
+}
+
+// Mapeo contable (migracion_049): concepto x proyecto x movimiento ->
+// cuenta, usado por asientoContable.ts para armar el asiento consolidado
+// del periodo. concepto_codigo puede venir de conceptos_planilla O de
+// conceptos_aportes (no hay una FK real posible entre dos origenes
+// distintos - se valida contra ambas tablas en la API).
+export interface MapeoContable {
+  id: number;
+  concepto_codigo: string;
+  proyecto_id: number;
+  tipo_movimiento: "DEBE" | "HABER";
+  cuenta_id: number;
+}
+
 // Importacion de marcaciones biometricas (migracion_046, "Control de
 // Asistencia Diaria" - Ronda 2, puente practico mientras se compra/verifica
 // el equipo biometrico real). Una "importacion" es un archivo Excel/CSV (1

@@ -816,6 +816,56 @@ export interface ConceptoPlanilla {
   // Migracion 039: interruptor activo/inactivo por concepto (ver
   // estaActivo en motorCalculo.ts). SUELDO_BASICO no se puede desactivar.
   activo: boolean;
+  // INGRESO | APORTE | DESCUENTO (migracion 033, "Ronda D") - decide el
+  // tratamiento contable en el Mapeo Contable (migracion_049): INGRESO
+  // requiere cuenta al Debe, DESCUENTO al Haber, APORTE a ambos.
+  tipo: string;
+}
+
+// Catalogo de aportes patronales/retenciones/neto a pagar (migracion_049),
+// prerequisito del Asiento Contable. Se identifican por su propio "codigo"
+// (sin id numerico). tipo_movimiento no esta limitado a "DEBE"/"HABER": es
+// "DEBE"/"HABER" para retenciones (solo Haber en la practica) y "APORTE"
+// para los aportes patronales (requieren cuenta contable en Debe Y Haber).
+export interface ConceptoAporte {
+  codigo: string;
+  nombre: string;
+  descripcion: string | null;
+  codigo_plame: string | null;
+  tipo_movimiento: string;
+  orden: number;
+}
+
+// Plan de Cuentas contable (migracion_049): el codigo NO es unico (la
+// empresa reutiliza codigos entre denominaciones distintas).
+export interface CuentaContable {
+  id: number;
+  codigo: string;
+  denominacion: string;
+  activa: boolean;
+}
+
+// Mapeo contable (migracion_049): concepto x proyecto x movimiento ->
+// cuenta, usado por el Asiento Contable.
+export interface MapeoContable {
+  id: number;
+  concepto_codigo: string;
+  proyecto_id: number;
+  tipo_movimiento: "DEBE" | "HABER";
+  cuenta_id: number;
+}
+
+// Detalle de una cuenta contable faltante (o un dato inconsistente) que
+// impide generar el Asiento Contable - ver src/asientoContable.ts. La ruta
+// de exportacion responde 400 con { error, faltantes: FaltanteAsientoContable[] }
+// en vez de generar un asiento incompleto o descuadrado.
+export interface FaltanteAsientoContable {
+  concepto_codigo: string;
+  concepto_nombre: string;
+  proyecto_id: number;
+  proyecto_nombre: string;
+  tipo_movimiento: "DEBE" | "HABER";
+  motivo: string;
 }
 
 export interface PeriodoVacacional {

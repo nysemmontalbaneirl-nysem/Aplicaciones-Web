@@ -6,11 +6,14 @@ import { pool } from "../db";
 import {
   AmbitoFeriado,
   CategoriaOcupacional,
+  ConceptoAporte,
   ConceptoPlanilla,
   ConceptosPlanilla,
+  CuentaContable,
   CuotaSindicalCategoria,
   DiaFeriado,
   HorarioProyecto,
+  MapeoContable,
 } from "../tipos";
 import { ErrorValidacion } from "../validaciones";
 import { registrarBitacora } from "../bitacora";
@@ -645,6 +648,302 @@ conceptosRouter.put(
         guardadas.push(filaAHorarioProyecto(r.rows[0]));
       }
       await registrarBitacora(req.usuario!.id, "EDICION_HORARIO_PROYECTO", "horarios_proyecto", null, {
+        cantidad: guardadas.length,
+      });
+      res.json(guardadas);
+    } catch (err) {
+      if (err instanceof ErrorValidacion) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
+    }
+  })
+);
+
+function filaAAporte(fila: Record<string, unknown>): ConceptoAporte {
+  return {
+    codigo: fila.codigo as string,
+    nombre: fila.nombre as string,
+    descripcion: (fila.descripcion as string | null) ?? null,
+    codigo_plame: (fila.codigo_plame as string | null) ?? null,
+    tipo_movimiento: fila.tipo_movimiento as string,
+    orden: fila.orden as number,
+  };
+}
+
+function filaACuenta(fila: Record<string, unknown>): CuentaContable {
+  return {
+    id: fila.id as number,
+    codigo: fila.codigo as string,
+    denominacion: fila.denominacion as string,
+    activa: fila.activa as boolean,
+  };
+}
+
+function filaAMapeo(fila: Record<string, unknown>): MapeoContable {
+  return {
+    id: fila.id as number,
+    concepto_codigo: fila.concepto_codigo as string,
+    proyecto_id: fila.proyecto_id as number,
+    tipo_movimiento: fila.tipo_movimiento as "DEBE" | "HABER",
+    cuenta_id: fila.cuenta_id as number,
+  };
+}
+
+/**
+ * Trae el catalogo completo de aportes patronales/retenciones/neto a pagar,
+ * indexado por codigo. Usado por plame.ts (codigos PLAME editables) y por
+ * asientoContable.ts (nombre + tipo_movimiento para armar el asiento).
+ */
+export async function obtenerAportes(): Promise<Record<string, ConceptoAporte>> {
+  const r = await pool.query("SELECT * FROM conceptos_aportes ORDER BY orden");
+  const aportes: Record<string, ConceptoAporte> = {};
+  for (const fila of r.rows) {
+    aportes[fila.codigo] = filaAAporte(fila);
+  }
+  return aportes;
+}
+
+// ===========================================================================
+// Aportes patronales, retenciones y neto a pagar (conceptos_aportes). No son
+// conceptos de INGRESO (no pasan por conceptos_planilla), pero necesitan
+// nombre + codigo PLAME + poder mapearse a una cuenta contable, igual que
+// los conceptos de ingreso (ver migracion 049 / asientoContable.ts).
+// ===========================================================================
+
+// GET /api/conceptos/aportes -> catalogo completo de aportes/retenciones.
+conceptosRouter.get(
+  "/aportes",
+  requierePermiso("conceptos.editar"),
+  asyncHandler(async (_req: Request, res: Response) => {
+    const r = await pool.query("SELECT * FROM conceptos_aportes ORDER BY orden");
+    res.json(r.rows.map(filaAAporte));
+  })
+);
+
+// PUT /api/conceptos/aportes/:codigo -> edita nombre/descripcion/codigo_plame
+// de un aporte/retencion. tipo_movimiento y orden no son editables desde
+// aqui (son parte fija del modelo del asiento contable).
+conceptosRouter.put(
+  "/aportes/:codigo",
+  requierePermiso("conceptos.editar"),
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const existente = await pool.query("SELECT * FROM conceptos_aportes WHERE codigo = $1", [req.params.codigo]);
+      if (existente.rowCount === 0) {
+        return res.status(404).json({ error: "Concepto de aporte no encontrado" });
+      }
+      const actual = existente.rows[0];
+      const b = req.body;
+      if (b.nombre !== undefined && (typeof b.nombre !== "string" || b.nombre.trim().length === 0)) {
+        throw new ErrorValidacion("nombre debe ser un texto no vacio");
+      }
+      if (b.descripcion !== undefined && b.descripcion !== null && typeof b.descripcion !== "string") {
+        throw new ErrorValidacion("descripcion debe ser un texto o nulo");
+      }
+      if (b.codigo_plame !== undefined && b.codigo_plame !== null) {
+        if (typeof b.codigo_plame !== "string" || b.codigo_plame.length > 10) {
+          throw new ErrorValidacion("codigo_plame debe ser un texto de hasta 10 caracteres");
+        }
+      }
+      const r = await pool.query(
+        `UPDATE conceptos_aportes SET
+           nombre = $1, descripcion = $2, codigo_plame = $3, actualizado_en = now()
+         WHERE codigo = $4
+         RETURNING *`,
+        [
+          b.nombre !== undefined ? b.nombre : actual.nombre,
+          b.descripcion !== undefined ? b.descripcion : actual.descripcion,
+          b.codigo_plame !== undefined ? b.codigo_plame : actual.codigo_plame,
+          req.params.codigo,
+        ]
+      );
+      await registrarBitacora(req.usuario!.id, "EDICION_CONCEPTO_APORTE", "conceptos_aportes", null, {
+        codigo: req.params.codigo,
+        antes: { nombre: actual.nombre, descripcion: actual.descripcion, codigo_plame: actual.codigo_plame },
+        despues: filaAAporte(r.rows[0]),
+      });
+      res.json(filaAAporte(r.rows[0]));
+    } catch (err) {
+      if (err instanceof ErrorValidacion) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
+    }
+  })
+);
+
+// ===========================================================================
+// Plan de Cuentas contable (plan_cuentas): catalogo editable por el usuario.
+// El codigo NO es unico (la empresa reutiliza codigos entre denominaciones
+// distintas), asi que estas rutas nunca validan unicidad de codigo.
+// ===========================================================================
+
+// GET /api/conceptos/plan-cuentas -> catalogo completo, ordenado por codigo.
+conceptosRouter.get(
+  "/plan-cuentas",
+  requierePermiso("conceptos.editar"),
+  asyncHandler(async (_req: Request, res: Response) => {
+    const r = await pool.query("SELECT * FROM plan_cuentas ORDER BY codigo, denominacion");
+    res.json(r.rows.map(filaACuenta));
+  })
+);
+
+// POST /api/conceptos/plan-cuentas -> agrega una cuenta nueva.
+conceptosRouter.post(
+  "/plan-cuentas",
+  requierePermiso("conceptos.editar"),
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const b = req.body;
+      if (typeof b.codigo !== "string" || b.codigo.trim().length === 0 || b.codigo.length > 20) {
+        throw new ErrorValidacion("codigo es obligatorio (texto de hasta 20 caracteres)");
+      }
+      if (typeof b.denominacion !== "string" || b.denominacion.trim().length === 0) {
+        throw new ErrorValidacion("denominacion es obligatoria");
+      }
+      const r = await pool.query(
+        `INSERT INTO plan_cuentas (codigo, denominacion, activa) VALUES ($1, $2, $3) RETURNING *`,
+        [b.codigo.trim(), b.denominacion.trim(), b.activa !== undefined ? !!b.activa : true]
+      );
+      await registrarBitacora(req.usuario!.id, "CREACION_CUENTA_CONTABLE", "plan_cuentas", r.rows[0].id, {
+        codigo: r.rows[0].codigo,
+        denominacion: r.rows[0].denominacion,
+      });
+      res.status(201).json(filaACuenta(r.rows[0]));
+    } catch (err) {
+      if (err instanceof ErrorValidacion) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
+    }
+  })
+);
+
+// PUT /api/conceptos/plan-cuentas/:id -> edita codigo/denominacion/activa.
+conceptosRouter.put(
+  "/plan-cuentas/:id",
+  requierePermiso("conceptos.editar"),
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id)) {
+        throw new ErrorValidacion("id invalido");
+      }
+      const existente = await pool.query("SELECT * FROM plan_cuentas WHERE id = $1", [id]);
+      if (existente.rowCount === 0) {
+        return res.status(404).json({ error: "Cuenta no encontrada" });
+      }
+      const actual = existente.rows[0];
+      const b = req.body;
+      if (b.codigo !== undefined && (typeof b.codigo !== "string" || b.codigo.trim().length === 0 || b.codigo.length > 20)) {
+        throw new ErrorValidacion("codigo debe ser un texto de hasta 20 caracteres");
+      }
+      if (b.denominacion !== undefined && (typeof b.denominacion !== "string" || b.denominacion.trim().length === 0)) {
+        throw new ErrorValidacion("denominacion debe ser un texto no vacio");
+      }
+      if (b.activa !== undefined && typeof b.activa !== "boolean") {
+        throw new ErrorValidacion("activa debe ser verdadero o falso");
+      }
+      const r = await pool.query(
+        `UPDATE plan_cuentas SET codigo = $1, denominacion = $2, activa = $3 WHERE id = $4 RETURNING *`,
+        [
+          b.codigo !== undefined ? b.codigo.trim() : actual.codigo,
+          b.denominacion !== undefined ? b.denominacion.trim() : actual.denominacion,
+          b.activa !== undefined ? b.activa : actual.activa,
+          id,
+        ]
+      );
+      await registrarBitacora(req.usuario!.id, "EDICION_CUENTA_CONTABLE", "plan_cuentas", id, {
+        antes: filaACuenta(actual),
+        despues: filaACuenta(r.rows[0]),
+      });
+      res.json(filaACuenta(r.rows[0]));
+    } catch (err) {
+      if (err instanceof ErrorValidacion) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
+    }
+  })
+);
+
+// ===========================================================================
+// Mapeo contable (mapeo_cuentas_contables): concepto x proyecto -> cuenta,
+// usado por asientoContable.ts para armar el asiento consolidado del
+// periodo. concepto_codigo puede venir de conceptos_planilla o de
+// conceptos_aportes - se valida contra ambas tablas aqui, ya que no hay una
+// FK real posible entre dos origenes distintos.
+//
+// OJO: esta ruta ("/mapeo-contable") debe quedar registrada ANTES de PUT
+// "/:codigo" (mas abajo) - mismo motivo que "/cuota-sindical" y
+// "/horarios-proyecto" arriba: Express matchea rutas en el orden en que se
+// registran, y "/:codigo" con codigo="mapeo-contable" la interceptaria.
+// ===========================================================================
+
+// GET /api/conceptos/mapeo-contable -> todo el mapeo configurado hasta hoy.
+conceptosRouter.get(
+  "/mapeo-contable",
+  requierePermiso("conceptos.editar"),
+  asyncHandler(async (_req: Request, res: Response) => {
+    const r = await pool.query(
+      "SELECT * FROM mapeo_cuentas_contables ORDER BY concepto_codigo, proyecto_id, tipo_movimiento"
+    );
+    res.json(r.rows.map(filaAMapeo));
+  })
+);
+
+// PUT /api/conceptos/mapeo-contable -> guarda de una vez todas las celdas
+// editadas en la pantalla de "Configurar por proyecto" (upsert de cada
+// entrada). Body: { entradas: [{ concepto_codigo, proyecto_id, tipo_movimiento, cuenta_id }, ...] }
+conceptosRouter.put(
+  "/mapeo-contable",
+  requierePermiso("conceptos.editar"),
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const entradas = req.body?.entradas;
+      if (!Array.isArray(entradas) || entradas.length === 0) {
+        throw new ErrorValidacion("entradas debe ser un arreglo no vacio");
+      }
+      const [conceptosIngreso, conceptosAportes, proyectos, cuentas] = await Promise.all([
+        pool.query("SELECT codigo FROM conceptos_planilla"),
+        pool.query("SELECT codigo FROM conceptos_aportes"),
+        pool.query("SELECT id FROM proyectos"),
+        pool.query("SELECT id FROM plan_cuentas"),
+      ]);
+      const codigosValidos = new Set([
+        ...conceptosIngreso.rows.map((r) => r.codigo as string),
+        ...conceptosAportes.rows.map((r) => r.codigo as string),
+      ]);
+      const proyectosValidos = new Set(proyectos.rows.map((r) => r.id as number));
+      const cuentasValidas = new Set(cuentas.rows.map((r) => r.id as number));
+      for (const e of entradas) {
+        if (typeof e.concepto_codigo !== "string" || !codigosValidos.has(e.concepto_codigo)) {
+          throw new ErrorValidacion(`concepto_codigo invalido: ${e.concepto_codigo}`);
+        }
+        if (typeof e.proyecto_id !== "number" || !proyectosValidos.has(e.proyecto_id)) {
+          throw new ErrorValidacion(`proyecto_id invalido: ${e.proyecto_id}`);
+        }
+        if (e.tipo_movimiento !== "DEBE" && e.tipo_movimiento !== "HABER") {
+          throw new ErrorValidacion(`tipo_movimiento invalido: ${e.tipo_movimiento}`);
+        }
+        if (typeof e.cuenta_id !== "number" || !cuentasValidas.has(e.cuenta_id)) {
+          throw new ErrorValidacion(`cuenta_id invalido: ${e.cuenta_id}`);
+        }
+      }
+      const guardadas: MapeoContable[] = [];
+      for (const e of entradas) {
+        const r = await pool.query(
+          `INSERT INTO mapeo_cuentas_contables (concepto_codigo, proyecto_id, tipo_movimiento, cuenta_id)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (concepto_codigo, proyecto_id, tipo_movimiento)
+           DO UPDATE SET cuenta_id = EXCLUDED.cuenta_id, actualizado_en = now()
+           RETURNING *`,
+          [e.concepto_codigo, e.proyecto_id, e.tipo_movimiento, e.cuenta_id]
+        );
+        guardadas.push(filaAMapeo(r.rows[0]));
+      }
+      await registrarBitacora(req.usuario!.id, "EDICION_MAPEO_CONTABLE", "mapeo_cuentas_contables", null, {
         cantidad: guardadas.length,
       });
       res.json(guardadas);

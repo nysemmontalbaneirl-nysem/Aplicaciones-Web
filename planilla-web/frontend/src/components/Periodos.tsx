@@ -399,6 +399,9 @@ export default function Periodos({ onCargarTareo, onTareoDiario, onCalcular }: P
                             <a href={conToken(`${BASE_URL}/periodos/${p.id}/exportar/afpnet`)}>
                               <button type="button">Descargar AFPnet (CSV)</button>
                             </a>
+                            <a href={conToken(`${BASE_URL}/periodos/${p.id}/exportar/asiento-contable`)}>
+                              <button type="button">Descargar Asiento Contable (Excel)</button>
+                            </a>
                           </>
                         )}
                         {p.estado === "ABIERTO" && (

@@ -13,27 +13,18 @@
 //     realidad (una vez por RUC al mes). Restringido a ADMIN.
 // Ver src/planillaMensual.ts / src/routes/planillaMensual.ts (backend).
 import { useEffect, useState } from "react";
-import { apiDescargarArchivo, apiGet, apiPost } from "../api";
+import { apiDescargarArchivo, apiGet, apiPost, ErrorApi } from "../api";
 import { useAuth } from "../AuthContext";
 import {
   AvisoRecalculoPosteriorMensual,
   DetalleTrabajadorMensualFila,
+  FaltanteAsientoContable,
   FilaHistorialConsolidacion,
   PeriodoIncluidoConsolidacion,
   Proyecto,
   ResultadoConsolidacionMensual,
   VistaDeclaracionMensual,
 } from "../types";
-
-// NOTA (recon 19/46, reconfirmado en recon 33/46): el parche original
-// tambien traia (y sigue trayendo) un boton "Descargar Asiento Contable
-// (Excel)" (con su interfaz FaltanteMapeoContable y el manejo del error 400
-// "faltan cuentas contables por configurar"). Se sigue omitiendo aqui porque
-// la ruta backend equivalente (GET .../exportar/asiento-contable) tampoco se
-// agrego - depende de "src/asientoContable.ts", que no existe en este arbol
-// (ver RECONSTRUCCION_BRECHAS.md punto 5 - confirmado ausente ya 3 veces).
-// Reagregar cuando ese modulo se reconstruya, siguiendo el mismo patron de
-// descarga de REM/AFPnet de aqui abajo.
 
 // Columnas monetarias fijas de la tabla de resumen, agrupadas igual que las
 // suma calcularLineaPlanilla/sumarResultadosLinea (motorCalculo.ts): Ingresos
@@ -141,7 +132,12 @@ export default function PlanillaMensual() {
 
   const [cargando, setCargando] = useState(false);
   const [consolidando, setConsolidando] = useState(false);
-  const [descargando, setDescargando] = useState<"rem" | "afpnet" | "afpnet-excel" | null>(null);
+  const [descargando, setDescargando] = useState<"rem" | "afpnet" | "afpnet-excel" | "asiento-contable" | null>(null);
+  // Migracion_049: faltantes de cuenta contable devueltos por el 400 de
+  // "/exportar/asiento-contable" - se muestran como lista estructurada (no
+  // solo el mensaje generico de errorDescarga), igual que el detalle de
+  // errores de la carga masiva de marcaciones.
+  const [faltantesAsiento, setFaltantesAsiento] = useState<FaltanteAsientoContable[]>([]);
   const [error, setError] = useState<string | null>(null);
   // Bug real de UI detectado en produccion (19/09/2026): los errores de
   // descarga (ej. el 400 "ningun trabajador con AFP" del Excel oficial de
@@ -262,13 +258,17 @@ export default function PlanillaMensual() {
     }
   }
 
-  async function descargar(tipoArchivo: "rem" | "afpnet" | "afpnet-excel", ruta: string, nombreArchivo: string) {
+  async function descargar(tipoArchivo: "rem" | "afpnet" | "afpnet-excel" | "asiento-contable", ruta: string, nombreArchivo: string) {
     if (!vista) return;
     setErrorDescarga(null);
+    setFaltantesAsiento([]);
     setDescargando(tipoArchivo);
     try {
       await apiDescargarArchivo(`/planilla-mensual${ruta}?${construirQuery(anio, mes, proyectoAlcance)}`, nombreArchivo);
     } catch (e) {
+      if (e instanceof ErrorApi && Array.isArray((e.body as { faltantes?: unknown })?.faltantes)) {
+        setFaltantesAsiento((e.body as { faltantes: FaltanteAsientoContable[] }).faltantes);
+      }
       setErrorDescarga((e as Error).message);
     } finally {
       setDescargando(null);
@@ -559,11 +559,29 @@ export default function PlanillaMensual() {
             >
               {descargando === "afpnet-excel" ? "Generando..." : "Descargar AFPnet (Excel oficial)"}
             </button>
+            <button
+              type="button"
+              disabled={descargando === "asiento-contable"}
+              onClick={() =>
+                descargar("asiento-contable", "/exportar/asiento-contable", `AsientoContable_${nroDoc}_${etiquetaAlcance}.xlsx`)
+              }
+            >
+              {descargando === "asiento-contable" ? "Generando..." : "Descargar Asiento Contable (Excel)"}
+            </button>
           </div>
 
           {errorDescarga && (
             <div className="mensaje-error" style={{ marginBottom: 16 }}>
               {errorDescarga}
+              {faltantesAsiento.length > 0 && (
+                <ul style={{ marginTop: 8, marginBottom: 0 }}>
+                  {faltantesAsiento.map((f, i) => (
+                    <li key={i}>
+                      <strong>{f.concepto_nombre}</strong> — {f.proyecto_nombre} ({f.tipo_movimiento}): {f.motivo}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
 

@@ -1142,6 +1142,78 @@ VALUES
      true, true, true, true, true, true, true);
 
 -- -------------------------------------------------------------------------
+-- conceptos_aportes (migracion 049): catalogo de aportes patronales,
+-- retenciones al trabajador y "neto a pagar" - no son conceptos de INGRESO
+-- (no pasan por conceptos_planilla), pero necesitan nombre + codigo PLAME
+-- editable + poder mapearse a una cuenta contable, igual que un concepto de
+-- ingreso (ver src/routes/conceptos.ts, GET/PUT /aportes). codigo es la
+-- propia PRIMARY KEY (sin id/secuencia propia - las rutas de la API siempre
+-- identifican estas filas por "codigo"). Sin CHECK en tipo_movimiento (ver
+-- migracion_049 para el detalle): el frontend trata "DEBE"/"HABER" como
+-- exclusivos y cualquier otro valor ('APORTE' aqui) como "Debe y Haber".
+-- -------------------------------------------------------------------------
+CREATE TABLE conceptos_aportes (
+    codigo              VARCHAR(60) PRIMARY KEY,
+    nombre              VARCHAR(120) NOT NULL,
+    descripcion         TEXT,
+    codigo_plame        VARCHAR(10),
+    tipo_movimiento     VARCHAR(20) NOT NULL DEFAULT 'HABER',
+    orden               INT NOT NULL DEFAULT 0,
+    actualizado_en      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO conceptos_aportes (codigo, nombre, descripcion, codigo_plame, tipo_movimiento, orden) VALUES
+    ('ESSALUD',     'ESSALUD',                        'Aporte patronal EsSalud (9%)',                                   '0804', 'APORTE', 10),
+    ('SCTR',        'SCTR salud',                      'Seguro Complementario de Trabajo de Riesgo - salud',             '0806', 'APORTE', 20),
+    ('SENATI',      'Fondo de Capacitacion (SENATI)',  'Aporte patronal SENATI',                                        '0807', 'APORTE', 30),
+    ('SEGURO_VIDA', 'Essalud + Vida',                  'Poliza de vida ley (D.Leg. 688 / convenio EsSalud+Vida)',        '0803', 'APORTE', 40),
+    ('CUOTA_SINDICAL', 'Cuota sindical',               'Retencion de cuota sindical',                                   '0702', 'HABER', 50),
+    ('CONAFOVICER',    'CONAFOVICER',                  'Retencion CONAFOVICER (construccion civil)',                    '0602', 'HABER', 60),
+    ('RENTA_5TA',       'Renta de 5ta categoria',       'Retencion de renta de quinta categoria',                        '0605', 'HABER', 70),
+    ('ONP',              'ONP',                        'Aporte de pension - sistema nacional (ONP, 13%)',               '0607', 'HABER', 80),
+    ('AFP_APORTE_OBLIGATORIO', 'AFP - Aporte obligatorio', 'Aporte de pension AFP: aporte obligatorio',                  '0608', 'HABER', 90),
+    ('AFP_COMISION',           'AFP - Comision',           'Aporte de pension AFP: comision de la administradora',       '0601', 'HABER', 100),
+    ('AFP_PRIMA_SEGURO',       'AFP - Prima de seguro',    'Aporte de pension AFP: prima de seguro',                     '0606', 'HABER', 110),
+    ('AFP_INTEGRA',    'AFP Integra',    'Retencion de aporte de pension - AFP Integra',    NULL, 'HABER', 120),
+    ('AFP_PRIMA',       'AFP Prima',      'Retencion de aporte de pension - AFP Prima',      NULL, 'HABER', 130),
+    ('AFP_PROFUTURO',  'AFP Profuturo',  'Retencion de aporte de pension - AFP Profuturo',  NULL, 'HABER', 140),
+    ('AFP_HABITAT',     'AFP Habitat',    'Retencion de aporte de pension - AFP Habitat',    NULL, 'HABER', 150),
+    ('NETO_A_PAGAR', 'Neto a pagar', 'Neto a pagar al trabajador (balancea el asiento)', NULL, 'HABER', 160);
+
+-- -------------------------------------------------------------------------
+-- plan_cuentas (migracion 049): catalogo de cuentas contables, editable por
+-- el usuario desde Configuracion -> "Plan de cuentas". El codigo NO es unico
+-- (la empresa reutiliza codigos entre denominaciones distintas), asi que no
+-- lleva UNIQUE. Sembrada VACIA: el usuario la llena el mismo.
+-- -------------------------------------------------------------------------
+CREATE TABLE plan_cuentas (
+    id              SERIAL PRIMARY KEY,
+    codigo          VARCHAR(20) NOT NULL,
+    denominacion    VARCHAR(200) NOT NULL,
+    activa          BOOLEAN NOT NULL DEFAULT true
+);
+
+-- -------------------------------------------------------------------------
+-- mapeo_cuentas_contables (migracion 049): concepto x proyecto x movimiento
+-- -> cuenta contable, usado por src/asientoContable.ts para armar el asiento
+-- consolidado del periodo. concepto_codigo puede venir de conceptos_planilla
+-- O de conceptos_aportes - se valida contra ambas tablas en la API (no hay
+-- una FK real posible entre dos origenes distintos). Sembrada VACIA: el
+-- usuario la llena desde Configuracion -> "Configurar por proyecto".
+-- -------------------------------------------------------------------------
+CREATE TABLE mapeo_cuentas_contables (
+    id                  SERIAL PRIMARY KEY,
+    concepto_codigo     VARCHAR(60) NOT NULL,
+    proyecto_id         INT NOT NULL REFERENCES proyectos(id) ON DELETE CASCADE,
+    tipo_movimiento     VARCHAR(10) NOT NULL
+        CONSTRAINT mapeo_cuentas_contables_tipo_movimiento_check CHECK (tipo_movimiento IN ('DEBE', 'HABER')),
+    cuenta_id           INT NOT NULL REFERENCES plan_cuentas(id) ON DELETE CASCADE,
+    actualizado_en      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT mapeo_cuentas_contables_concepto_proyecto_movimiento_key UNIQUE (concepto_codigo, proyecto_id, tipo_movimiento)
+);
+CREATE INDEX idx_mapeo_cuentas_contables_proyecto ON mapeo_cuentas_contables(proyecto_id);
+
+-- -------------------------------------------------------------------------
 -- bitacora_planilla: auditoría de acciones sensibles
 -- -------------------------------------------------------------------------
 CREATE TABLE bitacora_planilla (
