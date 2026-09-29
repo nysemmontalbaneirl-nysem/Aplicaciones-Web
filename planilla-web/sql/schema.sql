@@ -246,6 +246,20 @@ CREATE TABLE catalogo_ubigeo_distrito (
 CREATE INDEX idx_ubigeo_provincia_dep ON catalogo_ubigeo_provincia(departamento_codigo);
 CREATE INDEX idx_ubigeo_distrito_prov ON catalogo_ubigeo_distrito(provincia_codigo);
 
+-- Migracion_042: ubicacion geografica opcional de cada proyecto (se
+-- agrega aqui, despues del catalogo UBIGEO, en vez de dentro del CREATE
+-- TABLE proyectos de mas arriba, porque proyectos se declara ANTES que
+-- estos catalogos en este archivo). Pensada para decidir si un feriado
+-- REGIONAL/LOCAL aplica o no a este proyecto - ver NOTA (recon 31/46) en
+-- migracion_042_feriados_por_ubicacion.sql: esa parte (tabla
+-- "dias_feriados" y su logica de coincidencia en routes/planilla.ts) se
+-- omitio por completo (no existe en este arbol). Estas columnas quedan
+-- listas para cuando ese catalogo se reconstruya en el futuro.
+ALTER TABLE proyectos
+  ADD COLUMN ubigeo_departamento_codigo VARCHAR(2) REFERENCES catalogo_ubigeo_departamento(codigo),
+  ADD COLUMN ubigeo_provincia_codigo    VARCHAR(4) REFERENCES catalogo_ubigeo_provincia(codigo),
+  ADD COLUMN ubigeo_distrito_codigo     VARCHAR(6) REFERENCES catalogo_ubigeo_distrito(codigo);
+
 -- -------------------------------------------------------------------------
 -- empleados: datos maestros de la persona (no cambian por proyecto/periodo)
 -- -------------------------------------------------------------------------

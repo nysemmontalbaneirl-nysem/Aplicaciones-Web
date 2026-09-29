@@ -485,3 +485,90 @@ anteriores, mucho más marcado aquí por tratarse de un archivo combinado
 Verificado: `tsc --noEmit` limpio (backend y frontend), 335/335 tests
 pasando (309 previos + `afpnet_excel.test.ts` + `actualizar_nombres_afpnet.test.ts`
 + 1 prueba nueva en `planilla_mensual_rutas.test.ts`).
+
+## 15. Migración 042 "ambito geografico de feriados" (parche #31/46, `ce41e219`) — tabla `dias_feriados` (catálogo de feriados) NUNCA existió; se omite toda la lógica de coincidencia, se conserva solo la ubicación UBIGEO de "proyectos"
+
+**Estado: parcialmente aplicado** — se reconstruyó solo la mitad
+independiente del parche (ubicación geográfica UBIGEO opcional en
+`proyectos`, tanto en el backend como en la pantalla Proyectos); se
+descartó por completo la otra mitad (ámbito NACIONAL/REGIONAL/LOCAL de
+cada feriado y la lógica que decide si un feriado aplica o no a un
+proyecto según su ubicación).
+
+**Causa raíz**: este parche modifica una tabla `dias_feriados` (un
+catálogo central de feriados con fecha + descripción, alimentando además
+una pantalla CRUD dentro de la pestaña "Días feriados" de Configuración) -
+pero esa tabla **nunca existió en este árbol reconstruido**. Confirmado
+por grep: no hay ningún `CREATE TABLE dias_feriados` en `schema.sql`, ni
+rutas para ella en `routes/conceptos.ts`, ni ningún componente que la
+consuma. El propio diff de este parche (`sql/schema.sql`, hunk sobre
+`dias_feriados`) muestra el `CREATE TABLE` que esperaba encontrar
+(`id, fecha UNIQUE, descripcion, creado_en` - sin ámbito) como el estado
+"antes" del cambio - es decir, ese catálogo simple ya debía existir de
+una migración anterior a esta, que tampoco llegó entre los 46 parches
+recuperados (ni depende de ninguna de las brechas #1/#5/#8 ya
+documentadas - es una brecha nueva e independiente). Hoy el sistema
+registra el feriado 100% a mano, por día y por trabajador, en el Tareo
+Diario (`horas_feriado`/`minutos_feriado`), sin ningún calendario
+central. Esto es consistente con el patrón ya visto en las brechas
+#5 (`asientoContable.ts`) y #12 (pestañas de Configuración): una pieza de
+infraestructura de base que ninguno de los 46 parches recuperados crea.
+
+**Qué se descartó por completo** (sin ningún rastro en el código, ni
+siquiera comentado, porque no hay nada sobre lo que apoyarlo):
+- `frontend/src/components/Configuracion.tsx`: los 11 hunks (selector de
+  ámbito + selects condicionales de ubicación en el formulario de alta/
+  edición de un feriado, pestaña "Días feriados") - 100% de los hunks
+  fallaron, nada se aplicó (la pestaña en sí ya era brecha #12).
+- `src/routes/conceptos.ts`: las 4 hunks del CRUD de `dias_feriados` con
+  su validación de consistencia ámbito↔ubicación - 100% fallaron.
+- `src/routes/planilla.ts`: de los 3 hunks, 1 se aplicó "por accidente"
+  (contexto coincidía) pero quedó **roto** - agregaba un bloque que
+  consultaba `SELECT ... FROM dias_feriados WHERE ... ambito IN
+  ('REGIONAL', 'LOCAL')` (tabla inexistente, hubiera tirado 500 en
+  producción en cada `POST /:id/calcular`). Se revirtió a mano ese bloque
+  completo, dejando una `NOTA (recon 31/46)` en su lugar.
+- `sql/migracion_042_feriados_por_ubicacion.sql` y el hunk de
+  `dias_feriados` en `schema.sql`: se reescribió el archivo de migración
+  para quitar TODOS los `ALTER TABLE dias_feriados ...` (columnas
+  ambito/ubigeo_*, constraints de consistencia, índice único nuevo) -
+  ejecutar esos `ALTER TABLE` contra una base real fallaría de inmediato
+  porque la tabla no existe.
+- `src/tipos.ts` (hunk 1, tipo `AmbitoFeriado` + campos de `DiaFeriado`) y
+  `frontend/src/types.ts` (hunk 2, probablemente el mismo tipo del lado
+  frontend): fallaron enteros - `DiaFeriado` no existe en ninguno de los
+  2 lados.
+- `tests/feriados_por_ubicacion.test.ts` (471 líneas, 13 casos): archivo
+  nuevo completo, eliminado sin conservar nada - los 13 casos ejercitan
+  exclusivamente el emparejamiento ámbito↔proyecto (ej. "un proyecto en
+  Sullana-Piura SI recibe el feriado regional de Piura"), inservible sin
+  la tabla `dias_feriados`.
+
+**Qué SÍ se reconstruyó** (independiente de `dias_feriados`, aplicó
+100% limpio con `patch -p2 --fuzz=0`, sin necesidad de reconciliación
+manual):
+- `sql/schema.sql` / `sql/migracion_042_feriados_por_ubicacion.sql`:
+  `ALTER TABLE proyectos ADD COLUMN ubigeo_departamento_codigo /
+  ubigeo_provincia_codigo / ubigeo_distrito_codigo` (referencian el
+  catálogo UBIGEO ya existente desde la migración 016 - mismo catálogo
+  que ya usa `empleados`). Sin `GRANT` nuevo (columnas en tabla existente).
+- `src/routes/proyectos.ts`: `POST`/`PUT /api/proyectos` ahora aceptan y
+  persisten estos 3 campos.
+- `frontend/src/components/Proyectos.tsx`: agrega selects en cascada
+  departamento → provincia → distrito (mismo patrón ya usado en
+  `Trabajadores.tsx`), tanto al crear un proyecto como al editar uno
+  existente, consumiendo `GET /api/catalogos` (ya existente).
+- `src/tipos.ts` / `frontend/src/types.ts`: campos opcionales
+  `ubigeo_departamento_codigo`/`ubigeo_provincia_codigo`/
+  `ubigeo_distrito_codigo` en la interfaz `Proyecto` (ambos lados).
+
+Esta mitad reconstruida queda **sin ningún consumidor todavía** (ningún
+código lee estas columnas para decidir nada) - es una preparación a
+propósito para cuando el catálogo `dias_feriados` se reconstruya en el
+futuro (propio o a partir de un parche que aparezca despues), momento en
+el que recién se podría retomar el resto de este parche #31/46 (el
+ámbito NACIONAL/REGIONAL/LOCAL en sí).
+
+Verificado: `tsc --noEmit` limpio (backend y frontend). 336/336 tests
+(sin cambio en el conteo - no se conservó ningún test nuevo de este
+parche).

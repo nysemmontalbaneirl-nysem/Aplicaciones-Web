@@ -22,14 +22,19 @@ proyectosRouter.post(
       const b = req.body;
       if (!b.nombre?.trim()) throw new ErrorValidacion("nombre es obligatorio");
       const r = await pool.query(
-        `INSERT INTO proyectos (nombre, ubicacion, cuota_sindical_semanal, codigo_establecimiento, tipo_establecimiento)
-         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+        `INSERT INTO proyectos (
+          nombre, ubicacion, cuota_sindical_semanal, codigo_establecimiento, tipo_establecimiento,
+          ubigeo_departamento_codigo, ubigeo_provincia_codigo, ubigeo_distrito_codigo
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
         [
           b.nombre.trim(),
           b.ubicacion ?? null,
           b.cuota_sindical_semanal ?? 0,
           b.codigo_establecimiento ?? "0000",
           b.tipo_establecimiento ?? "ESTABLECIMIENTO ANEXO",
+          b.ubigeo_departamento_codigo || null,
+          b.ubigeo_provincia_codigo || null,
+          b.ubigeo_distrito_codigo || null,
         ]
       );
       res.status(201).json(r.rows[0]);
@@ -58,8 +63,9 @@ proyectosRouter.put(
       const r = await pool.query(
         `UPDATE proyectos SET
           nombre = $1, ubicacion = $2, estado = $3, cuota_sindical_semanal = $4,
-          codigo_establecimiento = $5, tipo_establecimiento = $6
-         WHERE id = $7
+          codigo_establecimiento = $5, tipo_establecimiento = $6,
+          ubigeo_departamento_codigo = $7, ubigeo_provincia_codigo = $8, ubigeo_distrito_codigo = $9
+         WHERE id = $10
          RETURNING *`,
         [
           b.nombre,
@@ -68,6 +74,9 @@ proyectosRouter.put(
           b.cuota_sindical_semanal ?? 0,
           b.codigo_establecimiento ?? "0000",
           b.tipo_establecimiento ?? "ESTABLECIMIENTO ANEXO",
+          b.ubigeo_departamento_codigo || null,
+          b.ubigeo_provincia_codigo || null,
+          b.ubigeo_distrito_codigo || null,
           req.params.id,
         ]
       );

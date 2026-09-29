@@ -567,6 +567,11 @@ export interface Proyecto {
   // Cada proyecto/obra es su propio establecimiento SUNAT (migracion_016).
   codigo_establecimiento?: string | null;
   tipo_establecimiento?: "DOMICILIO FISCAL" | "ESTABLECIMIENTO ANEXO";
+  // Migracion_042: ubicacion geografica (catalogo UBIGEO), opcional -
+  // decide si un feriado REGIONAL/LOCAL aplica a este proyecto.
+  ubigeo_departamento_codigo?: string | null;
+  ubigeo_provincia_codigo?: string | null;
+  ubigeo_distrito_codigo?: string | null;
 }
 
 // Cuota sindical por proyecto y categoria (migracion_029): valor FIJO (no

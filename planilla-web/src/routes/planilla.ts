@@ -1336,6 +1336,23 @@ planillaRouter.post(
     // para revisar a mano si el jornal/tabla cambio de un mes a otro.
     const avisosCruceMes: Array<{ contrato_id: number; dni: string; nombre: string; mensaje: string }> = [];
 
+    // NOTA (recon 31/46): el parche original (migracion 042, "ambito
+    // geografico de feriados") agregaba aqui un aviso informativo
+    // avisosUbicacionFeriados, calculado consultando la tabla
+    // "dias_feriados" (columna "ambito", REGIONAL/LOCAL) y comparandola
+    // contra la ubicacion UBIGEO del proyecto. Se omite por completo: la
+    // tabla "dias_feriados" (el catalogo de feriados en si, con su propia
+    // pantalla CRUD dentro de Configuracion) NUNCA existio en este arbol -
+    // ninguno de los 46 parches recuperados la crea, y el feriado se
+    // registra hoy a mano por el tareador (horas_feriado/minutos_feriado
+    // en el Tareo Diario), sin un calendario central. Sin esa tabla, el
+    // resto de este parche (ambito NACIONAL/REGIONAL/LOCAL, deteccion
+    // automatica de que feriado aplica a que proyecto) no tiene ninguna
+    // base sobre la que reconstruirse - ver RECONSTRUCCION_BRECHAS.md
+    // punto 15. Se conservan unicamente las columnas UBIGEO agregadas a
+    // "proyectos" (schema.sql/routes/proyectos.ts/Proyectos.tsx), que no
+    // dependen de "dias_feriados" y quedan listas para cuando ese catalogo
+    // se reconstruya en el futuro.
     await cliente.query("BEGIN");
 
     // Deja detalle_planilla en sincronia exacta con el tareo actual: borra
