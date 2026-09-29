@@ -4,6 +4,7 @@ import {
   Contrato,
   esConstruccionCivil,
   FactoresHorasExtra,
+  LimitesTareo,
   PeriodoPlanilla,
   porcentajeRecargo,
   TareoDiarioFila,
@@ -80,6 +81,30 @@ function filaVacia(fecha: string): TareoDiarioFila {
 
 type CampoHoras = Exclude<keyof TareoDiarioFila, "fecha" | "tipo_dia_especial">;
 
+// Migracion 040 (ampliacion, sept. 2026): el usuario reporto que el bloqueo
+// del limite de horas/minutos solo se notaba al presionar "Guardar" (el
+// campo aceptaba cualquier valor mientras tanto) - se pidio explicitamente
+// un control PREVENTIVO que rechace el valor de inmediato, sin esperar al
+// guardado. Mismos 2 grupos de campos que ya usa el backend
+// (routes/planilla.ts: CAMPOS_HORAS/CAMPOS_MINUTOS) para sumar TODAS las
+// columnas de un dia, no solo el campo que se esta editando.
+const CAMPOS_HORAS: CampoHoras[] = [
+  "horas_normales",
+  "horas_dominical",
+  "horas_feriado",
+  "horas_extra_tramo1",
+  "horas_extra_tramo2",
+  "horas_extra_tramo3",
+];
+const CAMPOS_MINUTOS: CampoHoras[] = [
+  "minutos_normales",
+  "minutos_dominical",
+  "minutos_feriado",
+  "minutos_extra_tramo1",
+  "minutos_extra_tramo2",
+  "minutos_extra_tramo3",
+];
+
 export default function TareoDiario({ periodo }: Props) {
   const [contratosDisponibles, setContratosDisponibles] = useState<Contrato[]>([]);
   const [busqueda, setBusqueda] = useState("");
@@ -90,6 +115,18 @@ export default function TareoDiario({ periodo }: Props) {
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
+
+  // Migracion 040 (ampliacion): limites configurables de horas/minutos por
+  // dia (Configuracion -> Limites de tareo), traidos una sola vez al abrir
+  // la pantalla, para poder bloquear en el momento (ver actualizarHoras) sin
+  // depender de que el usuario presione "Guardar". Si no se pudieron traer
+  // (ej. sin permiso), simplemente no se valida nada en el frontend - el
+  // backend igual lo valida al guardar. erroresLimite guarda, por fecha, el
+  // mensaje del ultimo intento bloqueado de ESE dia (se limpia dia por dia
+  // apenas un cambio ya no excede el limite, y por completo al cambiar de
+  // trabajador).
+  const [limites, setLimites] = useState<LimitesTareo | null>(null);
+  const [erroresLimite, setErroresLimite] = useState<Record<string, string>>({});
 
   const buscadorRef = useRef<HTMLInputElement>(null);
   function irABuscador() {
@@ -106,6 +143,12 @@ export default function TareoDiario({ periodo }: Props) {
       .catch(() => {
         // Si no se pudo traer (ej. sin permiso), se muestran los tramos sin
         // porcentaje ("Horas extra tramo 1", etc.) - no bloquea la pantalla.
+      });
+    apiGet<LimitesTareo>("/conceptos/limites-tareo")
+      .then(setLimites)
+      .catch(() => {
+        // Sin limites cargados, actualizarHoras no bloquea nada en el
+        // frontend - el backend igual valida al guardar (ver planilla.ts).
       });
   }, []);
 
@@ -132,6 +175,7 @@ export default function TareoDiario({ periodo }: Props) {
       const porFecha = new Map(respuesta.dias.map((d) => [d.fecha.slice(0, 10), d]));
       const grilla = diasDelPeriodo(periodo).map((fecha) => porFecha.get(fecha) ?? filaVacia(fecha));
       setDias(grilla);
+      setErroresLimite({});
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -143,9 +187,18 @@ export default function TareoDiario({ periodo }: Props) {
   // por completo (input vacio) - se guarda tal cual (queda vacio en
   // pantalla) en vez de forzarlo a 0, para no pelear con el usuario cada
   // vez que borra para volver a escribir.
+  function limpiarErrorLimite(fecha: string) {
+    setErroresLimite((prev) => {
+      if (!(fecha in prev)) return prev;
+      const { [fecha]: _omitido, ...resto } = prev;
+      return resto;
+    });
+  }
+
   function actualizarHoras(fecha: string, campo: CampoHoras, valor: number | null) {
     if (valor === null) {
       setDias((prev) => prev.map((f) => (f.fecha === fecha ? { ...f, [campo]: null } : f)));
+      limpiarErrorLimite(fecha); // borrar el campo nunca puede hacer que un dia supere el limite
       return;
     }
     // Las horas y minutos se guardan como enteros (columnas INT en la base
@@ -155,6 +208,44 @@ export default function TareoDiario({ periodo }: Props) {
     const esMinutos = campo.startsWith("minutos_");
     const entero = Math.round(valor || 0);
     const acotado = esMinutos ? Math.min(59, Math.max(0, entero)) : Math.max(0, entero);
+
+    // Migracion 040 (ampliacion, sept. 2026): bloqueo PREVENTIVO en tiempo
+    // real, a pedido explicito del usuario - antes se avisaba recien al
+    // presionar "Guardar" (el campo aceptaba cualquier numero mientras
+    // tanto), lo cual el usuario reporto como poco efectivo. Ahora, antes de
+    // aceptar el cambio, se recalcula como quedaria la suma de TODAS las
+    // columnas de horas (o, por separado, de minutos) de ese dia CON este
+    // valor nuevo ya puesto, usando el mismo criterio de dia
+    // habil/sabado/domingo y los mismos 2 grupos de campos que ya valida el
+    // backend (routes/planilla.ts, PUT /tareo-diario/:contratoId) - si se
+    // pasa del limite configurado (Configuracion -> Limites de tareo), se
+    // rechaza el cambio de una vez (el input vuelve a mostrar el valor
+    // anterior, porque el estado nunca llega a actualizarse) en vez de
+    // dejarlo pasar hasta el guardado.
+    const fila = dias.find((f) => f.fecha === fecha);
+    const diaSemana = fechaLocal(fecha).getDay(); // 0=domingo .. 6=sabado
+    if (fila && limites && diaSemana !== 0) {
+      const esSabado = diaSemana === 6;
+      const grupo = esMinutos ? CAMPOS_MINUTOS : CAMPOS_HORAS;
+      const maximo = esMinutos
+        ? esSabado
+          ? limites.minutos_max_sabado
+          : limites.minutos_max_lun_vie
+        : esSabado
+          ? limites.horas_max_sabado
+          : limites.horas_max_lun_vie;
+      const suma = grupo.reduce((acc, c) => acc + (c === campo ? acotado : Number(fila[c] ?? 0)), 0);
+      if (suma > maximo) {
+        const etiquetaDia = esSabado ? "sábado" : "día (lunes a viernes)";
+        const unidad = esMinutos ? "minutos" : "horas";
+        setErroresLimite((prev) => ({
+          ...prev,
+          [fecha]: `Este ${etiquetaDia} no puede sumar más de ${maximo} ${unidad} entre todos los campos (con este valor llegaría a ${suma}).`,
+        }));
+        return; // se rechaza el cambio - no se actualiza "dias"
+      }
+    }
+    limpiarErrorLimite(fecha);
     setDias((prev) => prev.map((f) => (f.fecha === fecha ? { ...f, [campo]: acotado } : f)));
   }
 
@@ -261,7 +352,14 @@ export default function TareoDiario({ periodo }: Props) {
                     const esEspecial = fila.tipo_dia_especial !== null;
                     return (
                       <tr key={fila.fecha}>
-                        <td>{fila.fecha}</td>
+                        <td>
+                          {fila.fecha}
+                          {erroresLimite[fila.fecha] && (
+                            <div style={{ fontSize: "0.72rem", color: "#c0392b", fontWeight: 600 }}>
+                              {erroresLimite[fila.fecha]}
+                            </div>
+                          )}
+                        </td>
                         <td>{DIAS_SEMANA[fechaLocal(fila.fecha).getDay()]}</td>
                         {(
                           [

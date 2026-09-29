@@ -390,3 +390,19 @@ este archivo: `filaVacia` con los 12 campos en `null` en vez de `0`,
 `actualizarHoras` aceptando `null`, y los inputs de horas/minutos de la
 grilla normal (`fila[campoHoras]`/`fila[campoMinutos]`) mostrando vacío en
 vez de "0".
+
+## 13. Parche #28/46 (`2e06805a`, "Bloqueo preventivo en tiempo real del límite de tareo") — `filaModal` de nuevo
+
+100% frontend (`TareoDiario.tsx`), sin migración SQL. Se reconstruyó
+completo: el bloqueo preventivo de horas/minutos por día (mismo criterio
+de día hábil/sábado/domingo y límites de `Configuración -> Límites de
+tareo` que ya valida el backend desde el parche #27) ahora también rechaza
+el cambio de inmediato en el frontend, con `erroresLimite` mostrando el
+mensaje junto a la fecha en la grilla. La única pieza omitida fue, de
+nuevo, la que depende del formulario flotante inexistente (brecha #1): el
+mismo mensaje de error dentro de `filaModal`, y el `setErroresLimite({})`
+de la función que guarda y cambia de trabajador dentro de ese formulario
+(el parche la llama con una variable `nombreAnterior` que tampoco existe
+en este árbol). Los 309 tests existentes siguen pasando (este parche no
+trae tests propios - "Cambio 100% frontend" según su propio mensaje de
+commit).
