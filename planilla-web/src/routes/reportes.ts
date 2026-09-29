@@ -13,6 +13,18 @@ export const reportesRouter = Router();
 // la empresa). Las marcadas "no calculado" se dejan en blanco a proposito:
 // el sistema todavia no calcula ese concepto (ver detalle en la respuesta
 // del chat que acompaña esta funcionalidad), en vez de inventar un numero.
+//
+// 18/09/2026: se completaron 5 columnas que quedaron en blanco en rondas
+// anteriores porque el concepto todavia no existia en el sistema, pero que
+// migraciones posteriores ya calculan y guardan en detalle_planilla:
+// "Descanso Medico" y "Días Subsidiados Por Essalud (Tipo 21/22)"
+// (migracion 038), "Subsidios Por Paternidad" (migracion 030), "Condición
+// de Trabajo" (Ronda A) y "Vacaciones" -importe- (modulo de vacaciones de
+// construccion civil). "Dias Vacaciones" (el CONTEO de dias, no el
+// importe) sigue en blanco: no existe ningun campo en el sistema que lleve
+// ese conteo por periodo (el modulo de vacaciones de EMPLEADO -gozadas/
+// truncas- tampoco esta implementado, ver comentario en
+// motorCalculo.ts:calcularVacaciones).
 const COLUMNAS = [
   "TD", "DNI", "APELLIDOS Y NOMBRES", "FECHA_NACIMIENTO", "FECHA INGRESO", "FECHA CESE",
   "PROYECTO", "CATEGORIA", "AFP/ONP", "SISTEMA COMISION", "CUSPP", "N° HIJOS",
@@ -108,17 +120,27 @@ async function construirFilasReporte(periodoId: string, usuario: NonNullable<Req
         Number(d.dias_trabajados),
         Number(d.dias_dominical),
         Number(d.dias_feriado),
-        "", // Dias Vacaciones - modulo de vacaciones no implementado
-        "", "", "", // subsidios/dias no laborados - no calculado
+        "", // Dias Vacaciones - no existe un conteo de dias de vacaciones por periodo en el sistema
+        // Migracion 038: dia 21+ de descanso medico por enfermedad, subsidiado
+        // directamente por EsSalud - es EXACTAMENTE lo que esta columna pide.
+        Number(d.dias_incapacidad_enfermedad ?? 0),
+        "", // Razón: Días no laborados - campo de texto libre, sin fuente de datos en el sistema
+        // Migracion 030: licencia por paternidad, pagada igual que un dia trabajado.
+        Number(d.licencia_paternidad ?? 0),
         Number(d.dias_trabajados) + Number(d.dias_dominical) + Number(d.dias_feriado),
         Number(jornalHora.toFixed(4)),
         Number(d.jornal_diario),
         Number(d.sueldo_basico),
         "", // Dias Dominical (columna duplicada, ambigua)
-        "", // Vacaciones (importe) - modulo no implementado
-        "", // Subsidios Por Maternidad - no calculado
+        // Compensacion vacacional de construccion civil (RSD N°450-90-2SD-NEC,
+        // calcularVacaciones) - EMPLEADO (regimen general) sigue en 0 (su
+        // modulo de record de vacaciones gozadas/truncas no esta implementado).
+        Number(d.vacaciones ?? 0),
+        "", // Subsidios Por Maternidad - se mantiene puramente informativo (nunca se paga por planilla, lo cubre EsSalud desde el dia 1)
         Number(d.remuneracion_feriado),
-        "", // Descanso Medico - no calculado
+        // Migracion 038: dias 1-20/año de descanso medico por enfermedad,
+        // pagados integro por el empleador igual que un dia normal (PLAME 0121).
+        Number(d.subsidio_enfermedad ?? 0),
         construccionCivil ? "" : Number(importeTramo1.toFixed(2)),
         Number(importeTramo2y3.toFixed(2)),
         construccionCivil ? Number(importeTramo1.toFixed(2)) : "",
@@ -134,7 +156,8 @@ async function construirFilasReporte(periodoId: string, usuario: NonNullable<Req
         !construccionCivil && (periodo.mes === 7 || periodo.mes === 12) ? Number(d.gratificacion) : "",
         construccionCivil ? Number(d.gratificacion) : "",
         Number(d.cts),
-        "", // Condicion de Trabajo - no calculado
+        // Ronda A: monto no remunerativo, pagado integro, sin afectar aportes.
+        Number(d.condicion_trabajo ?? 0),
         Number(d.bonificacion_movilidad),
         "", // Sumas O Bienes... - no calculado
         Number(d.total_ingresos),

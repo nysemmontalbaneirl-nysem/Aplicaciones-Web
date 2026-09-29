@@ -121,6 +121,26 @@ la mensual consolidada (que sí, ver abajo). La tabla nueva
 "tubería" (columnas, tipos) para esta brecha ya está más completa que
 antes, pero el cálculo real sigue pendiente de las migraciones 022/023/026.
 
+**Confirmado de nuevo en el patch 25/46** ("Completa 5 columnas del Resumen
+de Planilla que quedaban en blanco"): una de las 5 columnas que ese parche
+da por completada es justamente "Condición de Trabajo" (`Ronda A`), leída
+en `reportes.ts` como `Number(d.condicion_trabajo ?? 0)` — ya de forma
+defensiva en el propio parche original, así que no hizo falta tocar el
+código de `reportes.ts`. Como `condicion_trabajo` no existe ni en
+`contratos` ni en `detalle_planilla` en este árbol, esa columna
+simplemente da `0` en vez de fallar. La única pieza que sí tuvo que
+adaptarse fue la prueba nueva del parche
+(`tests/reportes_resumen_planilla.test.ts`): su "precondición" insertaba un
+`condicion_trabajo = 150` directo en `contratos` (columna inexistente ahí,
+lo que hacía fallar el INSERT y arrastraba los 8 casos de esa prueba a
+"undefined") — se quitó esa columna del INSERT y se cambió la aserción de
+"Condición de Trabajo" para esperar `0` (comportamiento real hoy), no
+`150`. Cuando se reconstruya la migración 026, falta además decidir en qué
+tabla vive `condicion_trabajo` en producción real: por el INSERT de esta
+prueba, parece ser un monto FIJO por contrato (columna en `contratos`, no
+un valor calculado por periodo en `detalle_planilla`) — dato a confirmar
+si aparece un parche futuro para esa migración.
+
 ### 4.1. Catálogo de códigos PLAME para descuentos/aportes (`obtenerAportes` / tabla `conceptos_aportes`)
 
 Descubierto en el patch 19/46: `resolverCodigosPlame()` (plame.ts)
