@@ -375,6 +375,19 @@ function dibujarBloqueFirma(
   doc.fillColor("#000000");
 }
 
+// Alto que necesita el bloque de firmas de la linea hacia ARRIBA (la
+// imagen escaneada, si hay alguna de los 2 lados) y de la linea hacia
+// ABAJO (etiqueta + nota "solo referencial" si hay imagen + nombre del
+// representante legal si esta configurado). Funcion pura (no dibuja nada)
+// para poder decidir, ANTES de dibujar, si el bloque completo entra en el
+// espacio que queda en la pagina actual - y para poder probarla sola, sin
+// tener que inspeccionar el PDF resultante. Exportada por eso mismo.
+export function calcularAlturaBloqueFirmas(hayImagen: boolean, hayRepresentanteLegal: boolean): number {
+  const alturaImagen = hayImagen ? 30 : 0;
+  const alturaTextoDebajo = 11 + (hayImagen ? 9 : 0) + (hayRepresentanteLegal ? 10 : 0);
+  return alturaImagen + alturaTextoDebajo;
+}
+
 // Espacio de firma al pie de la boleta (migracion 031): 2 bloques lado a
 // lado - empleador (izquierda) y trabajador (derecha). El espacio para la
 // firma FISICA se dibuja SIEMPRE en ambos (una linea en blanco) - las
@@ -385,6 +398,22 @@ function dibujarBloqueFirma(
 // misma linea, solo si estan disponibles - nunca en su lugar. El nombre del
 // representante legal (si esta configurado en la pantalla Empresa) se
 // imprime debajo de la etiqueta del empleador, se haya subido su firma o no.
+//
+// Bug real reportado por el usuario (con una boleta real adjunta): la
+// boleta salia en 2 hojas Y, ademas, la firma del empleador se veia como
+// SOLO TEXTO en esa segunda hoja, sin la imagen. Causa: a diferencia del
+// texto, PDFKit NO reubica sola una imagen dibujada en coordenadas (x,y)
+// absolutas (doc.image) cuando cae mas alla del margen inferior - se
+// pierde/recorta en silencio - pero SI reubica el TEXTO que sigue a una
+// pagina nueva en forma automatica. Con el espaciado fijo de antes
+// (doc.moveDown(2.2) sin verificar cuanto quedaba de pagina), en una
+// boleta con muchos conceptos la imagen quedaba justo mas alla del margen
+// (invisible) mientras la etiqueta/nota/nombre SI paginaban solos a una
+// hoja 2, huerfanos. Ahora se calcula el alto real que necesita el bloque
+// ANTES de dibujar nada: si sobra espacio se deja el margen de siempre; si
+// esta justo, se reduce el margen (nunca se corta el bloque a la mitad); y
+// solo si de verdad no alcanza ni el margen minimo se salta de pagina
+// ENTERA antes de empezar, para que imagen y texto siempre queden juntos.
 function dibujarFirmas(
   doc: InstanceType<typeof PDFDocument>,
   detalle: DetalleBoletaPdf,
@@ -395,8 +424,26 @@ function dibujarFirmas(
   const anchoFirma = 160;
   const xEmpleador = xEtiqueta;
   const xTrabajador = xEtiqueta + anchoUtil - anchoFirma;
-  doc.moveDown(2.2);
-  const yLinea = doc.y;
+
+  const hayAlgunaImagen = !!(datosEmpresa?.firmaEmpleador || detalle.firma_archivo);
+  const hayRepresentanteLegal = !!datosEmpresa?.representanteLegal?.trim();
+  const alturaBloque = calcularAlturaBloqueFirmas(hayAlgunaImagen, hayRepresentanteLegal);
+
+  const GAP_IDEAL = 16; // separacion "normal" cuando sobra espacio (antes: moveDown(2.2) ~ 33pt)
+  const GAP_MINIMO = 6; // separacion reducida cuando el espacio esta justo, pero alcanza
+  const maxY = doc.page.height - doc.page.margins.bottom;
+  const espacioDisponible = maxY - doc.y;
+
+  if (espacioDisponible >= alturaBloque + GAP_IDEAL) {
+    doc.y += GAP_IDEAL;
+  } else if (espacioDisponible >= alturaBloque + GAP_MINIMO) {
+    doc.y += GAP_MINIMO;
+  } else {
+    doc.addPage();
+    doc.y += GAP_IDEAL;
+  }
+
+  const yLinea = doc.y + (hayAlgunaImagen ? 30 : 0);
 
   dibujarBloqueFirma(
     doc,

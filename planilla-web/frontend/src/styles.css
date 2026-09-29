@@ -509,4 +509,15 @@ input[type="number"] {
   .no-imprimir {
     display: none !important;
   }
+  /* Bug real reportado por el usuario: al imprimir/guardar como PDF desde
+     el navegador, el bloque de firmas (empleador + trabajador) podia
+     quedar partido entre 2 hojas cuando el resto de la boleta ya ocupaba
+     casi toda la primera - el navegador imprime lo que entra de una fila
+     y deja el resto suelto en la siguiente. page-break-inside evita que el
+     bloque se corta a la mitad: si no entra completo en lo que queda de la
+     hoja actual, se mueve entero a la siguiente. */
+  .bloque-firmas {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
 }

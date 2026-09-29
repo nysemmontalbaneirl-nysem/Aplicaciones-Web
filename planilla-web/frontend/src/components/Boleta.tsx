@@ -290,7 +290,10 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles, d
           escaneadas (empleador en Empresa, trabajador en Trabajadores) son
           puramente una referencia visual de apoyo, dibujadas encima de esa
           misma linea solo si estan configuradas. */}
-      <div style={{ marginTop: 36, display: "flex", justifyContent: "space-between", gap: 16 }}>
+      <div
+        className="bloque-firmas"
+        style={{ marginTop: 36, display: "flex", justifyContent: "space-between", gap: 16 }}
+      >
         <div style={{ width: 180, textAlign: "center" as const }}>
           {datosEmpresa?.tiene_firma_empleador && (
             <img

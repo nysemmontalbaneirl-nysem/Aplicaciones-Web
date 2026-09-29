@@ -5,7 +5,7 @@
 // routes/envios.ts), asi que tiene que soportar un Date real en
 // fecha_ingreso sin explotar (bug real encontrado al probar el envio de
 // boletas a mano: "detalle.fecha_ingreso?.slice is not a function").
-import { DetalleBoletaPdf, generarPdfBoleta } from "../src/boletaPdf";
+import { calcularAlturaBloqueFirmas, DetalleBoletaPdf, generarPdfBoleta } from "../src/boletaPdf";
 
 const DETALLE_BASE: DetalleBoletaPdf = {
   apellidos_nombres: "PEREZ GOMEZ JUAN",
@@ -60,6 +60,17 @@ const PNG_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64"
 );
+
+// Cuenta las paginas de un PDF generado por pdfkit contando los objetos
+// "/Type /Page" (sin la "s" de "/Type /Pages", el objeto contenedor). pdfkit
+// no comprime sus streams de objetos por defecto, asi que el texto crudo del
+// PDF alcanza para esta cuenta simple - no hace falta una libreria de
+// parseo de PDF solo para esta prueba.
+function contarPaginas(pdf: Buffer): number {
+  const texto = pdf.toString("latin1");
+  const matches = texto.match(/\/Type\s*\/Page[^s]/g);
+  return matches ? matches.length : 0;
+}
 
 describe("generarPdfBoleta", () => {
   it("genera un PDF valido cuando fecha_ingreso es un objeto Date real (como lo devuelve pg)", async () => {
@@ -116,5 +127,86 @@ describe("generarPdfBoleta", () => {
       { anio: 2026, mes: 2 }
     );
     expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+  });
+
+  // Bug real reportado por el usuario (con una boleta real adjunta): la
+  // boleta salia en 2 hojas y, ademas, la firma del empleador aparecia como
+  // SOLO TEXTO en esa segunda hoja, sin la imagen (PDFKit no reubica sola
+  // una imagen en (x,y) absolutos cuando cae mas alla del margen, a
+  // diferencia del texto que si pagina solo). NOTA (recon 8/46): la prueba
+  // original armaba una boleta con MUCHOS conceptos (incluyendo campos como
+  // remuneracion_dominical_proporcional/sobretasa_dominical/sobretasa_feriado/
+  // condicion_trabajo que todavia no existen en este punto de la
+  // reconstruccion - los agrega un parche posterior) para forzar que casi
+  // se llene la hoja por si sola; aqui se usan valores altos de los campos
+  // que SI existen para lograr el mismo efecto (llenar casi toda la hoja) y
+  // se agrega el bloque de firmas encima, que es lo que realmente prueba
+  // este caso.
+  it("una boleta con muchos conceptos + firma del empleador + firma del trabajador + representante legal sigue cabiendo en 1 sola pagina", async () => {
+    const detalleGrande: DetalleBoletaPdf = {
+      ...DETALLE_BASE,
+      apellidos_nombres: "ACOSTA MORALES CEVERIANO",
+      proyecto: "P012-I.E.N. 030 Baldomero Franco-Tumbes-Tumbes-Tumbes",
+      sistema_pension: "AFP",
+      afp_nombre: "INTEGRA",
+      cuspp: "551481CAMSA6",
+      sueldo_basico: 882.28,
+      remuneracion_dominical: 176.81,
+      remuneracion_feriado: 89.3,
+      importe_horas_extra: 142.88,
+      asignacion_familiar: 10,
+      asignacion_escolaridad: 73.52,
+      bonificacion_buc: 282.33,
+      bonificacion_bae: 10,
+      bonificacion_movilidad: 86,
+      subsidio_enfermedad: 10,
+      licencia_paternidad: 10,
+      otras_bonificaciones: 10,
+      gratificacion: 330.05,
+      bonificacion_extraordinaria: 29.7,
+      cts: 132.39,
+      vacaciones: 88.23,
+      total_ingresos: 2313.49,
+      descuento_sindicato: 5,
+      conafovicer: 21.18,
+      renta_5ta: 5,
+      otros_descuentos: 5,
+      total_descuentos: 235.89,
+      essalud: 149.56,
+      sctr: 5,
+      seguro_vida: 5,
+      senati: 6.44,
+      neto_pagar: 2077.6,
+      detalle_json: {
+        aporte_pension_detalle: { aporteObligatorio: 166.18, comisionFlujo: 25.76, primaSeguro: 22.77 },
+        total_aportes_empleador: 156.0,
+      },
+      firma_archivo: PNG_1X1,
+      firma_mime: "image/png",
+    };
+    const pdf = await generarPdfBoleta(detalleGrande, { anio: 2026, mes: 8 }, {
+      firmaEmpleador: PNG_1X1,
+      representanteLegal: "MONTALBAN SANCHEZ CARLOS",
+    });
+    expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(contarPaginas(pdf)).toBe(1);
+  });
+});
+
+describe("calcularAlturaBloqueFirmas (espacio reservado antes de dibujar las firmas)", () => {
+  it("no reserva nada extra sin imagen ni representante legal (solo la etiqueta)", () => {
+    expect(calcularAlturaBloqueFirmas(false, false)).toBe(11);
+  });
+
+  it("reserva mas espacio cuando hay imagen (30pt de la imagen + la nota 'solo referencial' debajo)", () => {
+    expect(calcularAlturaBloqueFirmas(true, false)).toBe(30 + 11 + 9);
+  });
+
+  it("reserva mas espacio cuando hay nombre del representante legal", () => {
+    expect(calcularAlturaBloqueFirmas(false, true)).toBe(11 + 10);
+  });
+
+  it("reserva el maximo cuando hay imagen Y representante legal", () => {
+    expect(calcularAlturaBloqueFirmas(true, true)).toBe(30 + 11 + 9 + 10);
   });
 });
