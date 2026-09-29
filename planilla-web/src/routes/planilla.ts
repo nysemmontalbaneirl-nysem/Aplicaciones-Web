@@ -398,6 +398,16 @@ planillaRouter.put("/:id/tareo", asyncHandler(async (req: Request, res: Response
   if (!tieneAccesoProyecto(req.usuario!, contratoResult.rows[0].proyecto)) {
     return res.status(403).json({ error: "No tienes acceso a ese proyecto" });
   }
+  // Ronda C: un periodo especifico de un proyecto no puede recibir tareo de
+  // un contrato de OTRO proyecto (un periodo legado, proyecto NULL, sigue
+  // aceptando cualquiera).
+  if (periodo.proyecto && contratoResult.rows[0].proyecto !== periodo.proyecto) {
+    return res.status(400).json({
+      error:
+        `Este periodo es especifico del proyecto "${periodo.proyecto}" y el contrato pertenece a ` +
+        `"${contratoResult.rows[0].proyecto}".`,
+    });
+  }
 
   await guardarAsistencia(req.params.id, {
     contrato_id: b.contrato_id,
@@ -592,6 +602,15 @@ planillaRouter.put(
     if (proyecto === null) return res.status(404).json({ error: "El contrato no existe" });
     if (!tieneAccesoProyecto(req.usuario!, proyecto)) {
       return res.status(403).json({ error: "No tienes acceso a ese proyecto" });
+    }
+    // Ronda C: un periodo especifico de un proyecto (periodo.proyecto no
+    // nulo) no puede recibir tareo de un contrato de OTRO proyecto - un
+    // periodo legado (proyecto NULL) sigue aceptando cualquiera, igual que
+    // siempre.
+    if (periodo.proyecto && proyecto !== periodo.proyecto) {
+      return res.status(400).json({
+        error: `Este periodo es especifico del proyecto "${periodo.proyecto}" y el contrato pertenece a "${proyecto}".`,
+      });
     }
 
     const dias = (req.body?.dias ?? []) as FilaTareoDiario[];
@@ -824,6 +843,18 @@ planillaRouter.post(
           continue;
         }
         contrato = encontrado;
+      }
+
+      // Ronda C: un periodo especifico de un proyecto no puede recibir
+      // tareo de un contrato de OTRO proyecto (un periodo legado, proyecto
+      // NULL, sigue aceptando cualquiera).
+      if (periodo.proyecto && contrato.proyecto !== periodo.proyecto) {
+        errores.push({
+          fila: numeroFila,
+          dni,
+          motivo: `Este periodo es especifico del proyecto '${periodo.proyecto}' y el contrato pertenece a '${contrato.proyecto}'`,
+        });
+        continue;
       }
 
       const valores = {

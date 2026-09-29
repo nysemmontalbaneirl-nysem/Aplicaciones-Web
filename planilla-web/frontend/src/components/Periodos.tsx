@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { apiDelete, apiGet, apiPost, BASE_URL, conToken } from "../api";
-import { PeriodoPlanilla } from "../types";
+import { apiDelete, apiGet, apiPost, apiPut, BASE_URL, conToken } from "../api";
+import { PeriodoPlanilla, Proyecto } from "../types";
+import { useAuth } from "../AuthContext";
 
 const MESES = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -25,20 +26,40 @@ interface Props {
 }
 
 export default function Periodos({ onCargarTareo, onTareoDiario, onCalcular }: Props) {
+  const { usuario } = useAuth();
+  const esAdmin = usuario?.rol === "ADMIN";
   const [periodos, setPeriodos] = useState<PeriodoPlanilla[]>([]);
+  const [proyectos, setProyectos] = useState<Proyecto[]>([]);
   const [tipo, setTipo] = useState<TipoPeriodo>("MENSUAL");
   const [anio, setAnio] = useState(new Date().getFullYear());
   const [mes, setMes] = useState(new Date().getMonth() + 1);
   const [quincena, setQuincena] = useState<1 | 2>(1);
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
+  const [proyecto, setProyecto] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [creando, setCreando] = useState(false);
+  const [editandoId, setEditandoId] = useState<number | null>(null);
+  const [edicion, setEdicion] = useState<
+    Record<number, { fecha_inicio: string; fecha_fin: string; proyecto: string }>
+  >({});
+  const [guardandoEdicionId, setGuardandoEdicionId] = useState<number | null>(null);
+
+  // Un usuario no-ADMIN solo puede elegir entre los proyectos que tiene
+  // asignados (usuario.proyectos, nombres); un ADMIN puede elegir cualquiera
+  // o dejarlo vacio (periodo "legado", para todos los proyectos).
+  const proyectosDisponibles = esAdmin
+    ? proyectos
+    : proyectos.filter((p) => usuario?.proyectos.includes(p.nombre));
 
   async function cargar() {
     try {
-      const datos = await apiGet<PeriodoPlanilla[]>("/periodos");
-      setPeriodos(datos);
+      const [datosPeriodos, datosProyectos] = await Promise.all([
+        apiGet<PeriodoPlanilla[]>("/periodos"),
+        apiGet<Proyecto[]>("/proyectos"),
+      ]);
+      setPeriodos(datosPeriodos);
+      setProyectos(datosProyectos);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -69,11 +90,59 @@ export default function Periodos({ onCargarTareo, onTareoDiario, onCalcular }: P
     }
   }
 
+  // Abre el formulario de edicion de un periodo ABIERTO, precargado con sus
+  // valores actuales.
+  function iniciarEdicion(p: PeriodoPlanilla) {
+    setError(null);
+    setEdicion((prev) => ({
+      ...prev,
+      [p.id]: {
+        fecha_inicio: p.fecha_inicio?.slice(0, 10) ?? "",
+        fecha_fin: p.fecha_fin?.slice(0, 10) ?? "",
+        proyecto: p.proyecto ?? "",
+      },
+    }));
+    setEditandoId(p.id);
+  }
+
+  function cancelarEdicion() {
+    setEditandoId(null);
+  }
+
+  async function guardarEdicion(p: PeriodoPlanilla) {
+    const datos = edicion[p.id];
+    if (!datos) return;
+    if (!esAdmin && !datos.proyecto) {
+      setError("Debes elegir uno de tus proyectos asignados. Solo un Administrador puede dejar un periodo sin proyecto.");
+      return;
+    }
+    setError(null);
+    setGuardandoEdicionId(p.id);
+    try {
+      await apiPut(`/periodos/${p.id}`, {
+        fecha_inicio: datos.fecha_inicio,
+        fecha_fin: datos.fecha_fin,
+        proyecto: datos.proyecto || null,
+      });
+      setEditandoId(null);
+      await cargar();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setGuardandoEdicionId(null);
+    }
+  }
+
   async function crearPeriodo(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!esAdmin && !proyecto) {
+      setError("Debes seleccionar uno de tus proyectos asignados. Solo un Administrador puede crear un periodo sin proyecto.");
+      return;
+    }
     setCreando(true);
     try {
+      const proyectoEnviado = proyecto || null;
       if (tipo === "MENSUAL") {
         // dias_periodo lo calcula el backend a partir de fecha_inicio/fecha_fin
         // (dias calendario reales del mes: 28, 29, 30 o 31).
@@ -83,6 +152,7 @@ export default function Periodos({ onCargarTareo, onTareoDiario, onCalcular }: P
           tipo: "MENSUAL",
           fecha_inicio: primerDia(anio, mes),
           fecha_fin: ultimoDia(anio, mes),
+          proyecto: proyectoEnviado,
         });
       } else if (tipo === "QUINCENAL") {
         if (!fechaInicio || !fechaFin) {
@@ -103,6 +173,7 @@ export default function Periodos({ onCargarTareo, onTareoDiario, onCalcular }: P
           tipo: "QUINCENAL",
           fecha_inicio: fechaInicio,
           fecha_fin: fechaFin,
+          proyecto: proyectoEnviado,
         });
       } else {
         if (!fechaInicio || !fechaFin) {
@@ -120,6 +191,7 @@ export default function Periodos({ onCargarTareo, onTareoDiario, onCalcular }: P
           tipo: "SEMANAL",
           fecha_inicio: fechaInicio,
           fecha_fin: fechaFin,
+          proyecto: proyectoEnviado,
         });
       }
       await cargar();
@@ -146,6 +218,19 @@ export default function Periodos({ onCargarTareo, onTareoDiario, onCalcular }: P
                 <option value="MENSUAL">Mensual</option>
                 <option value="QUINCENAL">Quincenal</option>
                 <option value="SEMANAL">Semanal (obreros de jornal)</option>
+              </select>
+            </label>
+
+            <label>
+              Proyecto
+              <select value={proyecto} onChange={(e) => setProyecto(e.target.value)} required={!esAdmin}>
+                {esAdmin && <option value="">Todos los proyectos (legado)</option>}
+                {!esAdmin && proyecto === "" && <option value="">Selecciona un proyecto...</option>}
+                {proyectosDisponibles.map((p) => (
+                  <option key={p.id} value={p.nombre}>
+                    {p.nombre}
+                  </option>
+                ))}
               </select>
             </label>
 
@@ -213,6 +298,7 @@ export default function Periodos({ onCargarTareo, onTareoDiario, onCalcular }: P
             <tr>
               <th>Periodo</th>
               <th>Tipo</th>
+              <th>Proyecto</th>
               <th>Desde</th>
               <th>Hasta</th>
               <th>Estado</th>
@@ -220,47 +306,117 @@ export default function Periodos({ onCargarTareo, onTareoDiario, onCalcular }: P
             </tr>
           </thead>
           <tbody>
-            {periodos.map((p) => (
-              <tr key={p.id}>
-                <td>{MESES[p.mes - 1]} {p.anio}</td>
-                <td>{p.tipo}</td>
-                <td>{p.fecha_inicio?.slice(0, 10)}</td>
-                <td>{p.fecha_fin?.slice(0, 10)}</td>
-                <td>{p.estado}</td>
-                <td style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {onCargarTareo && (
-                    <button className="primario" onClick={() => onCargarTareo(p)}>
-                      Cargar tareo
-                    </button>
-                  )}
-                  {onTareoDiario && (
-                    <button type="button" onClick={() => onTareoDiario(p)}>
-                      Tareo diario
-                    </button>
-                  )}
-                  {onCalcular && (
-                    <button type="button" onClick={() => onCalcular(p)}>
-                      Calcular
-                    </button>
-                  )}
-                  {p.estado === "CALCULADO" && (
-                    <>
-                      <a href={conToken(`${BASE_URL}/periodos/${p.id}/exportar/rem`)}>
-                        <button type="button">Descargar REM (PLAME)</button>
-                      </a>
-                      <a href={conToken(`${BASE_URL}/periodos/${p.id}/exportar/afpnet`)}>
-                        <button type="button">Descargar AFPnet (CSV)</button>
-                      </a>
-                    </>
-                  )}
-                  {p.estado === "ABIERTO" && (
-                    <button type="button" onClick={() => eliminarPeriodo(p)}>
-                      Eliminar
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
+            {periodos.map((p) => {
+              const enEdicion = editandoId === p.id;
+              const datosEdicion = edicion[p.id];
+              return (
+                <tr key={p.id}>
+                  <td>{MESES[p.mes - 1]} {p.anio}</td>
+                  <td>{p.tipo}</td>
+                  <td>
+                    {enEdicion && datosEdicion ? (
+                      <select
+                        value={datosEdicion.proyecto}
+                        onChange={(e) =>
+                          setEdicion((prev) => ({ ...prev, [p.id]: { ...prev[p.id], proyecto: e.target.value } }))
+                        }
+                      >
+                        {esAdmin && <option value="">Todos los proyectos (legado)</option>}
+                        {proyectosDisponibles.map((pr) => (
+                          <option key={pr.id} value={pr.nombre}>
+                            {pr.nombre}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      p.proyecto ?? "Todos los proyectos (legado)"
+                    )}
+                  </td>
+                  <td>
+                    {enEdicion && datosEdicion ? (
+                      <input
+                        type="date"
+                        value={datosEdicion.fecha_inicio}
+                        onChange={(e) =>
+                          setEdicion((prev) => ({ ...prev, [p.id]: { ...prev[p.id], fecha_inicio: e.target.value } }))
+                        }
+                      />
+                    ) : (
+                      p.fecha_inicio?.slice(0, 10)
+                    )}
+                  </td>
+                  <td>
+                    {enEdicion && datosEdicion ? (
+                      <input
+                        type="date"
+                        value={datosEdicion.fecha_fin}
+                        onChange={(e) =>
+                          setEdicion((prev) => ({ ...prev, [p.id]: { ...prev[p.id], fecha_fin: e.target.value } }))
+                        }
+                      />
+                    ) : (
+                      p.fecha_fin?.slice(0, 10)
+                    )}
+                  </td>
+                  <td>{p.estado}</td>
+                  <td style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {enEdicion ? (
+                      <>
+                        <button
+                          className="primario"
+                          type="button"
+                          onClick={() => guardarEdicion(p)}
+                          disabled={guardandoEdicionId === p.id}
+                        >
+                          {guardandoEdicionId === p.id ? "Guardando..." : "Guardar"}
+                        </button>
+                        <button type="button" onClick={cancelarEdicion} disabled={guardandoEdicionId === p.id}>
+                          Cancelar
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        {onCargarTareo && (
+                          <button className="primario" onClick={() => onCargarTareo(p)}>
+                            Cargar tareo
+                          </button>
+                        )}
+                        {onTareoDiario && (
+                          <button type="button" onClick={() => onTareoDiario(p)}>
+                            Tareo diario
+                          </button>
+                        )}
+                        {onCalcular && (
+                          <button type="button" onClick={() => onCalcular(p)}>
+                            Calcular
+                          </button>
+                        )}
+                        {p.estado === "CALCULADO" && (
+                          <>
+                            <a href={conToken(`${BASE_URL}/periodos/${p.id}/exportar/rem`)}>
+                              <button type="button">Descargar REM (PLAME)</button>
+                            </a>
+                            <a href={conToken(`${BASE_URL}/periodos/${p.id}/exportar/afpnet`)}>
+                              <button type="button">Descargar AFPnet (CSV)</button>
+                            </a>
+                          </>
+                        )}
+                        {p.estado === "ABIERTO" && (
+                          <>
+                            <button type="button" onClick={() => iniciarEdicion(p)}>
+                              Editar
+                            </button>
+                            <button type="button" onClick={() => eliminarPeriodo(p)}>
+                              Eliminar
+                            </button>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

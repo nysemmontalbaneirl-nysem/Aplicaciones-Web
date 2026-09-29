@@ -94,6 +94,10 @@ export interface PeriodoPlanilla {
   fecha_fin: string;
   dias_periodo: number;
   estado: "ABIERTO" | "CALCULADO" | "CERRADO" | "DECLARADO";
+  // Proyecto/obra al que pertenece este periodo (migracion_028, Ronda C).
+  // NULL = periodo legado/todos los proyectos (todos los periodos creados
+  // antes de esta migracion quedan asi, de forma permanente).
+  proyecto: string | null;
 }
 
 export interface TasasAFPFondo {

@@ -299,25 +299,34 @@ CREATE TABLE periodos_planilla (
     fecha_fin      DATE NOT NULL,
     dias_periodo   INT NOT NULL DEFAULT 30,
     estado         VARCHAR(20) NOT NULL DEFAULT 'ABIERTO', -- ABIERTO | CALCULADO | CERRADO | DECLARADO
+    -- Proyecto/obra al que pertenece este periodo (texto libre, igual que
+    -- contratos.proyecto - no es FK). NULL = periodo "legado/todos los
+    -- proyectos" (migracion_028, Ronda C): asi quedan TODOS los periodos
+    -- creados antes de esa migracion, de forma permanente. Los periodos
+    -- nuevos deben traer un proyecto salvo que el usuario sea ADMIN
+    -- (validado en routes/periodos.ts, no aqui).
+    proyecto       VARCHAR(150),
     creado_en      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Indice unico en vez de un UNIQUE de columnas: en Postgres dos NULL nunca
--- se consideran iguales, asi que un UNIQUE(anio,mes,quincena,tipo) normal
--- no evita crear dos periodos MENSUAL (quincena NULL) del mismo mes.
--- Parcial (WHERE tipo <> 'SEMANAL', migracion_018): solo tiene 3 huecos por
--- mes (mensual, Q1, Q2), asi que no alcanza para los periodos SEMANALES de
--- los obreros de jornal (puede haber varios por mes) - esos se controlan
--- con el indice de fechas de abajo en vez de con este.
+-- se consideran iguales, asi que un UNIQUE(anio,mes,quincena,tipo,proyecto)
+-- normal no evita crear dos periodos MENSUAL (quincena NULL, o proyecto
+-- NULL/legado) del mismo mes. Parcial (WHERE tipo <> 'SEMANAL',
+-- migracion_018): solo tiene 3 huecos por mes por proyecto (mensual, Q1,
+-- Q2), asi que no alcanza para los periodos SEMANALES de los obreros de
+-- jornal (puede haber varios por mes) - esos se controlan con el indice de
+-- fechas de abajo en vez de con este. COALESCE(proyecto,'') (migracion_028)
+-- permite que 2 proyectos distintos tengan periodos con las mismas fechas.
 CREATE UNIQUE INDEX periodos_planilla_periodo_unico
-    ON periodos_planilla (anio, mes, tipo, COALESCE(quincena, 0))
+    ON periodos_planilla (anio, mes, tipo, COALESCE(quincena, 0), COALESCE(proyecto, ''))
     WHERE tipo <> 'SEMANAL';
 
 -- Indice unico parcial para tipo = 'SEMANAL' (migracion_018): evita crear
--- dos veces el mismo rango exacto de fechas; no evita rangos superpuestos
--- entre proyectos distintos (los periodos siguen siendo globales).
+-- dos veces el mismo rango exacto de fechas PARA EL MISMO PROYECTO
+-- (migracion_028) - 2 proyectos distintos si pueden tener el mismo rango.
 CREATE UNIQUE INDEX periodos_planilla_semanal_unico
-    ON periodos_planilla (fecha_inicio, fecha_fin)
+    ON periodos_planilla (fecha_inicio, fecha_fin, COALESCE(proyecto, ''))
     WHERE tipo = 'SEMANAL';
 
 -- -------------------------------------------------------------------------

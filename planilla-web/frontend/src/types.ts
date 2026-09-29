@@ -168,6 +168,9 @@ export interface PeriodoPlanilla {
   fecha_fin: string;
   dias_periodo: number;
   estado: string;
+  // Proyecto/obra al que pertenece este periodo (Ronda C). null = periodo
+  // legado/todos los proyectos.
+  proyecto: string | null;
 }
 
 export interface DetalleAportePension {
