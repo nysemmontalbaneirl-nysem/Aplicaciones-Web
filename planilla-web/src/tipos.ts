@@ -47,6 +47,13 @@ export interface Empleado {
   ubigeo_departamento_codigo?: string | null;
   ubigeo_provincia_codigo?: string | null;
   ubigeo_distrito_codigo?: string | null;
+  // Firma escaneada (migracion 031) - el binario (firma_archivo) NUNCA
+  // viaja en este tipo/por JSON (ver COLUMNAS_EMPLEADO_SIN_FIRMA en
+  // routes/empleados.ts); solo su metadata y un booleano de presencia. La
+  // imagen misma se sirve por GET /api/empleados/:id/firma.
+  firma_mime?: string | null;
+  firma_nombre?: string | null;
+  tiene_firma?: boolean;
 }
 
 export interface Contrato {
@@ -317,4 +324,11 @@ export interface DatosEmpresa {
   representante_legal: string | null;
   telefono: string | null;
   correo: string | null;
+  // Logo de la empresa (migracion 031) - el binario (logo_archivo) NUNCA
+  // viaja en este tipo/por JSON (ver COLUMNAS_EMPRESA_SIN_LOGO en
+  // routes/empresa.ts); solo su metadata y un booleano de presencia. La
+  // imagen misma se sirve por GET /api/empresa/logo.
+  logo_mime?: string | null;
+  logo_nombre?: string | null;
+  tiene_logo?: boolean;
 }

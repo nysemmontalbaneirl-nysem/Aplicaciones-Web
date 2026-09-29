@@ -81,6 +81,13 @@ export interface Empleado {
   ubigeo_departamento_codigo?: string | null;
   ubigeo_provincia_codigo?: string | null;
   ubigeo_distrito_codigo?: string | null;
+  // Firma escaneada (migracion 031) - solo de referencia visual en la
+  // Boleta, no reemplaza el espacio de firma fisica. El binario nunca
+  // viaja por JSON, solo metadata + un booleano de presencia; la imagen se
+  // sirve por GET /api/empleados/:id/firma.
+  firma_mime?: string | null;
+  firma_nombre?: string | null;
+  tiene_firma?: boolean;
 }
 
 export interface Contrato {
@@ -192,6 +199,11 @@ export interface DetallePlanilla {
   sistema_pension: "AFP" | "ONP";
   afp_nombre: string | null;
   cuspp: string | null;
+  // Firma escaneada del trabajador (migracion 031) - solo un booleano de
+  // presencia (el binario nunca viaja en este listado); la imagen se sirve
+  // por GET /api/empleados/:id/firma, pero esta vista no trae empleado_id -
+  // se usa GET /api/contratos/:id/firma (resuelve el empleado internamente).
+  tiene_firma?: boolean;
   fecha_ingreso: string;
   // Solo si el trabajador ceso en algun momento (contratos.fecha_cese, no
   // necesariamente dentro de este periodo puntual) - se muestra en la
@@ -437,6 +449,12 @@ export interface DatosEmpresa {
   representante_legal: string | null;
   telefono: string | null;
   correo: string | null;
+  // Logo de la empresa (migracion 031) - el binario nunca viaja por JSON,
+  // solo metadata + un booleano de presencia; la imagen se sirve por
+  // GET /api/empresa/logo.
+  logo_mime?: string | null;
+  logo_nombre?: string | null;
+  tiene_logo?: boolean;
 }
 
 // Catalogo configurable de conceptos de planilla (pestana Configuracion),

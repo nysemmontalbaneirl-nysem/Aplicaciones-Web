@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { apiGet, apiPut } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { apiDelete, apiGet, apiPostArchivo, apiPut, BASE_URL, conToken } from "../api";
 import { DatosEmpresa } from "../types";
 
 const VACIO: Omit<DatosEmpresa, "id"> = {
@@ -21,14 +21,73 @@ export default function Empresa() {
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
+  // Logo de la empresa (migracion 031) - se sube/reemplaza/quita por
+  // separado del resto del formulario (mismo criterio que el certificado
+  // de Tareo Diario: una accion inmediata, no atada al boton "Guardar").
+  const [tieneLogo, setTieneLogo] = useState(false);
+  const [subiendoLogo, setSubiendoLogo] = useState(false);
+  const [logoVersion, setLogoVersion] = useState(0); // fuerza recargar el <img> tras subir/quitar
+  const inputLogoRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     apiGet<DatosEmpresa>("/empresa")
-      .then(({ id: _id, ...resto }) => setDatos(resto))
+      .then(({ id: _id, tiene_logo, ...resto }) => {
+        setDatos(resto);
+        setTieneLogo(!!tiene_logo);
+      })
       .catch(() => {
         // todavia no hay datos configurados, se queda con el formulario vacio
       });
   }, []);
+
+  function abrirSelectorLogo() {
+    setError(null);
+    setOk(null);
+    inputLogoRef.current?.click();
+  }
+
+  async function alSeleccionarLogo(e: React.ChangeEvent<HTMLInputElement>) {
+    const archivo = e.target.files?.[0];
+    e.target.value = ""; // permite volver a elegir el mismo archivo despues (ej. si fallo)
+    if (!archivo) return;
+
+    if (archivo.size > 5 * 1024 * 1024) {
+      setError("La imagen supera los 5 MB. Usa una foto normal en formato JPG/PNG o comprímela antes de subirla.");
+      return;
+    }
+
+    setSubiendoLogo(true);
+    setError(null);
+    setOk(null);
+    try {
+      const formData = new FormData();
+      formData.append("archivo", archivo);
+      await apiPostArchivo("/empresa/logo", formData);
+      setTieneLogo(true);
+      setLogoVersion((v) => v + 1);
+      setOk("Logo guardado correctamente. Aparecerá en la Boleta y en los reportes.");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSubiendoLogo(false);
+    }
+  }
+
+  async function quitarLogo() {
+    if (!confirm("¿Quitar el logo configurado? La Boleta y los reportes volverán a usar el logo por defecto.")) return;
+    setSubiendoLogo(true);
+    setError(null);
+    setOk(null);
+    try {
+      await apiDelete("/empresa/logo");
+      setTieneLogo(false);
+      setLogoVersion((v) => v + 1);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSubiendoLogo(false);
+    }
+  }
 
   function actualizar<K extends keyof typeof datos>(campo: K, valor: string) {
     setDatos((d) => ({ ...d, [campo]: valor }));
@@ -51,13 +110,51 @@ export default function Empresa() {
 
   return (
     <div>
+      {error && <div className="mensaje-error">{error}</div>}
+      {ok && <div className="mensaje-ok">{ok}</div>}
+
+      <div className="card">
+        <h2>Logo de la empresa</h2>
+        <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
+          Aparece en la Boleta de pago, en el resumen de planilla (Excel) y en el asiento contable (Excel). Formatos
+          admitidos: JPG, PNG o WEBP (máx. 5 MB) — para los reportes Excel solo JPG/PNG se pueden incrustar.
+        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          {tieneLogo ? (
+            <img
+              key={logoVersion}
+              src={conToken(`${BASE_URL}/empresa/logo?v=${logoVersion}`)}
+              alt="Logo de la empresa"
+              style={{ height: 70, maxWidth: 160, objectFit: "contain", border: "1px solid #e0e3ea", borderRadius: 6, padding: 4 }}
+            />
+          ) : (
+            <span style={{ color: "#8a90a0", fontSize: "0.85rem" }}>Todavía no se configuró ningún logo (se usa el logo por defecto).</span>
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" disabled={subiendoLogo} onClick={abrirSelectorLogo}>
+              {subiendoLogo ? "..." : tieneLogo ? "Reemplazar logo" : "Subir logo"}
+            </button>
+            {tieneLogo && (
+              <button type="button" disabled={subiendoLogo} onClick={quitarLogo}>
+                Quitar logo
+              </button>
+            )}
+          </div>
+          <input
+            ref={inputLogoRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            style={{ display: "none" }}
+            onChange={alSeleccionarLogo}
+          />
+        </div>
+      </div>
+
       <div className="card">
         <h2>Datos de la empresa</h2>
         <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
           Estos datos se usan como referencia del empleador para PLAME/T-Registro.
         </p>
-        {error && <div className="mensaje-error">{error}</div>}
-        {ok && <div className="mensaje-ok">{ok}</div>}
 
         <form onSubmit={guardar}>
           <div className="form-grid">

@@ -143,6 +143,14 @@ CREATE TABLE datos_empresa (
     representante_legal   VARCHAR(200),
     telefono              VARCHAR(30),
     correo                VARCHAR(150),
+    -- Logo de la empresa (migracion 031) - BYTEA en vez de archivo en el
+    -- filesystem, para que sobreviva a los despliegues (ver el comentario
+    -- de certificado_archivo mas abajo, mismo motivo). Se muestra en la
+    -- Boleta, el resumen Excel (reportes.ts) y el Excel del asiento
+    -- contable (exportaciones.ts).
+    logo_archivo          BYTEA,
+    logo_mime             VARCHAR(100),
+    logo_nombre           VARCHAR(200),
     actualizado_en        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -262,6 +270,13 @@ CREATE TABLE empleados (
     cuenta_bancaria     VARCHAR(100),
     discapacidad        BOOLEAN NOT NULL DEFAULT FALSE,
     estado              VARCHAR(20) NOT NULL DEFAULT 'ACTIVO', -- ACTIVO | INACTIVO
+    -- Firma escaneada del trabajador (migracion 031) - SOLO de referencia
+    -- visual en la Boleta, no reemplaza el espacio de firma fisica (que se
+    -- mantiene igual). Mismo patron BYTEA que certificado_archivo de
+    -- tareo_diario (sobrevive a los despliegues, ver esa tabla mas abajo).
+    firma_archivo       BYTEA,
+    firma_mime          VARCHAR(100),
+    firma_nombre        VARCHAR(200),
     creado_en           TIMESTAMPTZ NOT NULL DEFAULT now(),
     actualizado_en      TIMESTAMPTZ NOT NULL DEFAULT now()
 );

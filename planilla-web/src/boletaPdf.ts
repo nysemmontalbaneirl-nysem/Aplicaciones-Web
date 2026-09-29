@@ -82,6 +82,16 @@ export interface DetalleBoletaPdf {
 
   neto_pagar: number;
   detalle_json: { aporte_pension_detalle?: DetalleAportePension; total_aportes_empleador?: number };
+
+  // Firma escaneada del trabajador (migracion 031) - SOLO de referencia
+  // visual, no reemplaza el espacio de firma fisica que se dibuja siempre
+  // (confirmado con el usuario). pg devuelve BYTEA como Buffer nativo (no
+  // como texto, a diferencia de las columnas NUMERIC) asi que no hace
+  // falta ninguna conversion especial aqui. Ambos campos son opcionales
+  // porque no todas las consultas que arman DetalleBoletaPdf los traen
+  // (ver el JOIN agregado en routes/envios.ts y routes/planilla.ts).
+  firma_archivo?: Buffer | null;
+  firma_mime?: string | null;
 }
 
 interface Periodo {
@@ -139,7 +149,12 @@ export function camposHorasExtra(
 // (generarPdfBoleta) como para varias en un mismo PDF combinado
 // (generarPdfBoletas, ver mas abajo: llama doc.addPage() antes de cada
 // boleta salvo la primera).
-function dibujarBoleta(doc: InstanceType<typeof PDFDocument>, detalle: DetalleBoletaPdf, periodo: Periodo): void {
+function dibujarBoleta(
+  doc: InstanceType<typeof PDFDocument>,
+  detalle: DetalleBoletaPdf,
+  periodo: Periodo,
+  logoEmpresa?: Buffer | null
+): void {
   const aporte = detalle.detalle_json?.aporte_pension_detalle ?? {};
 
   const ingresos = sinCero([
@@ -203,6 +218,28 @@ function dibujarBoleta(doc: InstanceType<typeof PDFDocument>, detalle: DetalleBo
     doc.moveTo(xEtiqueta, doc.y).lineTo(xEtiqueta + anchoUtil, doc.y).strokeColor("#cccccc").stroke();
     doc.moveDown(0.2);
     fila(total.etiqueta, total.valor, true);
+  }
+
+  // Logo de la empresa (migracion 031, configurable desde la pantalla
+  // Empresa). NOTA (recon 5/46): el parche original modificaba un logo ya
+  // dibujado en posicion absoluta y centrada junto con el titulo,
+  // agregado por un parche anterior ("Ronda B, Parte 2") que todavia no
+  // se ha reconstruido en este punto (no existe RUTA_LOGO/fs.existsSync
+  // en este archivo) - se agrega aqui una version simplificada, sin el
+  // fallback al logo estatico (no hay archivo estatico de respaldo
+  // todavia) ni el centrado junto al titulo: solo dibuja el logo si el
+  // llamador lo resolvio desde la base de datos (logoEmpresa). Revisar/
+  // unificar con el bloque completo cuando llegue esa "Ronda B, Parte 2".
+  if (logoEmpresa) {
+    const anchoLogo = 45;
+    const yLogo = doc.y;
+    try {
+      doc.image(logoEmpresa, xEtiqueta, yLogo, { width: anchoLogo });
+      doc.y = yLogo + anchoLogo + 6;
+    } catch {
+      // Logo corrupto o formato no soportado - no debe romper la boleta.
+      doc.y = yLogo;
+    }
   }
 
   doc.font("Helvetica-Bold").fontSize(16).text("Boleta de pago", xEtiqueta);
@@ -271,16 +308,59 @@ function dibujarBoleta(doc: InstanceType<typeof PDFDocument>, detalle: DetalleBo
     .font("Helvetica-Bold")
     .fontSize(13)
     .text(`Neto a pagar: ${moneda(detalle.neto_pagar)}`, xEtiqueta, doc.y, { width: anchoUtil, align: "right" });
+
+  dibujarFirma(doc, detalle, xEtiqueta, anchoUtil);
+}
+
+// Espacio de firma al pie de la boleta (migracion 031). El espacio para la
+// firma FISICA del trabajador se dibuja SIEMPRE (una linea en blanco) - la
+// firma escaneada guardada en Trabajadores es puramente una referencia
+// visual de apoyo (confirmado explicitamente con el usuario: no reemplaza
+// la firma fisica ni el mecanismo de entrega ya existente por correo), asi
+// que se dibuja pequeña, encima de esa misma linea, solo si esta
+// disponible - nunca en su lugar.
+function dibujarFirma(doc: InstanceType<typeof PDFDocument>, detalle: DetalleBoletaPdf, xEtiqueta: number, anchoUtil: number): void {
+  const anchoFirma = 160;
+  const xFirma = xEtiqueta + anchoUtil - anchoFirma;
+  doc.moveDown(2.2);
+  const yLinea = doc.y;
+
+  if (detalle.firma_archivo) {
+    const altoImagenFirma = 28;
+    try {
+      doc.image(detalle.firma_archivo, xFirma + (anchoFirma - 70) / 2, yLinea - altoImagenFirma - 2, {
+        width: 70,
+        height: altoImagenFirma,
+      });
+    } catch {
+      // Imagen corrupta o formato no soportado - no debe romper la
+      // generacion de la boleta, simplemente se omite (el espacio de
+      // firma fisica igual se dibuja debajo).
+    }
+  }
+
+  doc.moveTo(xFirma, yLinea).lineTo(xFirma + anchoFirma, yLinea).strokeColor("#000000").stroke();
+  doc
+    .font("Helvetica")
+    .fontSize(7.5)
+    .fillColor("#5a6172")
+    .text("Firma del trabajador", xFirma, yLinea + 2, { width: anchoFirma, align: "center" });
+  if (detalle.firma_archivo) {
+    doc.text("(firma registrada - solo referencial)", xFirma, yLinea + 11, { width: anchoFirma, align: "center" });
+  }
+  doc.fillColor("#000000");
 }
 
 // Genera el PDF de UNA sola boleta (usado para el envio por correo,
-// routes/envios.ts).
-export async function generarPdfBoleta(detalle: DetalleBoletaPdf, periodo: Periodo): Promise<Buffer> {
+// routes/envios.ts). logoEmpresa (migracion 031) es opcional - el llamador
+// lo resuelve una sola vez con obtenerLogoEmpresa() (routes/empresa.ts) y
+// lo pasa aqui; si se omite, dibujarBoleta cae al logo estatico de siempre.
+export async function generarPdfBoleta(detalle: DetalleBoletaPdf, periodo: Periodo, logoEmpresa?: Buffer | null): Promise<Buffer> {
   const doc = new PDFDocument({ margin: 45, size: "A4" });
   const trozos: Buffer[] = [];
   doc.on("data", (trozo: Buffer) => trozos.push(trozo));
   const listo = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(trozos))));
-  dibujarBoleta(doc, detalle, periodo);
+  dibujarBoleta(doc, detalle, periodo, logoEmpresa);
   doc.end();
   return listo;
 }
@@ -292,14 +372,14 @@ export async function generarPdfBoleta(detalle: DetalleBoletaPdf, periodo: Perio
 // soporta documentos de varias paginas de forma nativa, asi que solo hace
 // falta doc.addPage() antes de cada boleta salvo la primera (el
 // constructor ya crea la primera pagina).
-export async function generarPdfBoletas(filas: DetalleBoletaPdf[], periodo: Periodo): Promise<Buffer> {
+export async function generarPdfBoletas(filas: DetalleBoletaPdf[], periodo: Periodo, logoEmpresa?: Buffer | null): Promise<Buffer> {
   const doc = new PDFDocument({ margin: 45, size: "A4" });
   const trozos: Buffer[] = [];
   doc.on("data", (trozo: Buffer) => trozos.push(trozo));
   const listo = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(trozos))));
   filas.forEach((fila, indice) => {
     if (indice > 0) doc.addPage();
-    dibujarBoleta(doc, fila, periodo);
+    dibujarBoleta(doc, fila, periodo, logoEmpresa);
   });
   doc.end();
   return listo;
@@ -316,7 +396,7 @@ export async function generarPdfBoletas(filas: DetalleBoletaPdf[], periodo: Peri
 // que ya usan el resto de descargas de este archivo/proyecto (Excel, PDF
 // resumen), asi un error a mitad de camino (ej. una boleta que falla)
 // nunca deja una respuesta HTTP a medio enviar con headers ya fijados.
-export async function generarZipBoletas(filas: DetalleBoletaPdf[], periodo: Periodo): Promise<Buffer> {
+export async function generarZipBoletas(filas: DetalleBoletaPdf[], periodo: Periodo, logoEmpresa?: Buffer | null): Promise<Buffer> {
   const archivo = archiver("zip", { zlib: { level: 9 } });
   const trozos: Buffer[] = [];
   archivo.on("data", (trozo: Buffer) => trozos.push(trozo));
@@ -325,7 +405,7 @@ export async function generarZipBoletas(filas: DetalleBoletaPdf[], periodo: Peri
     archivo.on("error", (err) => reject(err));
   });
   for (const fila of filas) {
-    const pdf = await generarPdfBoleta(fila, periodo);
+    const pdf = await generarPdfBoleta(fila, periodo, logoEmpresa);
     const nombreArchivo = `Boleta_${MESES[periodo.mes - 1]}_${periodo.anio}_${fila.numero_documento}.pdf`;
     archivo.append(pdf, { name: nombreArchivo });
   }

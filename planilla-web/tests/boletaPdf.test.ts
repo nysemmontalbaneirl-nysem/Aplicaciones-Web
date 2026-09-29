@@ -54,11 +54,39 @@ const DETALLE_BASE: DetalleBoletaPdf = {
   detalle_json: { aporte_pension_detalle: { onp: 308.29 }, total_aportes_empleador: 273.0 },
 };
 
+// PNG minimo de 1x1 pixel (mismo que usan las pruebas de certificado/logo/
+// firma) - suficiente para que pdfkit lo procese como una imagen real.
+const PNG_1X1 = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64"
+);
+
 describe("generarPdfBoleta", () => {
   it("genera un PDF valido cuando fecha_ingreso es un objeto Date real (como lo devuelve pg)", async () => {
     const pdf = await generarPdfBoleta(DETALLE_BASE, { anio: 2026, mes: 2 });
     expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
     expect(pdf.length).toBeGreaterThan(500);
+  });
+
+  // Migracion 031: logo de la empresa (configurable) + firma escaneada del
+  // trabajador (referencial). Ninguno de los 2 es obligatorio - se prueba
+  // que el PDF se sigue generando bien con y sin ellos.
+  it("genera un PDF valido con un logo de empresa configurado (Buffer, no el archivo estatico)", async () => {
+    const pdf = await generarPdfBoleta(DETALLE_BASE, { anio: 2026, mes: 2 }, PNG_1X1);
+    expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+  });
+
+  it("genera un PDF valido con la firma escaneada del trabajador (referencial)", async () => {
+    const pdf = await generarPdfBoleta({ ...DETALLE_BASE, firma_archivo: PNG_1X1, firma_mime: "image/png" }, { anio: 2026, mes: 2 });
+    expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+  });
+
+  it("no explota si firma_archivo llega con bytes invalidos (imagen corrupta) - se omite sin romper la boleta", async () => {
+    const pdf = await generarPdfBoleta(
+      { ...DETALLE_BASE, firma_archivo: Buffer.from("no es una imagen valida"), firma_mime: "image/png" },
+      { anio: 2026, mes: 2 }
+    );
+    expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
   });
 
   it("tambien funciona si fecha_ingreso ya viene como texto (caso del frontend)", async () => {

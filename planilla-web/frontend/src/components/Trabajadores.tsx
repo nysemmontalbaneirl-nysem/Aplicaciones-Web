@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiGet, apiPost, apiPut, BASE_URL, conToken, ErrorApi } from "../api";
+import { apiDelete, apiGet, apiPost, apiPostArchivo, apiPut, BASE_URL, conToken, ErrorApi } from "../api";
 import { CategoriaOcupacional, Catalogos, CatalogoItem, Contrato, Empleado, Proyecto } from "../types";
 
 // Crea un contrato; si el trabajador ya tiene otro contrato HABIL, el
@@ -173,6 +173,16 @@ export default function Trabajadores() {
   const formularioRef = useRef<HTMLDivElement>(null);
   const buscadorRef = useRef<HTMLInputElement>(null);
 
+  // Firma escaneada del trabajador (migracion 031) - solo tiene sentido si
+  // el empleado ya existe (editar/reingreso); en "Nuevo trabajador" todavia
+  // no hay id de empleado para subirla. Puramente referencial en la Boleta,
+  // no reemplaza la firma fisica.
+  const [tieneFirma, setTieneFirma] = useState(false);
+  const [subiendoFirma, setSubiendoFirma] = useState(false);
+  const [firmaVersion, setFirmaVersion] = useState(0);
+  const inputFirmaRef = useRef<HTMLInputElement>(null);
+  const empleadoIdActual = contratoEnEdicion?.empleado_id ?? reingresoEmpleadoId ?? null;
+
   // Dar de baja necesita pedir fecha Y motivo (T17) - un solo window.prompt
   // ya no alcanza, asi que se muestra un mini-formulario inline en vez de
   // agregarle un segundo prompt encadenado (mala experiencia de uso).
@@ -246,6 +256,7 @@ export default function Trabajadores() {
     setContratoEnEdicion(null);
     setReingresoEmpleadoId(null);
     setForm(estadoVacio);
+    setTieneFirma(false);
     setError(null);
     setOk(null);
     setMostrarFormulario(true);
@@ -303,6 +314,7 @@ export default function Trabajadores() {
     try {
       const empleado = await apiGet<Empleado>(`/empleados/${contrato.empleado_id}`);
       setContratoEnEdicion(contrato);
+      setTieneFirma(!!empleado.tiene_firma);
       setForm({
         tipo_documento: empleado.tipo_documento ?? "01",
         numero_documento: empleado.numero_documento,
@@ -363,9 +375,60 @@ export default function Trabajadores() {
     setContratoEnEdicion(null);
     setReingresoEmpleadoId(null);
     setForm(estadoVacio);
+    setTieneFirma(false);
     setError(null);
     setOk(null);
     setMostrarFormulario(false);
+  }
+
+  function abrirSelectorFirma() {
+    setError(null);
+    setOk(null);
+    inputFirmaRef.current?.click();
+  }
+
+  async function alSeleccionarFirma(e: React.ChangeEvent<HTMLInputElement>) {
+    const archivo = e.target.files?.[0];
+    e.target.value = "";
+    if (!archivo || !empleadoIdActual) return;
+
+    if (archivo.size > 5 * 1024 * 1024) {
+      setError("La imagen supera los 5 MB. Usa una foto normal en formato JPG/PNG o comprímela antes de subirla.");
+      return;
+    }
+
+    setSubiendoFirma(true);
+    setError(null);
+    setOk(null);
+    try {
+      const formData = new FormData();
+      formData.append("archivo", archivo);
+      await apiPostArchivo(`/empleados/${empleadoIdActual}/firma`, formData);
+      setTieneFirma(true);
+      setFirmaVersion((v) => v + 1);
+      setOk("Firma guardada correctamente (aparecerá como referencia en la Boleta).");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSubiendoFirma(false);
+    }
+  }
+
+  async function quitarFirma() {
+    if (!empleadoIdActual) return;
+    if (!confirm("¿Quitar la firma escaneada de este trabajador?")) return;
+    setSubiendoFirma(true);
+    setError(null);
+    setOk(null);
+    try {
+      await apiDelete(`/empleados/${empleadoIdActual}/firma`);
+      setTieneFirma(false);
+      setFirmaVersion((v) => v + 1);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSubiendoFirma(false);
+    }
   }
 
   async function verHistorial(empleadoId: number, nombre: string) {
@@ -407,6 +470,7 @@ export default function Trabajadores() {
       const empleado = await apiGet<Empleado>(`/empleados/${contrato.empleado_id}`);
       setContratoEnEdicion(null);
       setReingresoEmpleadoId(contrato.empleado_id);
+      setTieneFirma(!!empleado.tiene_firma);
       setForm({
         tipo_documento: empleado.tipo_documento ?? "01",
         numero_documento: empleado.numero_documento,
@@ -833,6 +897,48 @@ export default function Trabajadores() {
               />
             </label>
           </div>
+
+          <h3 className="seccion-titulo">Firma del trabajador</h3>
+          {empleadoIdActual ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 18 }}>
+              {tieneFirma ? (
+                <img
+                  key={firmaVersion}
+                  src={conToken(`${BASE_URL}/empleados/${empleadoIdActual}/firma?v=${firmaVersion}`)}
+                  alt="Firma del trabajador"
+                  style={{ height: 50, maxWidth: 160, objectFit: "contain", border: "1px solid #e0e3ea", borderRadius: 6, padding: 4, background: "#fff" }}
+                />
+              ) : (
+                <span style={{ color: "#8a90a0", fontSize: "0.85rem" }}>
+                  Todavía no se subió la firma escaneada de este trabajador.
+                </span>
+              )}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" disabled={subiendoFirma} onClick={abrirSelectorFirma}>
+                  {subiendoFirma ? "..." : tieneFirma ? "Reemplazar firma" : "Subir firma"}
+                </button>
+                {tieneFirma && (
+                  <button type="button" disabled={subiendoFirma} onClick={quitarFirma}>
+                    Quitar
+                  </button>
+                )}
+              </div>
+              <input
+                ref={inputFirmaRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                style={{ display: "none" }}
+                onChange={alSeleccionarFirma}
+              />
+            </div>
+          ) : (
+            <p style={{ color: "#8a90a0", fontSize: "0.85rem", marginBottom: 18 }}>
+              Guarda primero al trabajador para poder subir su firma escaneada.
+            </p>
+          )}
+          <p style={{ color: "#5a6172", fontSize: "0.8rem", marginTop: -12, marginBottom: 18 }}>
+            Solo de referencia visual en la Boleta (JPG/PNG/WEBP, máx. 5 MB) — no reemplaza el espacio de firma física.
+          </p>
 
           <h3 className="seccion-titulo">Datos laborales</h3>
           <div className="form-grid">

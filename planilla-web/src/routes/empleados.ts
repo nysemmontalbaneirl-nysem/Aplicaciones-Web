@@ -11,8 +11,25 @@ import {
   validarNumeroDocumento,
   validarSexo,
 } from "../validaciones";
+import { uploadImagen, manejarErrorMulterImagen } from "./imagenesUpload";
 
 export const empleadosRouter = Router();
+
+// Columnas de empleados SIN firma_archivo (BYTEA) - se usa en todas las
+// consultas que devuelven el registro completo (GET /, GET /:id, y el
+// RETURNING de POST/PUT), para que la firma escaneada nunca viaje entera
+// por JSON salvo por su propia ruta (GET /:id/firma, mas abajo). Mismo
+// criterio que COLUMNAS_EMPRESA_SIN_LOGO en routes/empresa.ts.
+const COLUMNAS_EMPLEADO_SIN_FIRMA = `
+  id, tipo_documento, numero_documento, apellidos_nombres, fecha_nacimiento,
+  grado_instruccion, numero_hijos, celular, correo, direccion, ubigeo,
+  entidad_bancaria, cuenta_bancaria, estado, creado_en, actualizado_en,
+  sexo, estado_civil, nacionalidad_codigo, pais_emisor_documento_codigo,
+  grado_instruccion_codigo, entidad_bancaria_codigo, discapacidad,
+  segunda_direccion, direccion_essalud,
+  ubigeo_departamento_codigo, ubigeo_provincia_codigo, ubigeo_distrito_codigo,
+  firma_mime, firma_nombre, (firma_archivo IS NOT NULL) AS tiene_firma
+`;
 
 // entidad_bancaria, grado_instruccion y ubigeo (texto libre, historicos) se
 // mantienen sincronizados automaticamente con el nombre oficial del
@@ -42,20 +59,99 @@ async function componerUbigeoTexto(
 
 empleadosRouter.get("/", asyncHandler(async (_req: Request, res: Response) => {
   const resultado = await pool.query(
-    "SELECT * FROM empleados ORDER BY apellidos_nombres ASC"
+    `SELECT ${COLUMNAS_EMPLEADO_SIN_FIRMA} FROM empleados ORDER BY apellidos_nombres ASC`
   );
   res.json(resultado.rows);
 }));
 
 empleadosRouter.get("/:id", asyncHandler(async (req: Request, res: Response) => {
-  const resultado = await pool.query("SELECT * FROM empleados WHERE id = $1", [
-    req.params.id,
-  ]);
+  const resultado = await pool.query(
+    `SELECT ${COLUMNAS_EMPLEADO_SIN_FIRMA} FROM empleados WHERE id = $1`,
+    [req.params.id]
+  );
   if (resultado.rowCount === 0) {
     return res.status(404).json({ error: "Empleado no encontrado" });
   }
   res.json(resultado.rows[0]);
 }));
+
+// Trae la firma (buffer + mime) de un empleado, o null si todavia no subio
+// ninguna - se reutiliza desde boletaPdf (via una consulta batch propia en
+// envios.ts/routes/planilla.ts, ver ahi) y desde esta misma ruta GET.
+async function obtenerFirmaEmpleado(id: string): Promise<{ buffer: Buffer; mime: string } | null> {
+  const r = await pool.query(
+    "SELECT firma_archivo, firma_mime FROM empleados WHERE id = $1 AND firma_archivo IS NOT NULL",
+    [id]
+  );
+  if (r.rowCount === 0) return null;
+  return { buffer: r.rows[0].firma_archivo as Buffer, mime: r.rows[0].firma_mime as string };
+}
+
+// POST /api/empleados/:id/firma (multipart, campo "archivo") - sube o
+// reemplaza la firma escaneada de un trabajador ya existente. Puramente
+// referencial (confirmado con el usuario): no reemplaza el espacio de
+// firma fisica que se mantiene en la boleta.
+empleadosRouter.post(
+  "/:id/firma",
+  requierePermiso("empleados.gestionar"),
+  uploadImagen.single("archivo"),
+  manejarErrorMulterImagen,
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.file) {
+      return res.status(400).json({
+        error: "Falta la imagen o el formato no es válido (debe ser JPG, PNG o WEBP)",
+      });
+    }
+    const resultado = await pool.query(
+      `UPDATE empleados
+       SET firma_archivo = $1, firma_mime = $2, firma_nombre = $3, actualizado_en = now()
+       WHERE id = $4
+       RETURNING id`,
+      [req.file.buffer, req.file.mimetype, req.file.originalname.slice(0, 200), req.params.id]
+    );
+    if (resultado.rowCount === 0) {
+      return res.status(404).json({ error: "Empleado no encontrado" });
+    }
+    res.status(204).send();
+  })
+);
+
+// GET /api/empleados/:id/firma -> la imagen misma (no JSON), para <img
+// src=...> en Trabajadores y en la Boleta. Acepta el token por query
+// (?token=, ver authMiddleware) porque un <img> normal no puede mandar el
+// header Authorization.
+empleadosRouter.get(
+  "/:id/firma",
+  asyncHandler(async (req: Request, res: Response) => {
+    const firma = await obtenerFirmaEmpleado(req.params.id);
+    if (!firma) {
+      return res.status(404).json({ error: "Este trabajador no tiene firma registrada" });
+    }
+    res.setHeader("Content-Type", firma.mime || "application/octet-stream");
+    res.setHeader("Content-Disposition", 'inline; filename="firma"');
+    res.send(firma.buffer);
+  })
+);
+
+// DELETE /api/empleados/:id/firma -> quita la firma guardada (para poder
+// subir otra).
+empleadosRouter.delete(
+  "/:id/firma",
+  requierePermiso("empleados.gestionar"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const resultado = await pool.query(
+      `UPDATE empleados
+       SET firma_archivo = NULL, firma_mime = NULL, firma_nombre = NULL, actualizado_en = now()
+       WHERE id = $1 AND firma_archivo IS NOT NULL
+       RETURNING id`,
+      [req.params.id]
+    );
+    if (resultado.rowCount === 0) {
+      return res.status(404).json({ error: "Este trabajador no tiene firma registrada" });
+    }
+    res.status(204).send();
+  })
+);
 
 empleadosRouter.post("/", requierePermiso("empleados.gestionar"), asyncHandler(async (req: Request, res: Response) => {
   try {
@@ -89,7 +185,7 @@ empleadosRouter.post("/", requierePermiso("empleados.gestionar"), asyncHandler(a
          segunda_direccion, direccion_essalud,
          ubigeo_departamento_codigo, ubigeo_provincia_codigo, ubigeo_distrito_codigo)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
-       RETURNING *`,
+       RETURNING ${COLUMNAS_EMPLEADO_SIN_FIRMA}`,
       [
         b.tipo_documento ?? "1",
         numero_documento,
@@ -161,7 +257,7 @@ empleadosRouter.put("/:id", requierePermiso("empleados.gestionar"), asyncHandler
         segunda_direccion = $19, direccion_essalud = $20,
         ubigeo_departamento_codigo = $21, ubigeo_provincia_codigo = $22, ubigeo_distrito_codigo = $23
        WHERE id = $24
-       RETURNING *`,
+       RETURNING ${COLUMNAS_EMPLEADO_SIN_FIRMA}`,
       [
         apellidos_nombres,
         b.fecha_nacimiento ?? null,

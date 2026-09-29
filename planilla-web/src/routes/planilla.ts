@@ -13,6 +13,7 @@ import { ErrorValidacion } from "../validaciones";
 import { registrarBitacora } from "../bitacora";
 import { generarPdfTabla } from "../pdfTabla";
 import { DetalleBoletaPdf, generarPdfBoletas, generarZipBoletas } from "../boletaPdf";
+import { obtenerLogoEmpresa } from "./empresa";
 
 export const planillaRouter = Router();
 
@@ -102,7 +103,8 @@ async function obtenerDetallePeriodo(periodoId: string, q: string | undefined, u
   const resultado = await pool.query(
     `SELECT d.*, e.apellidos_nombres, e.numero_documento, e.numero_hijos,
             c.proyecto, c.categoria_ocupacional, c.sistema_pension, c.afp_nombre,
-            c.cuspp, c.fecha_ingreso, c.fecha_cese
+            c.cuspp, c.fecha_ingreso, c.fecha_cese,
+            (e.firma_archivo IS NOT NULL) AS tiene_firma
      FROM detalle_planilla d
      JOIN contratos c ON c.id = d.contrato_id
      JOIN empleados e ON e.id = c.empleado_id
@@ -111,6 +113,25 @@ async function obtenerDetallePeriodo(periodoId: string, q: string | undefined, u
     valores
   );
   return { periodo, detalle: resultado.rows };
+}
+
+// Adjunta firma_archivo/firma_mime a cada fila (por contrato_id -> empleado)
+// SOLO para las filas que efectivamente se van a convertir en PDF (boletas/
+// pdf, boletas/zip) - migracion 031. No se agrega a obtenerDetallePeriodo
+// de arriba porque esa funcion tambien alimenta /planilla, /planilla/excel
+// y /planilla/pdf (el resumen tabular), que no necesitan la imagen y no
+// deben cargarla en cada listado.
+async function agregarFirmasBatch<T extends { contrato_id: number }>(filas: T[]): Promise<T[]> {
+  if (filas.length === 0) return filas;
+  const contratoIds = filas.map((f) => f.contrato_id);
+  const r = await pool.query(
+    `SELECT c.id AS contrato_id, e.firma_archivo, e.firma_mime
+     FROM contratos c JOIN empleados e ON e.id = c.empleado_id
+     WHERE c.id = ANY($1::int[])`,
+    [contratoIds]
+  );
+  const porContrato = new Map(r.rows.map((row) => [row.contrato_id, row]));
+  return filas.map((fila) => ({ ...fila, ...(porContrato.get(fila.contrato_id) ?? {}) }));
 }
 
 function aportesEmpleadorDe(fila: Record<string, unknown>): number {
@@ -283,12 +304,14 @@ planillaRouter.get(
     if (!datos) return res.status(404).json({ error: "Periodo no encontrado" });
     const { periodo, detalle } = datos;
 
-    const filas = filtrarPorIds(detalle, req.query.ids as string | undefined);
+    let filas = filtrarPorIds(detalle, req.query.ids as string | undefined);
     if (filas.length === 0) {
       return res.status(400).json({ error: "No hay boletas para exportar (revisa la seleccion o el periodo)" });
     }
+    filas = await agregarFirmasBatch(filas);
+    const logo = await obtenerLogoEmpresa();
 
-    const buffer = await generarPdfBoletas(filas as unknown as DetalleBoletaPdf[], periodo);
+    const buffer = await generarPdfBoletas(filas as unknown as DetalleBoletaPdf[], periodo, logo?.buffer ?? null);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="boletas_${periodo.mes}_${periodo.anio}.pdf"`);
     res.send(buffer);
@@ -309,12 +332,14 @@ planillaRouter.get(
     if (!datos) return res.status(404).json({ error: "Periodo no encontrado" });
     const { periodo, detalle } = datos;
 
-    const filas = filtrarPorIds(detalle, req.query.ids as string | undefined);
+    let filas = filtrarPorIds(detalle, req.query.ids as string | undefined);
     if (filas.length === 0) {
       return res.status(400).json({ error: "No hay boletas para exportar (revisa la seleccion o el periodo)" });
     }
+    filas = await agregarFirmasBatch(filas);
+    const logo = await obtenerLogoEmpresa();
 
-    const buffer = await generarZipBoletas(filas as unknown as DetalleBoletaPdf[], periodo);
+    const buffer = await generarZipBoletas(filas as unknown as DetalleBoletaPdf[], periodo, logo?.buffer ?? null);
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="boletas_${periodo.mes}_${periodo.anio}.zip"`);
     res.send(buffer);

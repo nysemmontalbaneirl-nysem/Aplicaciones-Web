@@ -1,4 +1,6 @@
 import { DetallePlanilla, PeriodoPlanilla, esConstruccionCivil } from "../types";
+import { BASE_URL, conToken } from "../api";
+import logoJhcr from "../assets/logo-jhcr.jpg";
 
 interface Props {
   detalle: DetallePlanilla;
@@ -152,6 +154,18 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles }:
             </button>
           </div>
         )}
+        <img
+          // Logo de la empresa (migracion 031): se pide al backend, que
+          // sirve el logo configurado en la pantalla Empresa; si todavia no
+          // se configuro ninguno (404) o falla la carga, se cae al logo
+          // estatico de siempre (onError) en vez de dejar el espacio vacio.
+          src={conToken(`${BASE_URL}/empresa/logo`)}
+          onError={(e) => {
+            if (e.currentTarget.src !== logoJhcr) e.currentTarget.src = logoJhcr;
+          }}
+          alt="Logo de la empresa"
+          style={{ width: 52, height: 52, objectFit: "contain", display: "block", margin: "0 auto 8px" }}
+        />
       </div>
 
       <table style={{ marginTop: 16, marginBottom: 16 }}>
@@ -262,6 +276,30 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles }:
         }}
       >
         Neto a pagar: {moneda(detalle.neto_pagar)}
+      </div>
+
+      {/* Espacio de firma (migracion 031) - la linea en blanco para la
+          firma FISICA se dibuja siempre (confirmado con el usuario: no se
+          reemplaza). La firma escaneada guardada en Trabajadores es
+          puramente una referencia visual de apoyo, dibujada encima de esa
+          misma linea solo si el trabajador tiene una. */}
+      <div style={{ marginTop: 36, display: "flex", justifyContent: "flex-end" }}>
+        <div style={{ width: 180, textAlign: "center" as const }}>
+          {detalle.tiene_firma && (
+            <img
+              src={conToken(`${BASE_URL}/contratos/${detalle.contrato_id}/firma`)}
+              alt="Firma del trabajador"
+              style={{ height: 40, maxWidth: 160, objectFit: "contain", display: "block", margin: "0 auto" }}
+              onError={(e) => {
+                e.currentTarget.style.display = "none";
+              }}
+            />
+          )}
+          <div style={{ borderTop: "1px solid #000", marginTop: 4, paddingTop: 2, fontSize: "0.75rem", color: "#5a6172" }}>
+            Firma del trabajador
+            {detalle.tiene_firma && <div>(firma registrada - solo referencial)</div>}
+          </div>
+        </div>
       </div>
     </div>
   );

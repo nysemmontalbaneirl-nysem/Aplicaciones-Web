@@ -4,6 +4,8 @@ import { asyncHandler } from "../asyncHandler";
 import { requierePermiso } from "../authMiddleware";
 import { pool } from "../db";
 import { esConstruccionCivil } from "../motorCalculo";
+import { obtenerLogoEmpresa } from "./empresa";
+import { insertarLogoEnHoja } from "../reportesLogo";
 
 export const reportesRouter = Router();
 
@@ -202,6 +204,7 @@ reportesRouter.get(
 
     const workbook = new ExcelJS.Workbook();
     const hoja = workbook.addWorksheet(`Resumen ${periodo.mes}-${periodo.anio}`);
+    insertarLogoEnHoja(workbook, hoja, await obtenerLogoEmpresa());
     hoja.addRow([...COLUMNAS]);
     hoja.getRow(1).font = { bold: true };
     hoja.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: COLUMNAS.length } };

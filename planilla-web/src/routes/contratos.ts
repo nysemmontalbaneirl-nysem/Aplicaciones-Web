@@ -478,3 +478,31 @@ contratosRouter.post("/:id/anular-cese", requierePermiso("contratos.gestionar"),
   });
   res.json(resultado.rows[0]);
 }));
+
+// GET /api/contratos/:id/firma -> la firma escaneada del EMPLEADO dueño de
+// este contrato (migracion 031), resuelta por contrato_id porque la Boleta
+// en pantalla (frontend/Boleta.tsx) solo conoce el contrato_id, no el
+// empleado_id (el listado de boletas no lo trae, ver DetallePlanilla en
+// types.ts). Solo de referencia visual - no reemplaza el espacio de firma
+// fisica. Acepta el token por query (?token=) para <img src=...>.
+contratosRouter.get(
+  "/:id/firma",
+  asyncHandler(async (req: Request, res: Response) => {
+    const r = await pool.query(
+      `SELECT e.firma_archivo, e.firma_mime, c.proyecto
+       FROM contratos c JOIN empleados e ON e.id = c.empleado_id
+       WHERE c.id = $1`,
+      [req.params.id]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: "El contrato no existe" });
+    if (!tieneAccesoProyecto(req.usuario!, r.rows[0].proyecto)) {
+      return res.status(403).json({ error: "No tienes acceso a ese proyecto" });
+    }
+    if (!r.rows[0].firma_archivo) {
+      return res.status(404).json({ error: "Este trabajador no tiene firma registrada" });
+    }
+    res.setHeader("Content-Type", r.rows[0].firma_mime || "application/octet-stream");
+    res.setHeader("Content-Disposition", 'inline; filename="firma"');
+    res.send(r.rows[0].firma_archivo);
+  })
+);
