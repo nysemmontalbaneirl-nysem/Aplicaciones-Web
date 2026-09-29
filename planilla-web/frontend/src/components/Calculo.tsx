@@ -31,6 +31,9 @@ interface AvisoRegimen {
   mensaje: string;
 }
 
+// Ronda 4 ("piso de EsSalud mensual"): mismo shape que AvisoRegimen.
+type AvisoEssalud = AvisoRegimen;
+
 export default function Calculo({ periodo, onVerBoletas }: Props) {
   const [cantidadTareo, setCantidadTareo] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,12 +42,14 @@ export default function Calculo({ periodo, onVerBoletas }: Props) {
   const [erroresCalculo, setErroresCalculo] = useState<ErrorCalculo[]>([]);
   const [avisosSubsidio, setAvisosSubsidio] = useState<AvisoSubsidio[]>([]);
   const [avisosRegimen, setAvisosRegimen] = useState<AvisoRegimen[]>([]);
+  const [avisosEssalud, setAvisosEssalud] = useState<AvisoEssalud[]>([]);
 
   useEffect(() => {
     setResultado(null);
     setErroresCalculo([]);
     setAvisosSubsidio([]);
     setAvisosRegimen([]);
+    setAvisosEssalud([]);
     setError(null);
     apiGet<{ tareo: AsistenciaTareo[] }>(`/periodos/${periodo.id}/tareo`)
       .then((d) => setCantidadTareo(d.tareo.length))
@@ -56,6 +61,7 @@ export default function Calculo({ periodo, onVerBoletas }: Props) {
     setErroresCalculo([]);
     setAvisosSubsidio([]);
     setAvisosRegimen([]);
+    setAvisosEssalud([]);
     setCalculando(true);
     try {
       const respuesta = await apiPost<{
@@ -63,11 +69,13 @@ export default function Calculo({ periodo, onVerBoletas }: Props) {
         errores: ErrorCalculo[];
         avisos_subsidio: AvisoSubsidio[];
         avisos_regimen: AvisoRegimen[];
+        avisos_essalud: AvisoEssalud[];
       }>(`/periodos/${periodo.id}/calcular`, {});
       setResultado({ trabajadores_calculados: respuesta.trabajadores_calculados });
       setErroresCalculo(respuesta.errores ?? []);
       setAvisosSubsidio(respuesta.avisos_subsidio ?? []);
       setAvisosRegimen(respuesta.avisos_regimen ?? []);
+      setAvisosEssalud(respuesta.avisos_essalud ?? []);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -192,6 +200,34 @@ export default function Calculo({ periodo, onVerBoletas }: Props) {
               </thead>
               <tbody>
                 {avisosRegimen.map((a) => (
+                  <tr key={a.contrato_id}>
+                    <td>{a.dni}</td>
+                    <td>{a.nombre}</td>
+                    <td>{a.mensaje}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+        {avisosEssalud.length > 0 && (
+          <>
+            <h3>Ajuste automatico del piso de EsSalud ({avisosEssalud.length})</h3>
+            <div className="mensaje-advertencia" style={{ marginBottom: 12 }}>
+              El aporte de EsSalud de este mes no llegaba al piso legal (9% de la RMV), y el sistema
+              trasladó el ajuste a otro periodo de este mismo mes que ya estaba calculado. No hace
+              falta ninguna accion — es solo informativo.
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>DNI</th>
+                  <th>Trabajador</th>
+                  <th>Aviso</th>
+                </tr>
+              </thead>
+              <tbody>
+                {avisosEssalud.map((a) => (
                   <tr key={a.contrato_id}>
                     <td>{a.dni}</td>
                     <td>{a.nombre}</td>

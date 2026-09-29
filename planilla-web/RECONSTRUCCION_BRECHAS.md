@@ -1130,3 +1130,108 @@ recuperado, así que no hay nada pendiente de aplicar de ese lado.
 
 Verificado: `tsc --noEmit` limpio (backend y frontend). 367/367 tests
 (365 previos + 2 nuevos de `tests/periodos_por_proyecto.test.ts`).
+
+## 24. Parche #40/46 (`70fa1e7c`, "Planilla: piso legal de EsSalud mensual (Ronda 4) + RMV mensual") — reconstrucción grande de un piso legal con corrección en cascada; nueva brecha en `Parametros.tsx` (sub-menu de secciones que ningún parche construye), resuelta apilando la sección en vez de inventar el sub-menu
+
+**Estado: aplicado completo y verificado.**
+
+Parche grande (14 archivos): migración `044` (tabla `rmv_mensual` + columna
+`essalud_base` en `detalle_planilla` y `detalle_planilla_mensual`),
+funciones puras nuevas en `motorCalculo.ts`
+(`calcularPisoEssaludMensual`/`calcularAjustePisoEssaludMensual`), la
+reconciliación real en `routes/planilla.ts`
+(`ajustarPisoEssaludDelMes`) y su equivalente directo (sin cascada) en
+`planillaMensual.ts`, CRUD de `rmv_mensual` en `routes/parametros.ts`,
+UI nueva en `Parametros.tsx` (`SeccionRmvMensual`) y aviso informativo en
+`Calculo.tsx` (`avisos_essalud`).
+
+**Regla de negocio** (confirmada con el usuario, ver comentario completo
+en `tipos.ts`/`motorCalculo.ts`): el aporte a EsSalud (9% de la
+remuneración afecta) no puede ser menor, en un mes calendario, al 9% de
+la RMV vigente ese mes — pero el sistema paga por quincena/semana. Se
+guarda `essalud_base` (el 9% SIN ajustar) además de `essalud` (el monto
+final, ya ajustado si correspondió) para poder recalcular el acumulado
+del mes sin arrastrar un ajuste ya aplicado antes. Si la suma de
+`essalud_base` de los períodos ya calculados de un mes no llega al piso,
+la diferencia se acredita en el período cronológicamente más reciente de
+ese conjunto; si luego se recalcula un período anterior, la función
+decide de nuevo desde cero cuál es el período más reciente y corrige en
+cascada cualquier otro período ya calculado cuyo `essalud` cambie.
+
+**Patrón de "éxito parcial de hunks" (recurrente, ver secciones
+anteriores), 2 instancias más esta vez:**
+
+- `src/tipos.ts`: un bug de "interfaz equivocada" — `patch` aplicó el
+  comentario completo + campo `essalud_base` en `DetallePlanillaMensual`
+  en vez de `DetallePlanilla` (ambas interfaces terminan con la misma
+  secuencia de campos, ver sección de `tipos.ts` en parches previos con
+  el mismo patrón). Corregido a mano: comentario completo + campo en
+  `DetallePlanilla`, comentario corto de referencia + campo en
+  `DetallePlanillaMensual`.
+- `src/routes/planilla.ts`: 4 de 10 hunks fallaron en cascada (imports
+  faltantes, un parámetro implícitamente `any` en `cliente.query(...)`
+  dentro de una función ya aplicada, la declaración de `avisosEssalud`
+  faltante mientras su lógica de uso ya estaba aplicada, y el campo
+  `avisos_essalud` faltante en la respuesta JSON final) — mismo patrón ya
+  documentado en secciones previas: se completó cada pieza faltante
+  usando el propio contenido del parche.
+- `src/routes/planilla.ts` y `src/planillaMensual.ts`: el mismo desajuste
+  de conteo de columnas SQL ya visto en parches anteriores — el arreglo
+  JS de `VALUES` ya traía `essalud_base`/`d.essalud_base` como último
+  ítem (de un hunk ya aplicado), pero la lista de columnas y los
+  placeholders del `INSERT` no llegaban a incluirlo. Se corrigió contando
+  a mano los ítems reales del arreglo (46 en ambos archivos, no los 50/51
+  que asumía el parche original, que asume columnas de la brecha #4 que
+  este árbol no tiene) y ajustando la lista de columnas + rango de
+  placeholders para que coincidan exactamente.
+
+**Brecha nueva descubierta: `frontend/src/components/Parametros.tsx`
+asume un sub-menu de secciones que ningún parche de los 46 construye.**
+El parche extiende `type SeccionParametros = "anual" | "mensual"` a
+`"anual" | "mensual" | "rmv"`, y dos hunks (la extensión del tipo/menú y
+la rama de render `{seccion === "rmv" && <SeccionRmvMensual />}`)
+asumían que la pantalla YA tenía un sub-menu que muestra una sección a la
+vez (mismo patrón que las pestañas de Configuración, brecha #12) — pero
+nuestro árbol actual sigue con el patrón original y más simple: ambas
+secciones (`SeccionAnual`/`SeccionMensual`) se renderizan siempre,
+apiladas, sin ningún `useState<SeccionParametros>` ni botones de menú.
+Se confirmó por grep en los 46 parches que `SeccionParametros` solo
+aparece mencionado en ESTE parche — el que originalmente convirtió
+`Parametros.tsx` al patrón de sub-menu (igual que pasó con las pestañas
+de Configuración, brecha #12) no llegó como ninguno de los 46
+recuperados. A diferencia del caso de `condicionesContratos` (sección
+23), aquí el diff NO trae el sub-menu completo como contexto — solo
+fragmentos discontinuos (la extensión del tipo, y una sola línea de JSX
+dentro de un bloque de render mucho más grande que el hunk ni siquiera
+toca) — es decir, es una referencia de caja negra, no un bloque completo
+reconstruible sin inventar. Consistente con el criterio ya establecido
+(brecha #1, brecha #12): no se fabricó el sub-menu desde cero. En vez de
+eso, se adaptó la integración al patrón que el árbol SÍ tiene hoy: se
+agregó `<SeccionRmvMensual />` apilada junto a las otras 2 secciones
+existentes (el componente `SeccionRmvMensual` en sí — la función
+completa con su propio estado, formulario y tabla — SÍ se aplicó limpio
+desde el propio parche, ya que es 100% autocontenida y no depende de
+ninguna brecha). El resultado es funcionalmente equivalente para el
+usuario (la sección de RMV mensual es accesible y funciona igual),
+simplemente sin el sub-menu de una-sección-a-la-vez que el parche
+original asumía. Documentado con nota `NOTA (recon 40/46)` en el propio
+archivo.
+
+**`tests/dominical_proporcional.test.ts`**: el hunk de este parche (un
+"ancla" — crear un período posterior del mismo mes para que el período
+bajo prueba nunca sea "el último del mes" y así no reciba el ajuste de
+piso, lo que enmascararía la comparación que la prueba necesita) no se
+aplicó porque el archivo completo no existe en este árbol — consistente
+con la brecha #4/#15 ya conocida (no es una brecha nueva; se revisó el
+diff completo del hunk y es solo ese ajuste puntual sobre una prueba que
+de por sí no existe aquí).
+
+**`src/routes/vacaciones.ts`**: tocado por el parche solo porque
+`ResultadoCalculoLinea`/`DetallePlanilla` ahora requieren el campo
+`essalud_base`, pero este archivo solo lee `detalle.essalud` (no
+inserta ninguna columna `essalud_base` en `goces_vacacionales`, tabla
+que no participa del piso mensual) — sin cambios necesarios más allá de
+lo que ya aplicó limpio.
+
+Verificado: `tsc --noEmit` limpio (backend y frontend). 379/379 tests
+(367 previos + 12 nuevos de `tests/essalud_piso_mensual.test.ts`).

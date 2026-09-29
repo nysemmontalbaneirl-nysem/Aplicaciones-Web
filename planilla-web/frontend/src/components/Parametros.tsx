@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { apiGet, apiPost, apiPut } from "../api";
-import { ParametrosMensuales, ParametrosNormativos, PeriodoMensual } from "../types";
+import { apiDelete, apiGet, apiPost, apiPut } from "../api";
+import { ParametrosMensuales, ParametrosNormativos, PeriodoMensual, RmvMensual } from "../types";
 
 const AFPS = ["INTEGRA", "PRIMA", "PROFUTURO", "HABITAT"];
 const CATEGORIAS_CONSTRUCCION = ["OPERARIO", "OFICIAL", "PEON", "OPERARIO_EP", "OPERARIO_EM", "OPERARIO_TP"];
@@ -49,10 +49,20 @@ function aFraccion(porcentajeTexto: string): number {
 }
 
 export default function Parametros() {
+  // NOTA (recon 40/46): el parche original de esta ronda asume que esta
+  // pantalla ya tiene un sub-menu de una sola seccion a la vez (tipo
+  // SeccionParametros = "anual" | "mensual", extendido aqui a "rmv") "mismo
+  // patron ya usado en Configuracion" - pero ese sub-menu NUNCA fue
+  // reconstruido en este arbol (los 46 parches no lo definen en ningun
+  // lado buscando "SeccionParametros"; es la misma brecha de fondo que la
+  // de las pestañas de Configuracion, ver RECONSTRUCCION_BRECHAS.md punto
+  // 12). En vez de inventar ese sub-menu desde cero, se agrega la nueva
+  // seccion apilada, igual que las 2 secciones existentes.
   return (
     <div>
       <SeccionAnual />
       <SeccionMensual />
+      <SeccionRmvMensual />
     </div>
   );
 }
@@ -457,6 +467,135 @@ function SeccionMensual() {
           </button>
         </>
       )}
+    </div>
+  );
+}
+
+// ==========================================================================
+// RMV mensual (migracion_044, Ronda 4 "piso de EsSalud mensual"): override
+// puntual de la RMV para un mes especifico. Un mes SIN override aqui sigue
+// usando el valor anual configurado en "Valores anuales" - por eso esta
+// pantalla solo lista/edita las excepciones, no los 12 meses de cada año.
+// ==========================================================================
+function SeccionRmvMensual() {
+  const hoy = new Date();
+  const [lista, setLista] = useState<RmvMensual[]>([]);
+  const [anio, setAnio] = useState(hoy.getFullYear());
+  const [mes, setMes] = useState(hoy.getMonth() + 1);
+  const [valor, setValor] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
+  const [guardando, setGuardando] = useState(false);
+
+  async function cargar() {
+    const datos = await apiGet<RmvMensual[]>("/parametros/rmv-mensual");
+    setLista(datos);
+  }
+
+  useEffect(() => {
+    cargar().catch((e) => setError((e as Error).message));
+  }, []);
+
+  async function guardar() {
+    setError(null);
+    setOk(null);
+    const numero = Number(valor);
+    if (!Number.isFinite(numero) || numero <= 0) {
+      setError("Ingresa un monto de RMV valido, mayor a 0.");
+      return;
+    }
+    setGuardando(true);
+    try {
+      await apiPut(`/parametros/rmv-mensual/${anio}/${mes}`, { remuneracion_minima_vital: numero });
+      setOk(`RMV de ${MESES[mes - 1]} ${anio} guardada: S/ ${numero.toFixed(2)}.`);
+      setValor("");
+      await cargar();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  async function quitar(fila: RmvMensual) {
+    setError(null);
+    setOk(null);
+    if (!window.confirm(`¿Quitar el override de ${MESES[fila.mes - 1]} ${fila.anio}? Ese mes volvera a usar el valor anual.`)) {
+      return;
+    }
+    try {
+      await apiDelete(`/parametros/rmv-mensual/${fila.anio}/${fila.mes}`);
+      await cargar();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2 className="titulo-reporte">RMV mensual (para el piso de EsSalud)</h2>
+      <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
+        La Remuneracion Minima Vital (RMV) normalmente se configura una vez al año, en "Valores
+        anuales". Usa esta pantalla SOLO si el gobierno la modifica a mitad de año: agrega aqui el
+        mes exacto desde el que cambia, y ese mes (y los siguientes que agregues) usaran este valor
+        en vez del anual, tanto para el piso de EsSalud como para la Asignacion Familiar. Un mes que
+        no aparece en la lista de abajo sigue usando el valor anual normalmente.
+      </p>
+
+      {error && <div className="mensaje-error">{error}</div>}
+      {ok && <div className="mensaje-ok">{ok}</div>}
+
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 16 }}>
+        <label>
+          Año
+          <input type="number" value={anio} onChange={(e) => setAnio(Number(e.target.value) || hoy.getFullYear())} style={{ width: 90 }} />
+        </label>
+        <label>
+          Mes
+          <select value={mes} onChange={(e) => setMes(Number(e.target.value))}>
+            {MESES.map((nombre, i) => (
+              <option key={nombre} value={i + 1}>{nombre}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          RMV (S/.) desde ese mes
+          <input type="number" step="0.01" value={valor} onChange={(e) => setValor(e.target.value)} placeholder="ej. 1130.00" />
+        </label>
+        <button className="primario" onClick={guardar} disabled={guardando}>
+          {guardando ? "Guardando..." : "Guardar override"}
+        </button>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Mes</th>
+            <th>Año</th>
+            <th>RMV configurada</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {lista.length === 0 && (
+            <tr>
+              <td colSpan={4} style={{ color: "#5a6172" }}>
+                No hay ningun override configurado - todos los meses usan el valor anual.
+              </td>
+            </tr>
+          )}
+          {lista.map((f) => (
+            <tr key={`${f.anio}-${f.mes}`}>
+              <td>{MESES[f.mes - 1]}</td>
+              <td>{f.anio}</td>
+              <td>S/ {f.remuneracion_minima_vital.toFixed(2)}</td>
+              <td>
+                <button className="secundario" onClick={() => quitar(f)}>Quitar</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

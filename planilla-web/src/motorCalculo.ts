@@ -215,7 +215,12 @@ export function sumarResultadosLinea(resultados: ResultadoCalculoLinea[]): Resul
     conafovicer: sumar("conafovicer"),
     renta_5ta: sumar("renta_5ta"),
     otros_descuentos: sumar("otros_descuentos"),
+    // Ronda 4: cada tramo trae essalud === essalud_base (el motor nunca
+    // aplica el piso el solo, ver calcularLineaPlanilla) - se suman ambos
+    // igual, el ajuste de piso mensual se recalcula despues, sobre el
+    // periodo YA sumado, en routes/planilla.ts.
     essalud: sumar("essalud"),
+    essalud_base: sumar("essalud_base"),
     sctr: sumar("sctr"),
     senati: sumar("senati"),
   };
@@ -329,7 +334,7 @@ export function sumarResultadosLinea(resultados: ResultadoCalculoLinea[]): Resul
   };
 }
 
-function redondear(valor: number): number {
+export function redondear(valor: number): number {
   return Math.round(valor * 100) / 100;
 }
 
@@ -889,6 +894,71 @@ export function calcularEssalud(
   return redondear(remuneracionAfecta * parametros.tasa_essalud);
 }
 
+/** Piso legal mensual de EsSalud: 9% (parametros.tasa_essalud) de la RMV vigente ese mes. */
+export function calcularPisoEssaludMensual(parametros: ParametrosNormativos): number {
+  return redondear(Number(parametros.remuneracion_minima_vital) * Number(parametros.tasa_essalud));
+}
+
+/**
+ * Ronda 4 ("piso de EsSalud mensual"), migracion_044.
+ *
+ * El aporte a EsSalud (9% de la remuneracion afecta) no puede ser menor,
+ * en un mes calendario, al 9% de la RMV vigente ese mes - pero el sistema
+ * paga por quincena/semana, no por mes, asi que ese piso solo se puede
+ * verificar sumando TODOS los periodos de pago de un mismo contrato que
+ * caen en el mismo mes calendario (identificados por el propio
+ * periodos_planilla.anio/mes - el mismo "mes" que ya usa el resto del
+ * sistema para resolver la tabla salarial/tasas AFP de un periodo que NO
+ * cruza de mes; ver el comentario de agrupacion en
+ * ajustarPisoEssaludDelMes en routes/planilla.ts).
+ *
+ * Regla de negocio confirmada con el usuario (sept. 2026): si la suma de
+ * essalud_base (el 9% SIN ajustar) de los periodos YA CALCULADOS de ese mes
+ * no llega al piso, la diferencia completa se acredita en el periodo
+ * CRONOLOGICAMENTE MAS RECIENTE (mayor fecha_fin) de ese conjunto - los
+ * demas quedan con su aporte real, sin ajustar. Si mas tarde se recalcula
+ * un periodo despues de que otro (cronologicamente posterior) ya habia
+ * absorbido el ajuste, esta funcion decide de nuevo desde cero cual es el
+ * periodo mas reciente del conjunto ya calculado - es responsabilidad de
+ * quien llama (ajustarPisoEssaludDelMes) volver a escribir TODOS los
+ * periodos del conjunto con el resultado de esta funcion, en cascada, para
+ * que el ajuste quede siempre en el periodo correcto sin importar el orden
+ * en que el usuario recalcule cada uno.
+ *
+ * Si no hubo ningun aporte base en el mes (essalud_base = 0 en todos, ej.
+ * el contrato no trabajo nada ese mes), no se fuerza el piso: no se le
+ * puede exigir un aporte minimo a alguien que no genero remuneracion
+ * afecta ese mes.
+ */
+export function calcularAjustePisoEssaludMensual(
+  periodos: { periodoId: number; essaludBase: number; fechaFin: string }[],
+  pisoMensual: number
+): Map<number, number> {
+  const resultado = new Map<number, number>();
+  if (periodos.length === 0) return resultado;
+  const sumaBase = redondear(periodos.reduce((acc, p) => acc + Number(p.essaludBase), 0));
+  if (sumaBase <= 0 || sumaBase >= pisoMensual) {
+    for (const p of periodos) resultado.set(p.periodoId, redondear(Number(p.essaludBase)));
+    return resultado;
+  }
+  // Empate de fecha_fin (deberia ser rarisimo - 2 periodos del mismo mes y
+  // contrato no deberian compartir fecha_fin): desempata por periodoId mas
+  // alto (el creado/calculado mas reciente), solo para que el resultado sea
+  // deterministico.
+  const ordenados = [...periodos].sort((a, b) =>
+    a.fechaFin < b.fechaFin ? -1 : a.fechaFin > b.fechaFin ? 1 : a.periodoId - b.periodoId
+  );
+  const ultimo = ordenados[ordenados.length - 1];
+  const ajuste = redondear(pisoMensual - sumaBase);
+  for (const p of ordenados) {
+    resultado.set(
+      p.periodoId,
+      p.periodoId === ultimo.periodoId ? redondear(Number(p.essaludBase) + ajuste) : redondear(Number(p.essaludBase))
+    );
+  }
+  return resultado;
+}
+
 /** SCTR salud - solo si el contrato lo tiene activado y es categoria de riesgo. */
 export function calcularSCTR(
   contrato: Contrato,
@@ -1143,6 +1213,7 @@ function calcularLineaEventual(contrato: Contrato, asistencia: AsistenciaEntrada
       otros_descuentos: 0,
       total_descuentos: 0,
       essalud: 0,
+      essalud_base: 0,
       sctr: 0,
       senati: 0,
       neto_pagar: montoPactado,
@@ -1576,7 +1647,14 @@ export function calcularLineaPlanilla(
       renta_5ta: renta5ta,
       otros_descuentos: otrosDescuentos,
       total_descuentos: totalDescuentos,
+      // Ronda 4: aqui SIEMPRE se guarda el 9% "puro" (sin piso). El ajuste
+      // de piso mensual (si corresponde) lo aplica routes/planilla.ts
+      // DESPUES de este calculo, comparando contra los demas periodos del
+      // mismo mes calendario del mismo contrato - este motor no conoce esos
+      // otros periodos, asi que essalud = essalud_base siempre a la salida
+      // de esta funcion.
       essalud,
+      essalud_base: essalud,
       sctr,
       senati,
       neto_pagar: netoPagar,

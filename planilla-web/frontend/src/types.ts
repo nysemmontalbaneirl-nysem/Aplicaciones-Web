@@ -52,6 +52,15 @@ export interface PeriodoMensual {
   mes: number;
 }
 
+// migracion_044 (Ronda 4, "piso de EsSalud mensual"): override puntual de la
+// RMV para un mes especifico. Un mes sin fila aqui usa el valor anual de
+// ParametrosNormativos.remuneracion_minima_vital.
+export interface RmvMensual {
+  anio: number;
+  mes: number;
+  remuneracion_minima_vital: number;
+}
+
 export interface Empleado {
   id: number;
   tipo_documento: string;

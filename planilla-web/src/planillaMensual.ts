@@ -66,7 +66,7 @@
 // =========================================================================
 
 import { pool } from "./db";
-import { calcularLineaPlanilla, esConstruccionCivil, ResultadoCalculoLinea } from "./motorCalculo";
+import { calcularLineaPlanilla, calcularPisoEssaludMensual, esConstruccionCivil, ResultadoCalculoLinea } from "./motorCalculo";
 import { obtenerConceptos } from "./routes/conceptos";
 import {
   agregarConceptosPersonalizadosBatch,
@@ -279,7 +279,7 @@ export async function consolidarPlanillaMensual(
   const lineas: { contrato: FilaContratoConsolidacion; resultado: ResultadoCalculoLinea }[] = [];
 
   if (contratoIds.length > 0) {
-    const parametros: ParametrosNormativos = await obtenerParametros(anio);
+    const parametros: ParametrosNormativos = await obtenerParametros(anio, mes);
     const tablaCategorias: TablaSalarialMensual = await obtenerTablaCategorias(anio, mes);
     const afpTasas: TasasAFPMensuales = await obtenerAfpTasas(anio, mes);
     const conceptos = await obtenerConceptos();
@@ -333,6 +333,22 @@ export async function consolidarPlanillaMensual(
           conceptos,
           "MENSUAL"
         );
+        // Ronda 4 ("piso de EsSalud mensual"): a diferencia de las boletas
+        // por periodo de pago (detalle_planilla), aqui NO hace falta
+        // acumular entre varios periodos - esta consolidacion YA calcula el
+        // mes completo en una sola pasada (ver cabecera del archivo), asi
+        // que essalud_base de este resultado ES el aporte del mes entero.
+        // Si no llega al piso legal (y hubo remuneracion afecta ese mes),
+        // se ajusta directamente aqui, sin cascada (no hay otros periodos
+        // con los que reconciliar).
+        const pisoMensual = calcularPisoEssaludMensual(parametros);
+        const essaludBase = Number(resultado.detalle.essalud_base);
+        if (essaludBase > 0 && essaludBase < pisoMensual) {
+          const detalleJson = resultado.detalle.detalle_json as { total_aportes_empleador?: number };
+          const totalAnterior = Number(detalleJson.total_aportes_empleador ?? 0);
+          resultado.detalle.essalud = pisoMensual;
+          detalleJson.total_aportes_empleador = redondear(totalAnterior - essaludBase + pisoMensual);
+        }
         lineas.push({ contrato, resultado });
       } catch (e) {
         errores.push({
@@ -382,10 +398,10 @@ export async function consolidarPlanillaMensual(
            subsidio_enfermedad, licencia_paternidad, otras_bonificaciones, gratificacion, bonificacion_extraordinaria,
            cts, vacaciones, total_ingresos, aporte_pension, descuento_sindicato, seguro_vida, conafovicer, renta_5ta,
            otros_descuentos, total_descuentos, essalud, sctr, senati, neto_pagar, detalle_json,
-           dias_incapacidad_enfermedad, incapacidad_enfermedad
+           dias_incapacidad_enfermedad, incapacidad_enfermedad, essalud_base
          ) VALUES (
            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
-           $23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45
+           $23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46
          )
          RETURNING id`,
         [
@@ -434,6 +450,7 @@ export async function consolidarPlanillaMensual(
           JSON.stringify(d.detalle_json ?? {}),
           d.dias_incapacidad_enfermedad,
           d.incapacidad_enfermedad,
+          d.essalud_base,
         ]
       );
       const detalleId = r.rows[0].id;

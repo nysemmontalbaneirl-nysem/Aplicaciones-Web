@@ -331,7 +331,16 @@ export interface DetallePlanilla {
   otros_descuentos: number;
   total_descuentos: number;
 
+  // Ronda 4 (migracion_044, "piso de EsSalud mensual"): "essalud" es el
+  // aporte FINAL, ya con el ajuste de piso mensual aplicado si
+  // correspondio; "essalud_base" es el 9% de la remuneracion afecta SIN
+  // ajustar. Se guardan ambos porque el ajuste de un periodo depende de
+  // los demas periodos del MISMO mes calendario del mismo contrato (ver
+  // calcularAjustePisoEssaludMensual en motorCalculo.ts / ajustarPisoEssaludDelMes
+  // en routes/planilla.ts) - sin essalud_base no se podria recalcular el
+  // acumulado del mes sin arrastrar un ajuste ya aplicado antes.
   essalud: number;
+  essalud_base: number;
   sctr: number;
   senati: number;
 
@@ -412,7 +421,9 @@ export interface DetallePlanillaMensual {
   otros_descuentos: number;
   total_descuentos: number;
 
+  // Ver el comentario completo junto a estos 2 campos en DetallePlanilla.
   essalud: number;
+  essalud_base: number;
   sctr: number;
   senati: number;
 

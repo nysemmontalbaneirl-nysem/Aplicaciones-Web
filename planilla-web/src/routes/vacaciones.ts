@@ -344,7 +344,7 @@ vacacionesRouter.post(
       // vacaciones (separada de la planilla mensual, segun lo pedido).
       const anio = inicio.getUTCFullYear();
       const mes = inicio.getUTCMonth() + 1;
-      const parametros = await obtenerParametros(anio);
+      const parametros = await obtenerParametros(anio, mes);
       const afpTasas =
         contrato.sistema_pension === "AFP" ? await obtenerAfpTasas(anio, mes) : ({} as TasasAFPMensuales);
       const conceptos = await obtenerConceptos();

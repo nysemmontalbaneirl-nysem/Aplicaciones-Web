@@ -207,6 +207,21 @@ CREATE TABLE tabla_salarial_mensual (
     UNIQUE (anio, mes, categoria)
 );
 
+-- RMV de frecuencia MENSUAL (migracion_044, Ronda 4 "piso de EsSalud
+-- mensual"): un mes sin fila aqui sigue usando el valor anual de
+-- parametros_normativos.remuneracion_minima_vital (ver obtenerParametros en
+-- routes/planilla.ts). Permite que, si el gobierno modifica la RMV a mitad
+-- de año, el piso de EsSalud y la Asignacion Familiar (que tambien depende
+-- de la RMV) queden correctos mes a mes sin esperar a un cambio anual.
+CREATE TABLE rmv_mensual (
+    id                        SERIAL PRIMARY KEY,
+    anio                      INT NOT NULL,
+    mes                       INT NOT NULL CHECK (mes BETWEEN 1 AND 12),
+    remuneracion_minima_vital NUMERIC(10,2) NOT NULL,
+    actualizado_en            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (anio, mes)
+);
+
 -- -------------------------------------------------------------------------
 -- Catalogos oficiales SUNAT (Anexo 2, T-Registro) - ver migracion_016 para
 -- el detalle de la fuente y las decisiones de diseño. Son de solo lectura
@@ -531,7 +546,12 @@ CREATE TABLE detalle_planilla (
     total_descuentos         NUMERIC(10,2) NOT NULL DEFAULT 0,
 
     -- aportes del empleador (informativo, no se descuenta al trabajador)
+    -- migracion_044: "essalud" es el monto FINAL (ya con el ajuste de piso
+    -- mensual si correspondio); "essalud_base" es el 9% sin ajustar, usado
+    -- para poder recalcular el acumulado del mes sin arrastrar un ajuste
+    -- anterior (ver calcularAjustePisoEssaludMensual en motorCalculo.ts).
     essalud                NUMERIC(10,2) NOT NULL DEFAULT 0,
+    essalud_base           NUMERIC(10,2) NOT NULL DEFAULT 0,
     sctr                   NUMERIC(10,2) NOT NULL DEFAULT 0,
     senati                 NUMERIC(10,2) NOT NULL DEFAULT 0,
 
@@ -783,7 +803,9 @@ CREATE TABLE detalle_planilla_mensual (
     otros_descuentos       NUMERIC(10,2) NOT NULL DEFAULT 0,
     total_descuentos       NUMERIC(10,2) NOT NULL DEFAULT 0,
 
+    -- migracion_044: ver el comentario completo junto a estas 2 columnas en detalle_planilla.
     essalud                NUMERIC(10,2) NOT NULL DEFAULT 0,
+    essalud_base           NUMERIC(10,2) NOT NULL DEFAULT 0,
     sctr                   NUMERIC(10,2) NOT NULL DEFAULT 0,
     senati                 NUMERIC(10,2) NOT NULL DEFAULT 0,
 

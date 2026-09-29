@@ -6,14 +6,18 @@ import { asyncHandler } from "../asyncHandler";
 import { requierePermiso } from "../authMiddleware";
 import { pool } from "../db";
 import {
+  calcularAjustePisoEssaludMensual,
   calcularLineaPlanilla,
+  calcularPisoEssaludMensual,
   calcularTramosMes,
   diasEntreFechas,
   esConstruccionCivil,
   periodoCruzaMes,
+  redondear,
   ResultadoCalculoLinea,
   sumarResultadosLinea,
 } from "../motorCalculo";
+import { PoolClient } from "pg";
 import { obtenerConceptos } from "./conceptos";
 import { tieneAccesoProyecto } from "../permisos";
 import { AsistenciaEntrada, Contrato, ParametrosNormativos, TablaSalarialMensual, TasasAFPMensuales } from "../tipos";
@@ -37,12 +41,103 @@ async function obtenerPeriodo(periodoId: string) {
   return r.rows[0] ?? null;
 }
 
-export async function obtenerParametros(anio: number): Promise<ParametrosNormativos> {
+// migracion_044 (Ronda 4, "piso de EsSalud mensual"): la RMV puede tener un
+// valor propio para un mes especifico (tabla rmv_mensual), pensado para
+// cuando el gobierno la modifica a mitad de año. Si el mes pedido no tiene
+// fila en rmv_mensual, se usa el valor anual de parametros_normativos tal
+// cual (comportamiento identico al de antes de esta migracion - por eso
+// "mes" es obligatorio pero no requiere sembrar nada para que todo lo
+// existente siga funcionando igual). Se resuelve aqui, en un solo lugar,
+// para que TODO lo que use la RMV (piso de EsSalud, Asignacion Familiar)
+// quede correcto automaticamente para el mes que corresponda.
+export async function obtenerParametros(anio: number, mes: number): Promise<ParametrosNormativos> {
   const r = await pool.query("SELECT * FROM parametros_normativos WHERE anio = $1", [anio]);
   if (r.rowCount === 0) {
     throw new ErrorValidacion(`No hay parametros_normativos configurados para el anio ${anio}`);
   }
-  return r.rows[0] as ParametrosNormativos;
+  const parametros = r.rows[0] as ParametrosNormativos;
+  const rmvMes = await pool.query(
+    "SELECT remuneracion_minima_vital FROM rmv_mensual WHERE anio = $1 AND mes = $2",
+    [anio, mes]
+  );
+  if (rmvMes.rowCount) {
+    parametros.remuneracion_minima_vital = Number(rmvMes.rows[0].remuneracion_minima_vital);
+  }
+  return parametros;
+}
+
+/**
+ * Ronda 4 ("piso de EsSalud mensual"), migracion_044.
+ *
+ * Se llama justo despues de guardar detalle_planilla de UN periodo (dentro
+ * de la misma transaccion/SAVEPOINT del trabajador en /calcular). Reune
+ * TODOS los periodos de pago ya calculados de ese mismo contrato que caen
+ * en el mismo mes calendario - agrupando por periodos_planilla.anio/mes (la
+ * misma etiqueta que ya usa el resto del sistema para resolver la tabla
+ * salarial de un periodo que no cruza de mes; una quincena que cruza de mes
+ * sigue etiquetada con el mes de su fecha_inicio, igual que siempre - no se
+ * vuelve a partir por dias aqui, seria la Opcion A del piso de EsSalud que
+ * no se implemento) -, recalcula la distribucion correcta con
+ * calcularAjustePisoEssaludMensual, y actualiza en la base de datos
+ * CUALQUIER periodo de ese conjunto cuyo essalud final haya cambiado -
+ * incluido, si corresponde, uno DISTINTO al que se acaba de calcular (esto
+ * es lo que produce la correccion en cascada: si se recalcula una quincena
+ * anterior despues de que una posterior ya tenia el ajuste, la posterior se
+ * corrige sola aqui, sin que el usuario tenga que reabrirla a mano).
+ *
+ * Solo toca la columna essalud y detalle_json.total_aportes_empleador (por
+ * delta, para no tener que conocer el resto de las bases de ese periodo) -
+ * nunca recalcula el resto de una boleta ajena a la que se esta calculando.
+ */
+async function ajustarPisoEssaludDelMes(
+  cliente: PoolClient,
+  contratoId: number,
+  anio: number,
+  mes: number,
+  parametrosDelMes: ParametrosNormativos
+): Promise<{ periodoId: number; essaludAnterior: number; essaludNuevo: number }[]> {
+  const pisoMensual = calcularPisoEssaludMensual(parametrosDelMes);
+  const filas = await cliente.query<{
+    id: number;
+    essalud: string;
+    essalud_base: string;
+    detalle_json: Record<string, unknown> | null;
+    fecha_fin: string;
+  }>(
+    `SELECT dp.id, dp.essalud, dp.essalud_base, dp.detalle_json, pp.fecha_fin
+     FROM detalle_planilla dp
+     JOIN periodos_planilla pp ON pp.id = dp.periodo_id
+     WHERE dp.contrato_id = $1 AND pp.anio = $2 AND pp.mes = $3`,
+    [contratoId, anio, mes]
+  );
+  if (filas.rowCount === 0) return [];
+
+  const nuevos = calcularAjustePisoEssaludMensual(
+    filas.rows.map((f) => ({
+      periodoId: f.id as number,
+      essaludBase: Number(f.essalud_base),
+      fechaFin: fechaISO(f.fecha_fin),
+    })),
+    pisoMensual
+  );
+
+  const cambios: { periodoId: number; essaludAnterior: number; essaludNuevo: number }[] = [];
+  for (const fila of filas.rows) {
+    const essaludNuevo = nuevos.get(fila.id)!;
+    const essaludAnterior = Number(fila.essalud);
+    if (redondear(essaludNuevo) === redondear(essaludAnterior)) continue;
+    const detalleJson = (fila.detalle_json ?? {}) as { total_aportes_empleador?: number };
+    const totalAnterior = Number(detalleJson.total_aportes_empleador ?? 0);
+    const totalNuevo = redondear(totalAnterior - essaludAnterior + essaludNuevo);
+    await cliente.query(
+      `UPDATE detalle_planilla
+       SET essalud = $1, detalle_json = jsonb_set(detalle_json, '{total_aportes_empleador}', to_jsonb($2::numeric))
+       WHERE id = $3`,
+      [essaludNuevo, totalNuevo, fila.id]
+    );
+    cambios.push({ periodoId: fila.id, essaludAnterior, essaludNuevo });
+  }
+  return cambios;
 }
 
 export async function obtenerTablaCategorias(anio: number, mes: number): Promise<TablaSalarialMensual> {
@@ -1367,7 +1462,7 @@ planillaRouter.post(
       );
     }
 
-    const parametros = await obtenerParametros(periodo.anio);
+    const parametros = await obtenerParametros(periodo.anio, periodo.mes);
     const tablaCategorias = await obtenerTablaCategorias(periodo.anio, periodo.mes);
     const afpTasas = await obtenerAfpTasas(periodo.anio, periodo.mes);
     const conceptos = await obtenerConceptos();
@@ -1400,7 +1495,7 @@ planillaRouter.post(
       let config = cacheConfigTramo.get(clave);
       if (!config) {
         config = {
-          parametros: await obtenerParametros(anio),
+          parametros: await obtenerParametros(anio, mes),
           tablaCategorias: await obtenerTablaCategorias(anio, mes),
           afpTasas: await obtenerAfpTasas(anio, mes),
         };
@@ -1414,6 +1509,16 @@ planillaRouter.post(
     // que se calcula con una sola tabla (la del mes de inicio) y se avisa
     // para revisar a mano si el jornal/tabla cambio de un mes a otro.
     const avisosCruceMes: Array<{ contrato_id: number; dni: string; nombre: string; mensaje: string }> = [];
+    // Ronda 4 ("piso de EsSalud mensual"): informativo, nunca bloquea - ver
+    // ajustarPisoEssaludDelMes. Se llena cuando el ajuste de piso de este
+    // mes calendario quedo en un periodo DISTINTO al que se acaba de
+    // calcular (correccion en cascada de un periodo ya cerrado).
+    const avisosEssalud: Array<{
+      contrato_id: number;
+      dni: string;
+      nombre: string;
+      mensaje: string;
+    }> = [];
 
     // NOTA (recon 31/46): el parche original (migracion 042, "ambito
     // geografico de feriados") agregaba aqui un aviso informativo
@@ -1617,10 +1722,10 @@ planillaRouter.post(
              subsidio_enfermedad, licencia_paternidad,
              dias_subsidio_enfermedad, dias_subsidio_maternidad, dias_licencia_paternidad,
              dias_subsidio_enfermedad_computable,
-             dias_incapacidad_enfermedad, incapacidad_enfermedad
+             dias_incapacidad_enfermedad, incapacidad_enfermedad, essalud_base
            ) VALUES (
              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
-             $24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45
+             $24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46
            )
            ON CONFLICT (periodo_id, contrato_id) DO UPDATE SET
              dias_trabajados = EXCLUDED.dias_trabajados,
@@ -1666,6 +1771,7 @@ planillaRouter.post(
              dias_subsidio_enfermedad_computable = EXCLUDED.dias_subsidio_enfermedad_computable,
              dias_incapacidad_enfermedad = EXCLUDED.dias_incapacidad_enfermedad,
              incapacidad_enfermedad = EXCLUDED.incapacidad_enfermedad,
+             essalud_base = EXCLUDED.essalud_base,
              calculado_en = now()
            RETURNING *`,
           [
@@ -1714,6 +1820,7 @@ planillaRouter.post(
             detalle.dias_subsidio_enfermedad_computable,
             detalle.dias_incapacidad_enfermedad,
             detalle.incapacidad_enfermedad,
+            detalle.essalud_base,
           ]
         );
         lineasCalculadas.push(r.rows[0]);
@@ -1731,6 +1838,38 @@ planillaRouter.post(
             `INSERT INTO detalle_planilla_conceptos (detalle_id, concepto_codigo, monto) VALUES ($1, $2, $3)`,
             [detalleIdPersonalizados, cp.codigo, cp.monto]
           );
+        }
+
+        // Ronda 4 ("piso de EsSalud mensual"): reconcilia el aporte de
+        // EsSalud de TODOS los periodos de este contrato en periodo.anio/mes
+        // (incluido el que se acaba de guardar). Puede corregir en cascada
+        // un periodo DISTINTO ya calculado antes (ver el comentario de la
+        // funcion) - por eso se refleja tanto en la fila que se acaba de
+        // insertar (lineasCalculadas) como en un aviso si el ajuste quedo en
+        // otro periodo.
+        const cambiosEssalud = await ajustarPisoEssaludDelMes(
+          cliente,
+          contrato.id,
+          periodo.anio,
+          periodo.mes,
+          parametros
+        );
+        for (const cambio of cambiosEssalud) {
+          if (cambio.periodoId === r.rows[0].id) {
+            // La propia fila que se acaba de insertar: refleja el valor
+            // final ya reconciliado en la respuesta de este /calcular.
+            r.rows[0].essalud = cambio.essaludNuevo;
+            continue;
+          }
+          avisosEssalud.push({
+            contrato_id: contrato.id,
+            dni: contrato.numero_documento,
+            nombre: contrato.apellidos_nombres,
+            mensaje:
+              `Se ajusto automaticamente el aporte EsSalud de otro periodo de ${MESES[periodo.mes - 1]} ${periodo.anio} ` +
+              `ya calculado (de S/ ${cambio.essaludAnterior.toFixed(2)} a S/ ${cambio.essaludNuevo.toFixed(2)}) ` +
+              `para mantener el piso legal mensual (9% de la RMV vigente ese mes).`,
+          });
         }
       } catch (errFila) {
         if (errFila instanceof ErrorValidacion) throw errFila;
@@ -1766,6 +1905,7 @@ planillaRouter.post(
       avisos_subsidio: avisosSubsidio,
       avisos_regimen: avisosRegimen,
       avisos_cruce_mes: avisosCruceMes,
+      avisos_essalud: avisosEssalud,
     });
   } catch (err) {
     await cliente.query("ROLLBACK");

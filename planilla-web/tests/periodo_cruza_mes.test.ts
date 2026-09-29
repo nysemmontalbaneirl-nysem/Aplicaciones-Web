@@ -138,6 +138,7 @@ describe("sumarResultadosLinea (funcion pura)", () => {
         otros_descuentos: 0,
         total_descuentos: 0,
         essalud: 0,
+        essalud_base: 0,
         sctr: 0,
         senati: 0,
         neto_pagar: 0,

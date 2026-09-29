@@ -173,6 +173,66 @@ parametrosRouter.put("/mensual/:anio/:mes", requierePermiso("parametros.editar")
 }));
 
 // ==========================================================================
+// RMV mensual (migracion_044, Ronda 4 "piso de EsSalud mensual"): un
+// override puntual de la RMV para un mes especifico, pensado para cuando el
+// gobierno la modifica a mitad de año. Un mes SIN fila aqui sigue usando el
+// valor anual de parametros_normativos.remuneracion_minima_vital tal cual
+// (ver obtenerParametros en routes/planilla.ts) - por eso estas rutas son
+// solo para los meses donde el usuario necesite un valor DISTINTO al anual.
+// IMPORTANTE: van antes de "/:anio" por el mismo motivo que "/mensual".
+// ==========================================================================
+
+parametrosRouter.get("/rmv-mensual", asyncHandler(async (_req: Request, res: Response) => {
+  const resultado = await pool.query(
+    "SELECT anio, mes, remuneracion_minima_vital FROM rmv_mensual ORDER BY anio DESC, mes DESC"
+  );
+  res.json(resultado.rows.map((f) => ({
+    anio: f.anio,
+    mes: f.mes,
+    remuneracion_minima_vital: Number(f.remuneracion_minima_vital),
+  })));
+}));
+
+// PUT /api/parametros/rmv-mensual/:anio/:mes  body: { remuneracion_minima_vital }
+parametrosRouter.put(
+  "/rmv-mensual/:anio/:mes",
+  requierePermiso("parametros.editar"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const anio = Number(req.params.anio);
+    const mes = Number(req.params.mes);
+    const valor = Number(req.body.remuneracion_minima_vital);
+    if (!Number.isFinite(valor) || valor <= 0) {
+      throw new ErrorValidacion("remuneracion_minima_vital debe ser un numero mayor a 0");
+    }
+    const resultado = await pool.query(
+      `INSERT INTO rmv_mensual (anio, mes, remuneracion_minima_vital)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (anio, mes) DO UPDATE SET
+         remuneracion_minima_vital = EXCLUDED.remuneracion_minima_vital,
+         actualizado_en = now()
+       RETURNING anio, mes, remuneracion_minima_vital`,
+      [anio, mes, valor]
+    );
+    await registrarBitacora(req.usuario!.id, "EDICION_RMV_MENSUAL", "rmv_mensual", null, { anio, mes, valor });
+    const fila = resultado.rows[0];
+    res.json({ anio: fila.anio, mes: fila.mes, remuneracion_minima_vital: Number(fila.remuneracion_minima_vital) });
+  })
+);
+
+// DELETE /api/parametros/rmv-mensual/:anio/:mes -> quita el override, ese mes vuelve a usar el valor anual
+parametrosRouter.delete(
+  "/rmv-mensual/:anio/:mes",
+  requierePermiso("parametros.editar"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const anio = Number(req.params.anio);
+    const mes = Number(req.params.mes);
+    await pool.query("DELETE FROM rmv_mensual WHERE anio = $1 AND mes = $2", [anio, mes]);
+    await registrarBitacora(req.usuario!.id, "ELIMINACION_RMV_MENSUAL", "rmv_mensual", null, { anio, mes });
+    res.status(204).end();
+  })
+);
+
+// ==========================================================================
 // Parametros ANUALES (UIT, RMV, ESSALUD, ONP, SENATI, CONAFOVICER, SCTR,
 // asignacion familiar, seguro vida)
 // ==========================================================================
