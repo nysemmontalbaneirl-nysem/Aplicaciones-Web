@@ -395,6 +395,13 @@ CREATE TABLE asistencia_periodo (
     dias_subsidio_enfermedad NUMERIC(5,2) NOT NULL DEFAULT 0,
     dias_subsidio_maternidad NUMERIC(5,2) NOT NULL DEFAULT 0,
     dias_licencia_paternidad NUMERIC(5,2) NOT NULL DEFAULT 0,
+    -- Subconjunto de dias_subsidio_enfermedad que cuenta como "dia
+    -- computable" para Gratificacion/Vacaciones/CTS/Asignacion por
+    -- Escolaridad de construccion civil, topado a 60 dias/año/contrato
+    -- (migracion 032) - distinto del tope de 20 dias/año ya existente sobre
+    -- el PAGO del subsidio. Ver el comentario completo en tipos.ts
+    -- (AsistenciaEntrada.dias_subsidio_enfermedad_computable).
+    dias_subsidio_enfermedad_computable NUMERIC(6,2) NOT NULL DEFAULT 0,
     actualizado_en  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (periodo_id, contrato_id)
 );
@@ -459,6 +466,7 @@ CREATE TABLE detalle_planilla (
     dias_subsidio_enfermedad NUMERIC(6,2) NOT NULL DEFAULT 0,
     dias_subsidio_maternidad NUMERIC(6,2) NOT NULL DEFAULT 0,
     dias_licencia_paternidad NUMERIC(6,2) NOT NULL DEFAULT 0,
+    dias_subsidio_enfermedad_computable NUMERIC(6,2) NOT NULL DEFAULT 0, -- migracion 032: subconjunto de dias_subsidio_enfermedad usado como "dia computable" en Gratificacion/Vacaciones/CTS/Escolaridad, topado a 60 dias/año/contrato
 
     -- ingresos
     jornal_diario          NUMERIC(10,2) NOT NULL DEFAULT 0,

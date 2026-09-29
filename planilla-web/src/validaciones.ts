@@ -141,6 +141,13 @@ export function validarAsistenciaEntrada(valor: unknown): AsistenciaEntrada {
     dias_subsidio_enfermedad: validarMontoPositivo(v.dias_subsidio_enfermedad ?? 0, "dias_subsidio_enfermedad"),
     dias_subsidio_maternidad: validarMontoPositivo(v.dias_subsidio_maternidad ?? 0, "dias_subsidio_maternidad"),
     dias_licencia_paternidad: validarMontoPositivo(v.dias_licencia_paternidad ?? 0, "dias_licencia_paternidad"),
+    // Migracion 032: tampoco aplica a la carga por Excel en bloque (sin
+    // fecha por dia, mismo criterio que dias_dominical_no_laborado arriba)
+    // - queda en 0 salvo que agregarTareoDiario lo calcule de verdad.
+    dias_subsidio_enfermedad_computable: validarMontoPositivo(
+      v.dias_subsidio_enfermedad_computable ?? 0,
+      "dias_subsidio_enfermedad_computable"
+    ),
   };
 }
 

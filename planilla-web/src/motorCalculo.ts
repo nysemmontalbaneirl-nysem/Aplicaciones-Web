@@ -172,6 +172,11 @@ export function sumarResultadosLinea(resultados: ResultadoCalculoLinea[]): Resul
     dias_subsidio_enfermedad: sumar("dias_subsidio_enfermedad"),
     dias_subsidio_maternidad: sumar("dias_subsidio_maternidad"),
     dias_licencia_paternidad: sumar("dias_licencia_paternidad"),
+    // Migracion 032: proporcional igual que los demas "dias_*" (cada tramo
+    // ya trae su propio valor topado a 60/año calculado por
+    // agregarTareoDiario sobre su propio rango de fechas) - se suma tal
+    // cual, sin re-topar aqui.
+    dias_subsidio_enfermedad_computable: sumar("dias_subsidio_enfermedad_computable"),
     // Del ultimo tramo cronologico - ver comentario de la funcion.
     jornal_diario: ultimo.jornal_diario,
     sueldo_basico: sumar("sueldo_basico"),
@@ -453,6 +458,13 @@ export function calcularAsignacionFamiliar(
  * al ano por cada hijo (Resolucion Directoral N°100-72-DPRTESS), es decir
  * jornal/12 por dia trabajado y por hijo. Verificado exacto contra boletas
  * reales (Oficial 1 hijo, Operario Equipo Pesado 3 hijos).
+ *
+ * Migracion 032: los "dias" tambien incluyen dias_subsidio_enfermedad_computable
+ * (descanso medico, topado a 60 dias/año/contrato) y dias_feriado - reportado
+ * por el usuario junto con Vacaciones/CTS (su Excel de referencia usa
+ * dias_trabajados + descanso medico + feriados para este calculo, SIN
+ * dominical, a diferencia de la Gratificacion). No incluye maternidad/
+ * paternidad (el usuario solo confirmo el criterio para descanso medico).
  */
 export function calcularAsignacionEscolar(
   jornalDiario: number,
@@ -466,7 +478,9 @@ export function calcularAsignacionEscolar(
   // antes de multiplicar - verificado contra boletas reales (redondear aqui
   // producia una diferencia sistematica de unos centimos).
   const escolaridadDiaria = jornalDiario / factorDivisor;
-  return redondear(escolaridadDiaria * asistencia.dias_trabajados * numeroHijos);
+  const diasComputables =
+    asistencia.dias_trabajados + asistencia.dias_subsidio_enfermedad_computable + asistencia.dias_feriado;
+  return redondear(escolaridadDiaria * diasComputables * numeroHijos);
 }
 
 /**
@@ -625,7 +639,27 @@ export function calcularGratificacion(
 ): number {
   if (esConstruccionCivil(contrato.categoria_ocupacional)) {
     const gratificacionDiaria = redondear(jornalDiario * (factorNumerador / factorDenominador));
-    const diasComputables = asistencia.dias_trabajados + asistencia.dias_dominical + asistencia.dias_feriado;
+    // Migracion 032: se suma dias_subsidio_enfermedad_computable (topado a
+    // 60 dias/año/contrato), por consistencia con Vacaciones/CTS/Escolaridad
+    // - confirmado con el usuario, aunque hoy nunca reduce el monto en la
+    // practica porque el tope de 20 dias/año ya existente sobre el PAGO del
+    // subsidio es mas estricto (20 < 60).
+    //
+    // NOTA (recon 12/46): el parche original de esta migracion asumia que
+    // Gratificacion YA sumaba dias_subsidio_enfermedad (sin tope),
+    // dias_subsidio_maternidad, dias_licencia_paternidad y
+    // dias_dominical_no_laborado desde una migracion 025 que no existe
+    // todavia en este punto de la reconstruccion (tampoco existe el campo
+    // dias_dominical_no_laborado, ni el split factorDenominadorAgostoDiciembre/
+    // factorDenominadorEneroJulio que ese parche tambien traia). Se agrega
+    // aqui SOLO dias_subsidio_enfermedad_computable a la formula existente
+    // (dias_trabajados + dias_dominical + dias_feriado) - revisar y sumar
+    // los demas terminos cuando se reconstruya esa migracion 025.
+    const diasComputables =
+      asistencia.dias_trabajados +
+      asistencia.dias_dominical +
+      asistencia.dias_feriado +
+      asistencia.dias_subsidio_enfermedad_computable;
     return redondear(gratificacionDiaria * diasComputables);
   }
 
@@ -678,7 +712,11 @@ export function calcularCTS(
 ): number {
   if (esConstruccionCivil(contrato.categoria_ocupacional)) {
     const ctsDiaria = redondear(jornalDiario * factorPorcentaje);
-    return redondear(ctsDiaria * asistencia.dias_trabajados);
+    // Migracion 032: se suma dias_subsidio_enfermedad_computable (descanso
+    // medico, topado a 60 dias/año/contrato) - reportado por el usuario:
+    // antes de esto la CTS no acreditaba nada por descanso medico.
+    const diasComputables = asistencia.dias_trabajados + asistencia.dias_subsidio_enfermedad_computable;
+    return redondear(ctsDiaria * diasComputables);
   }
 
   if (mes !== 5 && mes !== 11) return 0;
@@ -709,7 +747,11 @@ export function calcularVacaciones(
 ): number {
   if (!esConstruccionCivil(contrato.categoria_ocupacional)) return 0;
   const vacacionesDiaria = redondear(jornalDiario * factorPorcentaje);
-  return redondear(vacacionesDiaria * asistencia.dias_trabajados);
+  // Migracion 032: se suma dias_subsidio_enfermedad_computable (descanso
+  // medico, topado a 60 dias/año/contrato) - reportado por el usuario:
+  // antes de esto Vacaciones no acreditaba nada por descanso medico.
+  const diasComputables = asistencia.dias_trabajados + asistencia.dias_subsidio_enfermedad_computable;
+  return redondear(vacacionesDiaria * diasComputables);
 }
 
 export interface DetalleAportePension {
@@ -969,6 +1011,7 @@ function calcularLineaEventual(contrato: Contrato, asistencia: AsistenciaEntrada
       dias_subsidio_enfermedad: asistencia.dias_subsidio_enfermedad,
       dias_subsidio_maternidad: asistencia.dias_subsidio_maternidad,
       dias_licencia_paternidad: asistencia.dias_licencia_paternidad,
+      dias_subsidio_enfermedad_computable: 0,
       jornal_diario: 0,
       sueldo_basico: montoPactado,
       remuneracion_dominical: 0,
@@ -1244,6 +1287,10 @@ export function calcularLineaPlanilla(
       dias_subsidio_enfermedad: asistencia.dias_subsidio_enfermedad,
       dias_subsidio_maternidad: asistencia.dias_subsidio_maternidad,
       dias_licencia_paternidad: asistencia.dias_licencia_paternidad,
+      // Migracion 032: foto historica del valor topado (60 dias/año/
+      // contrato) efectivamente usado en Gratificacion/Vacaciones/CTS/
+      // Asignacion por Escolaridad - ver el comentario completo en tipos.ts.
+      dias_subsidio_enfermedad_computable: asistencia.dias_subsidio_enfermedad_computable,
       jornal_diario: redondear(jornalDiario),
       sueldo_basico: sueldoBasico,
       remuneracion_dominical: remDominical,

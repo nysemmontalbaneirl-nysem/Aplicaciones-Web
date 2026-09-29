@@ -109,6 +109,7 @@ describe("sumarResultadosLinea (funcion pura)", () => {
         dias_subsidio_enfermedad: 0,
         dias_subsidio_maternidad: 0,
         dias_licencia_paternidad: 0,
+        dias_subsidio_enfermedad_computable: 0,
         jornal_diario: 0,
         sueldo_basico: 0,
         remuneracion_dominical: 0,

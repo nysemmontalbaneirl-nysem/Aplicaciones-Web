@@ -188,6 +188,20 @@ export interface AsistenciaEntrada {
   dias_subsidio_enfermedad: number;
   dias_subsidio_maternidad: number;
   dias_licencia_paternidad: number;
+  // Migracion 032: subconjunto de dias_subsidio_enfermedad que cuenta como
+  // "dia computable" para Gratificacion/Vacaciones/CTS/Asignacion por
+  // Escolaridad de construccion civil, topado a 60 dias por año calendario
+  // por CONTRATO ("descansos medicos debidamente acreditados hasta por un
+  // periodo de 60 dias al año" - RSD N°450-90-2SD-NEC). Es un tope DISTINTO
+  // del de 20 dias/año ya existente (ese es sobre el PAGO del subsidio a
+  // cargo del empleador, D.S. 009-97-SA, ver la validacion en
+  // PUT /:id/tareo-diario/:contratoId) - dias_subsidio_enfermedad (el campo
+  // de arriba) sigue siendo el que se usa para PAGAR el subsidio y para el
+  // aviso informativo de la boleta, sin cambios. Como hoy el sistema ya
+  // bloquea cargar mas de 20 dias/año de SUBSIDIO_ENFERMEDAD por contrato,
+  // este tope de 60 en la practica nunca se activa todavia (20 < 60) - se
+  // deja implementado correctamente para cuando ese otro tope se revise.
+  dias_subsidio_enfermedad_computable: number;
 }
 
 export interface DetallePlanilla {
@@ -209,6 +223,11 @@ export interface DetallePlanilla {
   dias_subsidio_enfermedad: number;
   dias_subsidio_maternidad: number;
   dias_licencia_paternidad: number;
+  // Migracion 032: subconjunto de dias_subsidio_enfermedad efectivamente
+  // usado como "dia computable" en Gratificacion/Vacaciones/CTS/Asignacion
+  // por Escolaridad (topado a 60 dias/año/contrato) - foto historica para
+  // trazabilidad, ver el comentario completo en AsistenciaEntrada.
+  dias_subsidio_enfermedad_computable: number;
 
   jornal_diario: number;
   sueldo_basico: number;
