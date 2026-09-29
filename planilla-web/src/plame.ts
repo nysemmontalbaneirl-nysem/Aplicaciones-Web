@@ -61,6 +61,7 @@ import { pool } from "./db";
 import { obtenerConceptos } from "./routes/conceptos";
 import { esConstruccionCivil, obtenerFactor } from "./motorCalculo";
 import { CategoriaOcupacional } from "./tipos";
+import { AlcanceDeclaracionMensual, obtenerDetalleEmpleadosDelMes, resolverCabecerasObreros } from "./planillaMensual";
 
 export const CONCEPTO = {
   REMUNERACION_BASICA: "0121",
@@ -466,37 +467,67 @@ export async function generarLineasREM(periodoId: number): Promise<string[]> {
 }
 
 /**
- * Genera las lineas del archivo .rem para una Planilla Mensual Consolidada ya
- * calculada (Ronda E, migracion 034) - equivalente a generarLineasREM pero
- * leyendo de detalle_planilla_mensual/detalle_planilla_conceptos_mensual en
- * vez de detalle_planilla/detalle_planilla_conceptos. Aplica solo a obreros
- * (construccion civil): esta tabla nunca tiene EVENTUAL ni EMPLEADO (ver
- * consolidarPlanillaMensual en planillaMensual.ts), asi que no hace falta
- * repetir aqui el filtro por categoria_ocupacional.
+ * Genera las lineas del archivo .rem de una declaracion MENSUAL (Ronda E +
+ * unificacion Reportes/Planilla Mensual, 22/09/2026) - equivalente a
+ * generarLineasREM pero por mes calendario, para un proyecto o para TODA la
+ * empresa (alcance.proyecto = null). Junta:
+ *   - Obreros ya consolidados (detalle_planilla_mensual/
+ *     detalle_planilla_conceptos_mensual) de cada proyecto que caiga en el
+ *     alcance pedido (1 proyecto, o todos).
+ *   - Empleados (regimen general) de ese mismo mes, leidos tal cual de
+ *     detalle_planilla/detalle_planilla_conceptos (su propio periodo MENSUAL
+ *     ya cubre el mes completo, no necesitan consolidarse - ver
+ *     obtenerDetalleEmpleadosDelMes en planillaMensual.ts).
  */
-export async function generarLineasREMMensual(planillaMensualId: number): Promise<string[]> {
+export async function generarLineasREMMensual(alcance: AlcanceDeclaracionMensual): Promise<string[]> {
   const codigos = await resolverCodigosPlame();
 
-  const resultado = await pool.query<FilaExportacion>(
+  const cabeceras = await resolverCabecerasObreros(alcance);
+  const cabeceraIds = cabeceras.map((c) => c.id);
+
+  const obrerosResult = await pool.query<FilaExportacion>(
     `SELECT e.numero_documento, c.sistema_pension, c.categoria_ocupacional, d.${COLUMNAS_FILA_EXPORTACION_MENSUAL}
      FROM detalle_planilla_mensual d
      JOIN contratos c ON c.id = d.contrato_id
      JOIN empleados e ON e.id = c.empleado_id
-     WHERE d.planilla_mensual_id = $1
+     WHERE d.planilla_mensual_id = ANY($1::int[])
      ORDER BY e.numero_documento`,
-    [planillaMensualId]
+    [cabeceraIds]
   );
 
-  const personalizadosResult = await pool.query<{ numero_documento: string; codigo_plame: string; monto: string }>(
+  const personalizadosObrerosResult = await pool.query<{ numero_documento: string; codigo_plame: string; monto: string }>(
     `SELECT e.numero_documento, cp.codigo_plame, dpc.monto
      FROM detalle_planilla_conceptos_mensual dpc
      JOIN detalle_planilla_mensual d ON d.id = dpc.detalle_id
      JOIN contratos c ON c.id = d.contrato_id
      JOIN empleados e ON e.id = c.empleado_id
      JOIN conceptos_planilla cp ON cp.codigo = dpc.concepto_codigo
-     WHERE d.planilla_mensual_id = $1 AND cp.codigo_plame IS NOT NULL`,
-    [planillaMensualId]
+     WHERE d.planilla_mensual_id = ANY($1::int[]) AND cp.codigo_plame IS NOT NULL`,
+    [cabeceraIds]
   );
 
-  return construirLineasREM(resultado.rows, personalizadosResult.rows, codigos);
+  const empleadosResult = (await obtenerDetalleEmpleadosDelMes(alcance)) as unknown as FilaExportacion[];
+
+  const empleadosContratoIds = empleadosResult.map((f) => (f as unknown as { contrato_id: number }).contrato_id);
+  const personalizadosEmpleadosResult =
+    empleadosContratoIds.length === 0
+      ? { rows: [] as { numero_documento: string; codigo_plame: string; monto: string }[] }
+      : await pool.query<{ numero_documento: string; codigo_plame: string; monto: string }>(
+          `SELECT e.numero_documento, cp.codigo_plame, dpc.monto
+           FROM detalle_planilla_conceptos dpc
+           JOIN detalle_planilla d ON d.id = dpc.detalle_id
+           JOIN contratos c ON c.id = d.contrato_id
+           JOIN empleados e ON e.id = c.empleado_id
+           JOIN conceptos_planilla cp ON cp.codigo = dpc.concepto_codigo
+           WHERE d.contrato_id = ANY($1::int[]) AND d.periodo_id IN (
+             SELECT id FROM periodos_planilla WHERE tipo = 'MENSUAL' AND anio = $2 AND mes = $3
+           ) AND cp.codigo_plame IS NOT NULL`,
+          [empleadosContratoIds, alcance.anio, alcance.mes]
+        );
+
+  return construirLineasREM(
+    [...obrerosResult.rows, ...empleadosResult],
+    [...personalizadosObrerosResult.rows, ...personalizadosEmpleadosResult.rows],
+    codigos
+  );
 }

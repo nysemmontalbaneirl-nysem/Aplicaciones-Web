@@ -1,14 +1,19 @@
-// Pruebas HTTP de las rutas de "Planilla Mensual Consolidada" (Ronda E, ver
-// src/routes/planillaMensual.ts): POST /consolidar, GET / (leer), y las
-// descargas (rem/afpnet). Cubre en particular el control de acceso (permiso
-// planilla_mensual.gestionar + tieneAccesoProyecto), que es la parte de este
-// router que no esta cubierta por las pruebas unitarias de
+// Pruebas HTTP de las rutas de "Planilla Mensual" (Ronda E +
+// unificacion Reportes/Planilla Mensual, 22/09/2026 - ver
+// src/routes/planillaMensual.ts): POST /consolidar, GET /historial,
+// GET / (leer, siempre 200) y las descargas (rem/afpnet/afpnet-excel),
+// ahora todas por {anio, mes, proyecto?} en vez de un planilla_mensual_id en
+// la URL. Cubre en particular el control de acceso (permiso
+// planilla_mensual.gestionar + tieneAccesoProyecto, y la restriccion nueva
+// de "todos los proyectos" solo ADMIN), que es la parte de este router que
+// no esta cubierta por las pruebas unitarias de
 // planillaMensual.ts/plame.ts/afpnet.ts.
 //
-// NOTA (recon 19/46): la ruta GET .../exportar/asiento-contable del parche
-// original se omite (y su prueba con ella) - depende de
-// "src/asientoContable.ts", que no existe en este arbol (ver
-// RECONSTRUCCION_BRECHAS.md punto 5).
+// NOTA (recon 19/46, reconfirmado en recon 33/46): la ruta GET
+// .../exportar/asiento-contable del parche original se sigue omitiendo (y su
+// prueba con ella) - depende de "src/asientoContable.ts", que no existe en
+// este arbol (ver RECONSTRUCCION_BRECHAS.md punto 5 - confirmado ausente ya
+// 3 veces).
 import request from "supertest";
 import { app } from "../src/app";
 import { pool } from "../src/db";
@@ -16,6 +21,9 @@ import { CLAVE_PRUEBA } from "./globalSetup";
 
 const PROYECTO = "Proyecto A"; // responsable-a@prueba.local tiene acceso a este, ya sembrado por globalSetup.ts
 const JORNAL_PEON_OCT_2026 = 69.0;
+// Mes reservado para "sin nada declarado" (no debe chocar con el mes 10, que
+// este mismo archivo consolida arriba).
+const MES_SIN_DATOS = 12;
 
 let tokenAdmin: string;
 let tokenResponsableA: string; // acceso a Proyecto A
@@ -93,10 +101,9 @@ afterAll(async () => {
     "UPDATE limites_tareo SET horas_max_lun_vie = 8, minutos_max_lun_vie = 30, horas_max_sabado = 5, minutos_max_sabado = 30 WHERE id = 1"
   );
   await pool.query(
-    "DELETE FROM detalle_planilla_mensual WHERE planilla_mensual_id IN (SELECT id FROM planilla_mensual WHERE proyecto = $1 AND anio = 2026 AND mes = 10)",
-    [PROYECTO]
+    "DELETE FROM detalle_planilla_mensual WHERE planilla_mensual_id IN (SELECT id FROM planilla_mensual WHERE anio = 2026 AND mes = 10)"
   );
-  await pool.query("DELETE FROM planilla_mensual WHERE proyecto = $1 AND anio = 2026 AND mes = 10", [PROYECTO]);
+  await pool.query("DELETE FROM planilla_mensual WHERE anio = 2026 AND mes = 10");
   for (const periodoId of periodosCreados) {
     await pool.query("DELETE FROM tareo_diario WHERE periodo_id = $1", [periodoId]);
     await pool.query("DELETE FROM periodos_planilla WHERE id = $1", [periodoId]);
@@ -109,8 +116,6 @@ afterAll(async () => {
   await pool.query("DELETE FROM tasas_afp_mensuales WHERE anio = 2026 AND mes = 10");
   await pool.end();
 });
-
-let planillaMensualId: number;
 
 describe("POST /api/planilla-mensual/consolidar", () => {
   it("sin el permiso planilla_mensual.gestionar (TAREADOR) -> 403", async () => {
@@ -136,8 +141,9 @@ describe("POST /api/planilla-mensual/consolidar", () => {
       .send({ proyecto: PROYECTO, anio: 2026, mes: 10 });
     expect(r.status).toBe(200);
     expect(r.body.errores).toEqual([]);
+    expect(r.body.proyecto).toBe(PROYECTO);
+    expect(r.body.proyectos_consolidados).toEqual([PROYECTO]);
     expect(r.body.trabajadores_consolidados).toBe(1);
-    planillaMensualId = r.body.planilla_mensual_id;
 
     // Migracion 042: el periodo del fixture (beforeAll) queda en estado
     // ABIERTO (nunca se le presiona "Calcular") - debe aparecer listado en
@@ -145,13 +151,33 @@ describe("POST /api/planilla-mensual/consolidar", () => {
     // todavia", sin que eso bloquee la consolidacion.
     expect(r.body.periodos_incluidos).toHaveLength(1);
     expect(r.body.periodos_incluidos[0].estado).toBe("ABIERTO");
+    expect(r.body.periodos_incluidos[0].proyecto).toBe(PROYECTO);
     expect(r.body.avisos_periodos_no_calculados).toHaveLength(1);
     expect(r.body.avisos_periodos_no_calculados[0].fecha_inicio).toBe("2026-10-01");
   });
 
-  it("falta proyecto/anio/mes -> 400", async () => {
-    const r = await request(app).post("/api/planilla-mensual/consolidar").set(auth(tokenAdmin)).send({ anio: 2026, mes: 10 });
+  it("falta anio o mes -> 400", async () => {
+    const r = await request(app)
+      .post("/api/planilla-mensual/consolidar")
+      .set(auth(tokenAdmin))
+      .send({ proyecto: PROYECTO, mes: 10 });
     expect(r.status).toBe(400);
+  });
+
+  it("sin proyecto (todos los proyectos), sin ser ADMIN -> 403", async () => {
+    const r = await request(app)
+      .post("/api/planilla-mensual/consolidar")
+      .set(auth(tokenResponsableA))
+      .send({ anio: 2026, mes: 10 });
+    expect(r.status).toBe(403);
+    expect(r.body.error).toMatch(/administrador/);
+  });
+
+  it("ADMIN consolida TODOS los proyectos a la vez (sin proyecto) -> 200, incluye Proyecto A", async () => {
+    const r = await request(app).post("/api/planilla-mensual/consolidar").set(auth(tokenAdmin)).send({ anio: 2026, mes: 10 });
+    expect(r.status).toBe(200);
+    expect(r.body.proyecto).toBeNull();
+    expect(r.body.proyectos_consolidados).toContain(PROYECTO);
   });
 });
 
@@ -183,22 +209,31 @@ describe("GET /api/planilla-mensual/historial", () => {
 });
 
 describe("GET /api/planilla-mensual", () => {
-  it("mes ya consolidado -> 200 con cabecera + detalle", async () => {
+  it("mes ya consolidado, por proyecto -> 200 con cabeceras + detalle", async () => {
     const r = await request(app)
       .get("/api/planilla-mensual")
       .query({ proyecto: PROYECTO, anio: 2026, mes: 10 })
       .set(auth(tokenAdmin));
     expect(r.status).toBe(200);
-    expect(r.body.planillaMensual.proyecto).toBe(PROYECTO);
+    expect(r.body.proyecto).toBe(PROYECTO);
     expect(r.body.detalle).toHaveLength(1);
+    // Migracion 043 (21/09/2026): diagnostico por Sistema de Pension, visible
+    // sin tener que descargar el Excel de AFPnet - el unico trabajador de
+    // este fixture esta en ONP (no AFP, ver beforeAll).
+    expect(r.body.diagnostico_afpnet).toEqual({
+      trabajadores_consolidados: 1,
+      por_sistema_pension: [{ sistema_pension: "ONP", total: 1 }],
+    });
   });
 
-  it("mes NUNCA consolidado -> 404", async () => {
+  it("mes NUNCA tocado -> 200 con arreglos vacios (ya no 404 - permite distinguir 'nada' de 'sin tocar' desde el propio contenido)", async () => {
     const r = await request(app)
       .get("/api/planilla-mensual")
-      .query({ proyecto: PROYECTO, anio: 2026, mes: 11 })
+      .query({ proyecto: PROYECTO, anio: 2026, mes: MES_SIN_DATOS })
       .set(auth(tokenAdmin));
-    expect(r.status).toBe(404);
+    expect(r.status).toBe(200);
+    expect(r.body.cabeceras_obreros).toEqual([]);
+    expect(r.body.detalle).toEqual([]);
   });
 
   it("Responsable de Proyecto B no puede leer la Planilla Mensual de Proyecto A -> 403", async () => {
@@ -208,22 +243,47 @@ describe("GET /api/planilla-mensual", () => {
       .set(auth(tokenResponsableB));
     expect(r.status).toBe(403);
   });
+
+  it("sin proyecto (todos los proyectos), sin ser ADMIN -> 403", async () => {
+    const r = await request(app).get("/api/planilla-mensual").query({ anio: 2026, mes: 10 }).set(auth(tokenResponsableA));
+    expect(r.status).toBe(403);
+    expect(r.body.error).toMatch(/administrador/);
+  });
+
+  it("ADMIN sin proyecto (todos los proyectos) -> 200, incluye el detalle de Proyecto A", async () => {
+    const r = await request(app).get("/api/planilla-mensual").query({ anio: 2026, mes: 10 }).set(auth(tokenAdmin));
+    expect(r.status).toBe(200);
+    expect(r.body.proyecto).toBeNull();
+    expect(r.body.detalle.some((f: { proyecto: string }) => f.proyecto === PROYECTO)).toBe(true);
+  });
 });
 
 describe("Descargas de la Planilla Mensual ya consolidada", () => {
-  it("GET /:id/exportar/rem -> 200 texto plano", async () => {
-    const r = await request(app)
-      .get(`/api/planilla-mensual/${planillaMensualId}/exportar/rem`)
-      .set(auth(tokenAdmin));
+  const queryProyecto = { proyecto: PROYECTO, anio: 2026, mes: 10 };
+
+  // Bug real de produccion (21/09/2026): el usuario recibia SIEMPRE el mismo
+  // archivo .xlsx (byte a byte identico, confirmado comparando la fecha de
+  // creacion interna del archivo) sin importar cuantas veces lo descargara,
+  // porque el navegador servia una copia de su propia cache sin volver a
+  // pedirle el archivo al servidor - ninguna ruta de este router mandaba
+  // encabezados de "no cachear". Se prueba una sola ruta como representante
+  // (no solo en afpnet-excel) porque el mismo problema aplicaba igual a
+  // REM/AFPnet CSV y a la lectura de la Planilla Mensual.
+  it("TODAS las rutas de este router mandan encabezados de 'no cachear' (Cache-Control: no-store)", async () => {
+    const r = await request(app).get("/api/planilla-mensual/exportar/rem").query(queryProyecto).set(auth(tokenAdmin));
+    expect(r.headers["cache-control"]).toContain("no-store");
+    expect(r.headers["pragma"]).toBe("no-cache");
+  });
+
+  it("GET /exportar/rem -> 200 texto plano", async () => {
+    const r = await request(app).get("/api/planilla-mensual/exportar/rem").query(queryProyecto).set(auth(tokenAdmin));
     expect(r.status).toBe(200);
     expect(r.headers["content-type"]).toContain("text/plain");
     expect(r.text).toContain("|88882001|");
   });
 
-  it("GET /:id/exportar/afpnet -> 200 CSV", async () => {
-    const r = await request(app)
-      .get(`/api/planilla-mensual/${planillaMensualId}/exportar/afpnet`)
-      .set(auth(tokenAdmin));
+  it("GET /exportar/afpnet -> 200 CSV", async () => {
+    const r = await request(app).get("/api/planilla-mensual/exportar/afpnet").query(queryProyecto).set(auth(tokenAdmin));
     expect(r.status).toBe(200);
     expect(r.headers["content-type"]).toContain("text/csv");
   });
@@ -233,24 +293,41 @@ describe("Descargas de la Planilla Mensual ya consolidada", () => {
   // bug del generador. El unico trabajador de esta Planilla Mensual esta en
   // ONP (no AFP, ver beforeAll) - exactamente el caso que antes devolvia 200
   // con un archivo vacio. Ahora debe explicar el motivo en vez de entregarlo.
-  it("GET /:id/exportar/afpnet-excel sin ningun trabajador con Sistema de Pension = AFP -> 400 explicando el motivo (nunca un archivo vacio en silencio)", async () => {
-    const r = await request(app)
-      .get(`/api/planilla-mensual/${planillaMensualId}/exportar/afpnet-excel`)
-      .set(auth(tokenAdmin));
+  it("GET /exportar/afpnet-excel sin ningun trabajador con Sistema de Pension = AFP -> 400 explicando el motivo (nunca un archivo vacio en silencio)", async () => {
+    const r = await request(app).get("/api/planilla-mensual/exportar/afpnet-excel").query(queryProyecto).set(auth(tokenAdmin));
     expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/Sistema de Pension = AFP/);
     expect(r.body.advertencias).toEqual([]);
+    // Migracion 043: el mensaje ahora explica que SI se consolidaron
+    // trabajadores este mes, solo que ninguno es AFP (resultado correcto,
+    // no un error) - y lo confirma con el desglose real.
+    expect(r.body.error).toMatch(/Se encontraron 1 trabajador/);
+    expect(r.body.error).toMatch(/ONP: 1/);
+    expect(r.body.diagnostico).toEqual({
+      trabajadores_consolidados: 1,
+      por_sistema_pension: [{ sistema_pension: "ONP", total: 1 }],
+    });
   });
 
   it("Responsable de Proyecto B no puede descargar el REM de Proyecto A -> 403", async () => {
-    const r = await request(app)
-      .get(`/api/planilla-mensual/${planillaMensualId}/exportar/rem`)
-      .set(auth(tokenResponsableB));
+    const r = await request(app).get("/api/planilla-mensual/exportar/rem").query(queryProyecto).set(auth(tokenResponsableB));
     expect(r.status).toBe(403);
   });
 
-  it("id inexistente -> 404", async () => {
-    const r = await request(app).get("/api/planilla-mensual/999999/exportar/rem").set(auth(tokenAdmin));
-    expect(r.status).toBe(404);
+  it("sin proyecto (todos los proyectos), sin ser ADMIN -> 403", async () => {
+    const r = await request(app)
+      .get("/api/planilla-mensual/exportar/rem")
+      .query({ anio: 2026, mes: 10 })
+      .set(auth(tokenResponsableA));
+    expect(r.status).toBe(403);
+  });
+
+  it("mes/proyecto sin nada declarado -> el REM sale vacio (200), nunca revienta", async () => {
+    const r = await request(app)
+      .get("/api/planilla-mensual/exportar/rem")
+      .query({ proyecto: PROYECTO, anio: 2026, mes: MES_SIN_DATOS })
+      .set(auth(tokenAdmin));
+    expect(r.status).toBe(200);
+    expect(r.text.trim()).toBe("");
   });
 });

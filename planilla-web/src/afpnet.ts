@@ -10,6 +10,7 @@
 // =========================================================================
 
 import { pool } from "./db";
+import { AlcanceDeclaracionMensual, obtenerDetalleEmpleadosDelMes, resolverCabecerasObreros } from "./planillaMensual";
 
 export interface FilaAFPnet {
   numero_documento: string;
@@ -152,37 +153,38 @@ export async function generarCSVAFPnet(periodoId: number, proyecto?: string): Pr
 }
 
 /**
- * Genera el CSV de aportes AFP de una Planilla Mensual Consolidada ya
- * calculada (Ronda E, migracion 034) - equivalente a generarCSVAFPnet pero
- * leyendo de detalle_planilla_mensual en vez de detalle_planilla. Aplica
- * solo a obreros (construccion civil, nunca EVENTUAL - ver
- * consolidarPlanillaMensual en planillaMensual.ts), asi que no hace falta
- * repetir aqui el filtro por categoria_ocupacional.
+ * Genera el CSV de aportes AFP de una declaracion MENSUAL (Ronda E +
+ * unificacion Reportes/Planilla Mensual, 22/09/2026) - por un proyecto o por
+ * TODA la empresa (alcance.proyecto = null). Junta obreros ya consolidados
+ * (detalle_planilla_mensual, de cada proyecto en el alcance) y empleados de
+ * ese mismo mes (detalle_planilla, via su propio periodo MENSUAL) - ambos
+ * filtrados a sistema_pension = 'AFP' (los aportes ONP no van en este archivo).
  *
- * A diferencia de generarCSVAFPnet (por periodo de pago, arriba), esta
- * variante YA NO acepta un "proyecto" opcional para filtrar por
- * "c.proyecto" (bug real de produccion, corregido 21/09/2026 - mismo
- * problema y misma correccion que generarFilasAFPnetExcel en afpnetExcel.ts,
- * ver el comentario detallado ahi). La diferencia clave con
- * generarCSVAFPnet: un periodo de pago (periodo_id) SI puede ser "legado"
- * y abarcar varios proyectos a la vez (Ronda C, proyecto=NULL), por lo que
- * ahi ese filtro opcional tiene un uso real; una Planilla Mensual
- * (planilla_mensual_id) en cambio pertenece SIEMPRE a un unico proyecto por
- * construccion (indice unico proyecto+anio+mes) - agregar ahi ademas
- * "c.proyecto = $2" solo agregaba el riesgo de excluir en silencio a un
- * trabajador cuyo contrato tuviera el campo proyecto desactualizado o con
- * una diferencia de texto, sin ganar ninguna precision real.
+ * Nota heredada (bug real de produccion, corregido 21/09/2026): el filtro de
+ * proyecto para obreros se resuelve por planilla_mensual.proyecto (columna
+ * de la propia cabecera, ver resolverCabecerasObreros), nunca por
+ * "c.proyecto" del contrato individual - evita excluir en silencio a un
+ * trabajador cuyo contrato tuviera el proyecto desactualizado despues de
+ * consolidar. Para empleados, en cambio, SI se filtra por c.proyecto (su
+ * propio criterio, ver obtenerDetalleEmpleadosDelMes) porque ahi no existe
+ * ninguna cabecera equivalente que fije el proyecto de antemano.
  */
-export async function generarCSVAFPnetMensual(planillaMensualId: number): Promise<string> {
-  const resultado = await pool.query<FilaAFPnet>(
+export async function generarCSVAFPnetMensual(alcance: AlcanceDeclaracionMensual): Promise<string> {
+  const cabeceras = await resolverCabecerasObreros(alcance);
+  const cabeceraIds = cabeceras.map((c) => c.id);
+
+  const obrerosResultado = await pool.query<FilaAFPnet>(
     `SELECT ${COLUMNAS_FILA_AFPNET_MENSUAL}
      FROM detalle_planilla_mensual d
      JOIN contratos c ON c.id = d.contrato_id
      JOIN empleados e ON e.id = c.empleado_id
-     WHERE d.planilla_mensual_id = $1 AND c.sistema_pension = 'AFP'
+     WHERE d.planilla_mensual_id = ANY($1::int[]) AND c.sistema_pension = 'AFP'
      ORDER BY e.apellidos_nombres`,
-    [planillaMensualId]
+    [cabeceraIds]
   );
 
-  return construirCSVAFPnet(resultado.rows);
+  const empleados = (await obtenerDetalleEmpleadosDelMes(alcance)) as unknown as (FilaAFPnet & { sistema_pension: string })[];
+  const empleadosAfp = empleados.filter((f) => f.sistema_pension === "AFP");
+
+  return construirCSVAFPnet([...obrerosResultado.rows, ...empleadosAfp]);
 }

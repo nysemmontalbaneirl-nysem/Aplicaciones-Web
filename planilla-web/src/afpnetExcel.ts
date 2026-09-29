@@ -49,7 +49,7 @@ import ExcelJS from "exceljs";
 import { pool } from "./db";
 import { calcularRemuneracionAfectaAfp, FilaAFPnet } from "./afpnet";
 import { esConstruccionCivil } from "./motorCalculo";
-import { rangoDelMes } from "./planillaMensual";
+import { AlcanceDeclaracionMensual, obtenerDetalleEmpleadosDelMes, rangoDelMes, resolverCabecerasObreros } from "./planillaMensual";
 import { fechaISO } from "./routes/planilla";
 import { CategoriaOcupacional } from "./tipos";
 
@@ -140,27 +140,37 @@ function sN(fecha: unknown, desde: string, hasta: string): "S" | "N" {
  * en planillaMensual.ts) nunca tuvo este filtro y por eso nunca fallaba.
  */
 export async function generarFilasAFPnetExcel(
-  planillaMensualId: number,
-  anio: number,
-  mes: number
+  alcance: AlcanceDeclaracionMensual
 ): Promise<{ filas: (string | number)[][]; advertencias: string[] }> {
-  const { desde, hasta } = rangoDelMes(anio, mes);
+  const { desde, hasta } = rangoDelMes(alcance.anio, alcance.mes);
 
-  const resultado = await pool.query<FilaAFPnetExcel>(
+  const cabeceras = await resolverCabecerasObreros(alcance);
+  const cabeceraIds = cabeceras.map((c) => c.id);
+
+  const obrerosResultado = await pool.query<FilaAFPnetExcel>(
     `SELECT ${COLUMNAS_FILA_AFPNET_EXCEL}
      FROM detalle_planilla_mensual d
      JOIN contratos c ON c.id = d.contrato_id
      JOIN empleados e ON e.id = c.empleado_id
-     WHERE d.planilla_mensual_id = $1 AND c.sistema_pension = 'AFP'
+     WHERE d.planilla_mensual_id = ANY($1::int[]) AND c.sistema_pension = 'AFP'
      ORDER BY e.apellidos_nombres`,
-    [planillaMensualId]
+    [cabeceraIds]
   );
+
+  const empleadosTodos = (await obtenerDetalleEmpleadosDelMes(alcance)) as unknown as (FilaAFPnetExcel & {
+    sistema_pension: string;
+  })[];
+  const empleadosAfp = empleadosTodos.filter((f) => f.sistema_pension === "AFP");
 
   const filas: (string | number)[][] = [];
   const advertencias: string[] = [];
   let secuencia = 0;
 
-  for (const f of resultado.rows) {
+  const todasLasFilas = [...obrerosResultado.rows, ...empleadosAfp].sort((a, b) =>
+    a.apellidos_nombres.localeCompare(b.apellidos_nombres)
+  );
+
+  for (const f of todasLasFilas) {
     const identificacion = `${f.apellidos_nombres} (${f.numero_documento})`;
     const tipoDocumentoAfpnet = MAPEO_TIPO_DOCUMENTO_AFPNET[normalizarTipoDocumento(f.tipo_documento)];
     if (tipoDocumentoAfpnet === undefined) {
@@ -200,6 +210,54 @@ export async function generarFilasAFPnetExcel(
   }
 
   return { filas, advertencias };
+}
+
+export interface DiagnosticoAfpnetMensual {
+  trabajadores_consolidados: number;
+  por_sistema_pension: { sistema_pension: string; total: number }[];
+}
+
+/**
+ * Antes de esta funcion, un Excel de AFPnet vacio (0 filas) no dejaba
+ * distinguir por su cuenta si era un error del sistema o si, sencillamente,
+ * ese mes/proyecto no tenia ningun trabajador afiliado a una AFP (ej. todos
+ * son ONP) - lo cual es un resultado CORRECTO, no un bug. Esta funcion cuenta,
+ * para una declaracion mensual (un proyecto, o toda la empresa), cuantos
+ * trabajadores hay en total - obreros ya consolidados MAS empleados de ese
+ * mismo mes (unificacion Reportes/Planilla Mensual, 22/09/2026) - y como se
+ * reparten por Sistema de Pension. Se muestra en pantalla (ver GET
+ * /api/planilla-mensual/, avisos_datos_afpnet) sin que el usuario tenga que
+ * descargar nada, y tambien se agrega al mensaje de error si de todas formas
+ * intenta la descarga y sale vacia.
+ */
+export async function obtenerDiagnosticoAfpnetMensual(alcance: AlcanceDeclaracionMensual): Promise<DiagnosticoAfpnetMensual> {
+  const cabeceras = await resolverCabecerasObreros(alcance);
+  const cabeceraIds = cabeceras.map((c) => c.id);
+
+  const obrerosR = await pool.query<{ sistema_pension: string | null; total: string }>(
+    `SELECT COALESCE(c.sistema_pension, 'SIN CONFIGURAR') AS sistema_pension, COUNT(*)::int AS total
+     FROM detalle_planilla_mensual d
+     JOIN contratos c ON c.id = d.contrato_id
+     WHERE d.planilla_mensual_id = ANY($1::int[])
+     GROUP BY COALESCE(c.sistema_pension, 'SIN CONFIGURAR')`,
+    [cabeceraIds]
+  );
+
+  const empleados = (await obtenerDetalleEmpleadosDelMes(alcance)) as unknown as { sistema_pension: string | null }[];
+  const porSistemaPensionMapa = new Map<string, number>();
+  for (const fila of obrerosR.rows) {
+    porSistemaPensionMapa.set(fila.sistema_pension!, (porSistemaPensionMapa.get(fila.sistema_pension!) ?? 0) + Number(fila.total));
+  }
+  for (const fila of empleados) {
+    const clave = fila.sistema_pension ?? "SIN CONFIGURAR";
+    porSistemaPensionMapa.set(clave, (porSistemaPensionMapa.get(clave) ?? 0) + 1);
+  }
+
+  const porSistemaPension = [...porSistemaPensionMapa.entries()]
+    .map(([sistema_pension, total]) => ({ sistema_pension, total }))
+    .sort((a, b) => a.sistema_pension.localeCompare(b.sistema_pension));
+  const trabajadoresConsolidados = porSistemaPension.reduce((acumulado, f) => acumulado + f.total, 0);
+  return { trabajadores_consolidados: trabajadoresConsolidados, por_sistema_pension: porSistemaPension };
 }
 
 /** Arma el workbook (.xlsx) listo para descargar, con las filas ya calculadas. */

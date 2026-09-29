@@ -642,3 +642,84 @@ depender del modal en absoluto):
 
 Verificado: `tsc --noEmit` limpio (backend y frontend). 345/345 tests
 (336 previos + 9 nuevos de `boletas_busqueda_y_estado.test.ts`).
+
+---
+
+## 17. Parche #33/46 (`db871772`, "feat(planilla-mensual): unificar Reportes y Planilla Mensual") — reescritura arquitectónica grande (12 archivos, 2567 líneas); reconfirma la brecha #5 por 3ra vez; una función/interfaz nueva se reconstruye completa a partir del propio parche
+
+Este parche unifica la pantalla "Planilla Mensual" con lo que antes era el
+reporte separado de Empleados: todo pasa a trabajar por un **ALCANCE**
+`{anio, mes, proyecto: string | null}` (`proyecto: null` = "todos los
+proyectos", solo ADMIN) en vez de un `planilla_mensual_id` fijo en la URL,
+combinando SIEMPRE obreros ya consolidados (`detalle_planilla_mensual`, vía
+`resolverCabecerasObreros`) con empleados de régimen general de ese mismo
+mes (`detalle_planilla`, vía `obtenerDetalleEmpleadosDelMes` — estos NUNCA
+se "consolidan", su propio período MENSUAL ya cubre el mes calendario
+completo). Afecta `src/planillaMensual.ts`, `src/afpnet.ts`,
+`src/afpnetExcel.ts`, `src/plame.ts`, `src/routes/planillaMensual.ts`,
+`frontend/src/types.ts`, `frontend/src/components/PlanillaMensual.tsx` y 4
+archivos de `tests/`.
+
+Fue delegado primero a un subagente (`Agent` general-purpose) por su
+tamaño; un límite de sesión lo cortó a medio camino, dejando
+`src/planillaMensual.ts` 100% aplicado (verificado línea por línea, sin
+`.rej`) y el resto con hunks parciales. Se retomó la reconciliación
+directamente (sin reanudar el subagente) para mantener control fino sobre
+las 2 decisiones de juicio de abajo.
+
+**Brecha #5 (`src/asientoContable.ts`) reconfirmada ausente una 3ra vez**
+(antes: parche #15/46, parche #19/46): este parche trae, como MODIFICACIÓN
+(no como novedad), la ruta `GET /:id/exportar/asiento-contable` →
+`GET /exportar/asiento-contable` (con query params `anio`/`mes`/`proyecto`
+igual que el resto del router) y el botón "Descargar Asiento Contable
+(Excel)" correspondiente en `PlanillaMensual.tsx`, además de una prueba en
+`tests/planilla_mensual_unificacion.test.ts` que agrupa el asiento POR
+PROYECTO en modo "todos los proyectos". Las 3 piezas se omiten por
+completo, igual que en los 2 parches anteriores: `src/asientoContable.ts`
+sigue sin existir en este árbol. Se actualizaron los comentarios
+`NOTA (recon 19/46, reconfirmado en recon 33/46): ...` en
+`src/routes/planillaMensual.ts` y `frontend/src/components/PlanillaMensual.tsx`
+para reflejar la 3ra confirmación, y se quitó el import de
+`"../src/asientoContable"` y el test que lo usaba en
+`tests/planilla_mensual_unificacion.test.ts` (el resto de ese archivo, que
+no depende de asiento contable, se conservó completo sin cambios).
+
+**`obtenerDiagnosticoAfpnetMensual`/`DiagnosticoAfpnetMensual` — reconstruida
+completa, no es una brecha**: a diferencia de `asientoContable.ts` (donde
+NINGÚN parche recuperado trae la implementación), esta función se
+referenciaba en el diff de este parche como una MODIFICACIÓN de código que
+no existe en ningún lado de este árbol (ni la interfaz `DiagnosticoAfpnetMensual`
+en `frontend/src/types.ts`, ni la función en `src/afpnetExcel.ts` — confirmado
+con grep en ambos archivos antes de decidir). Pero el propio diff de este
+parche SÍ trae el contenido completo y concreto de ambas (no solo el
+diff de un cambio menor), y además las usa en múltiples puntos coherentes
+entre sí dentro del mismo parche (2 sitios en `routes/planillaMensual.ts`,
+`tests/afpnet_excel.test.ts` completo, y `tests/planilla_mensual_unificacion.test.ts`).
+Como no se trata de inventar código no verificado sino de aplicar
+exactamente lo que un parche legítimamente recuperado especifica — su
+prerrequisito (una introducción anterior de esta misma función, en algún
+parche NO recuperado de los 46) simplemente nunca llegó —, se agregó fresca
+en ambos archivos (backend y frontend), siguiendo el mismo patrón de
+`generarFilasAFPnetExcel`. Mismo criterio aplicado al middleware
+`Cache-Control: no-store` de `src/routes/planillaMensual.ts` (el diff lo
+mostraba como código ya existente — contexto sin cambios —, pero no estaba
+en este árbol; se agregó completo porque el propio parche lo da entero,
+sin necesidad de inventar nada).
+
+**Qué se reconstruyó** (además de lo anterior): reescritura completa de
+`src/routes/planillaMensual.ts` (rutas `:id` → query params
+`anio`/`mes`/`proyecto`; `GET /` ya nunca devuelve 404, siempre 200 con
+arreglos vacíos); `frontend/src/components/PlanillaMensual.tsx` (selector
+"Por proyecto"/"Todos los proyectos", columnas "Tipo"/"Proyecto" en modo
+"todos", tarjeta de diagnóstico por Sistema de Pensión, aviso de períodos
+MENSUAL de empleados sin calcular); `frontend/src/types.ts`
+(`VistaDeclaracionMensual`, `PeriodoMensualEmpleadosNoCalculado`); y las 4
+suites de prueba adaptadas al nuevo `alcance` (en vez de
+`planillaMensualId`), incluyendo el archivo nuevo completo
+`tests/planilla_mensual_unificacion.test.ts` (mezcla real obreros+empleados
+y combinación de varios proyectos a la vez con `proyecto: null`).
+
+Verificado: `tsc --noEmit` limpio (backend y frontend). 360/360 tests (345
+previos + 15 nuevos: 2 en `afpnet_excel.test.ts`, 3 en
+`planilla_mensual_rutas.test.ts`, 10 en `planilla_mensual_unificacion.test.ts`
+— descontando el test de asiento contable omitido de este último).

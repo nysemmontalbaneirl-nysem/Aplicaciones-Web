@@ -473,6 +473,235 @@ export async function consolidarPlanillaMensual(
   }
 }
 
+// =========================================================================
+// Unificacion "Reportes vs Planilla Mensual" (confirmado con el usuario,
+// 22/09/2026): la vista y las exportaciones (REM/AFPnet/Asiento) de esta
+// pantalla pasan a poder trabajar en 2 modalidades:
+//   - "Por proyecto" (proyecto no nulo): igual que antes, pero AHORA incluye
+//     tambien a los EMPLEADOS (regimen general) de ese proyecto/mes, ademas
+//     de los obreros ya consolidados arriba.
+//   - "Todos los proyectos" (proyecto = null): consolida los obreros de
+//     CADA proyecto que tenga periodos ese mes, y junta a TODOS los
+//     empleados del mes (de cualquier proyecto), en una sola vista/archivo -
+//     coincide con como se declara realmente PLAME/AFPnet ante SUNAT/AFP:
+//     una sola vez por RUC al mes, no una por proyecto/obra. Restringido a
+//     ADMIN (ver routes/planillaMensual.ts).
+//
+// Los EMPLEADOS no necesitan "consolidarse" (a diferencia de los obreros):
+// su propio periodo MENSUAL ya cubre el mes calendario completo (confirmado
+// con el usuario en el diseño original de esta pantalla) - sus boletas ya
+// calculadas en detalle_planilla se leen tal cual, sin recalcular nada.
+// =========================================================================
+
+export interface AlcanceDeclaracionMensual {
+  anio: number;
+  mes: number;
+  /** null = todos los proyectos (declaracion general de la empresa). */
+  proyecto: string | null;
+}
+
+/** Cabeceras planilla_mensual (obreros ya consolidados) que caen en el alcance pedido. */
+export async function resolverCabecerasObreros(
+  alcance: AlcanceDeclaracionMensual
+): Promise<{ id: number; proyecto: string; calculado_en: string; calculado_por: number | null }[]> {
+  const condiciones = ["anio = $1", "mes = $2"];
+  const valores: unknown[] = [alcance.anio, alcance.mes];
+  if (alcance.proyecto) {
+    valores.push(alcance.proyecto);
+    condiciones.push(`proyecto = $${valores.length}`);
+  }
+  const r = await pool.query(
+    `SELECT id, proyecto, calculado_en, calculado_por FROM planilla_mensual WHERE ${condiciones.join(" AND ")} ORDER BY proyecto`,
+    valores
+  );
+  return r.rows;
+}
+
+/**
+ * Boletas de EMPLEADOS (regimen general) de un mes calendario, ya calculadas
+ * en su propio periodo MENSUAL (que ya cubre el mes completo) - NO requieren
+ * "consolidar" nada (a diferencia de los obreros): se leen tal cual de
+ * detalle_planilla. proyecto=null trae los de TODOS los proyectos.
+ *
+ * Se filtra por el proyecto ACTUAL del contrato (c.proyecto), no por
+ * periodos_planilla.proyecto (que puede ser NULL/legado o quedar
+ * desactualizado) - mismo criterio ya corregido en afpnetExcel.ts/afpnet.ts
+ * (bug real de produccion 21/09/2026): "lo que ves es lo que exportas" se
+ * basa siempre en el proyecto vigente del contrato, no en la etiqueta del
+ * periodo.
+ *
+ * Se excluye EVENTUAL (no esta en planilla, igual criterio que el resto del
+ * sistema) y, por seguridad, cualquier categoria de construccion civil (un
+ * obrero jamas deberia tener boleta en un periodo MENSUAL, pero si por error
+ * la tuviera, incluirla aqui la duplicaria contra su consolidacion en
+ * detalle_planilla_mensual).
+ */
+export async function obtenerDetalleEmpleadosDelMes(alcance: AlcanceDeclaracionMensual) {
+  const condiciones = ["p.tipo = 'MENSUAL'", "p.anio = $1", "p.mes = $2", "c.categoria_ocupacional <> 'EVENTUAL'"];
+  const valores: unknown[] = [alcance.anio, alcance.mes];
+  if (alcance.proyecto) {
+    valores.push(alcance.proyecto);
+    condiciones.push(`c.proyecto = $${valores.length}`);
+  }
+  const r = await pool.query(
+    `SELECT d.*, d.periodo_id, e.numero_documento, e.apellidos_nombres, e.numero_hijos,
+            e.tipo_documento, e.apellido_paterno, e.apellido_materno, e.nombres,
+            c.categoria_ocupacional, c.proyecto, c.sistema_pension, c.afp_nombre, c.cuspp,
+            c.fecha_ingreso, c.fecha_cese
+     FROM detalle_planilla d
+     JOIN periodos_planilla p ON p.id = d.periodo_id
+     JOIN contratos c ON c.id = d.contrato_id
+     JOIN empleados e ON e.id = c.empleado_id
+     WHERE ${condiciones.join(" AND ")}
+     ORDER BY e.apellidos_nombres`,
+    valores
+  );
+  const filas = r.rows.filter((f) => !esConstruccionCivil(f.categoria_ocupacional));
+  return agregarConceptosPersonalizadosBatch(filas, "detalle_planilla_conceptos");
+}
+
+/** Periodos MENSUAL (de empleados) del alcance pedido que TODAVIA no pasaron por "Calcular". */
+export async function listarPeriodosMensualesEmpleadosNoCalculados(
+  alcance: AlcanceDeclaracionMensual
+): Promise<{ id: number; proyecto: string | null; fecha_inicio: string; fecha_fin: string }[]> {
+  const condiciones = ["tipo = 'MENSUAL'", "anio = $1", "mes = $2", "estado <> 'CALCULADO'"];
+  const valores: unknown[] = [alcance.anio, alcance.mes];
+  if (alcance.proyecto) {
+    valores.push(alcance.proyecto);
+    // Se incluyen tambien los periodos MENSUAL "legado" (proyecto NULL): un
+    // periodo global podria estar cubriendo, entre otros, al proyecto pedido.
+    condiciones.push(`(proyecto = $${valores.length} OR proyecto IS NULL)`);
+  }
+  const r = await pool.query(
+    `SELECT id, proyecto, fecha_inicio, fecha_fin FROM periodos_planilla WHERE ${condiciones.join(" AND ")} ORDER BY fecha_inicio`,
+    valores
+  );
+  return r.rows.map((p) => ({
+    id: p.id,
+    proyecto: p.proyecto,
+    fecha_inicio: fechaISO(p.fecha_inicio),
+    fecha_fin: fechaISO(p.fecha_fin),
+  }));
+}
+
+export interface VistaDeclaracionMensual {
+  anio: number;
+  mes: number;
+  proyecto: string | null;
+  cabeceras_obreros: { id: number; proyecto: string; calculado_en: string; calculado_por: number | null }[];
+  detalle: (Record<string, unknown> & { tipo_trabajador: "OBRERO" | "EMPLEADO"; planilla_mensual_id: number | null })[];
+  avisos_periodos_empleados_no_calculados: { id: number; proyecto: string | null; fecha_inicio: string; fecha_fin: string }[];
+}
+
+/** Vista combinada (obreros consolidados + empleados) de un mes, por proyecto o de toda la empresa. */
+export async function obtenerVistaMensual(alcance: AlcanceDeclaracionMensual): Promise<VistaDeclaracionMensual> {
+  const cabeceras = await resolverCabecerasObreros(alcance);
+  const cabeceraIds = cabeceras.map((c) => c.id);
+
+  let detalleObreros: Record<string, unknown>[] = [];
+  if (cabeceraIds.length > 0) {
+    const r = await pool.query(
+      `SELECT d.*, e.numero_documento, e.apellidos_nombres, c.categoria_ocupacional, c.proyecto
+       FROM detalle_planilla_mensual d
+       JOIN contratos c ON c.id = d.contrato_id
+       JOIN empleados e ON e.id = c.empleado_id
+       WHERE d.planilla_mensual_id = ANY($1::int[])
+       ORDER BY e.apellidos_nombres`,
+      [cabeceraIds]
+    );
+    detalleObreros = await agregarConceptosPersonalizadosBatch(r.rows, "detalle_planilla_conceptos_mensual");
+  }
+
+  const detalleEmpleados = await obtenerDetalleEmpleadosDelMes(alcance);
+  const avisosPeriodosEmpleadosNoCalculados = await listarPeriodosMensualesEmpleadosNoCalculados(alcance);
+
+  const detalle = [
+    ...detalleObreros.map((f) => ({ ...f, tipo_trabajador: "OBRERO" as const })),
+    ...detalleEmpleados.map((f) => ({ ...f, tipo_trabajador: "EMPLEADO" as const, planilla_mensual_id: null })),
+  ].sort((a, b) => String(a.apellidos_nombres).localeCompare(String(b.apellidos_nombres)));
+
+  return {
+    anio: alcance.anio,
+    mes: alcance.mes,
+    proyecto: alcance.proyecto,
+    cabeceras_obreros: cabeceras,
+    detalle,
+    avisos_periodos_empleados_no_calculados: avisosPeriodosEmpleadosNoCalculados,
+  };
+}
+
+/** Proyectos que tienen algun periodo QUINCENAL/SEMANAL tocando ese mes calendario. */
+async function proyectosConPeriodosDelMes(anio: number, mes: number): Promise<string[]> {
+  const { desde, hasta } = rangoDelMes(anio, mes);
+  const r = await pool.query<{ proyecto: string }>(
+    `SELECT DISTINCT proyecto FROM periodos_planilla
+     WHERE proyecto IS NOT NULL AND tipo IN ('QUINCENAL','SEMANAL')
+       AND fecha_inicio <= $2 AND fecha_fin >= $1
+     ORDER BY proyecto`,
+    [desde, hasta]
+  );
+  return r.rows.map((f) => f.proyecto);
+}
+
+export interface ResultadoConsolidacionMensual {
+  anio: number;
+  mes: number;
+  proyecto: string | null;
+  proyectos_consolidados: string[];
+  trabajadores_consolidados: number;
+  periodos_incluidos: (ResultadoConsolidacion["periodos_incluidos"][number] & { proyecto: string })[];
+  avisos_recalculo_posterior: (AvisoRecalculoPosteriorMensual & { proyecto: string })[];
+  avisos_periodos_no_calculados: (ResultadoConsolidacion["avisos_periodos_no_calculados"][number] & { proyecto: string })[];
+  errores: (ResultadoConsolidacion["errores"][number] & { proyecto: string })[];
+}
+
+/**
+ * Consolida (obreros) el mes pedido: un solo proyecto, o TODOS los proyectos
+ * que tengan periodos QUINCENAL/SEMANAL ese mes (modo "todos los proyectos",
+ * confirmado con el usuario 22/09/2026 - una sola declaracion de toda la
+ * empresa, igual que se presenta realmente ante SUNAT/AFP). Los EMPLEADOS no
+ * se tocan aqui: nunca necesitan "consolidarse" (ver obtenerDetalleEmpleadosDelMes).
+ */
+export async function consolidarMes(
+  anio: number,
+  mes: number,
+  proyecto: string | null,
+  usuarioId: number
+): Promise<ResultadoConsolidacionMensual> {
+  const proyectos = proyecto ? [proyecto] : await proyectosConPeriodosDelMes(anio, mes);
+  if (proyectos.length === 0) {
+    throw new ErrorValidacion(
+      proyecto
+        ? `No hay periodos QUINCENAL/SEMANAL del proyecto "${proyecto}" que toquen ${mes}/${anio}.`
+        : `Ningun proyecto tiene periodos QUINCENAL/SEMANAL que toquen ${mes}/${anio}. Si este mes solo tiene planillas de Empleados, no hace falta consolidar nada: sus boletas ya se ven directamente en esta pantalla.`
+    );
+  }
+
+  const resultado: ResultadoConsolidacionMensual = {
+    anio,
+    mes,
+    proyecto,
+    proyectos_consolidados: [],
+    trabajadores_consolidados: 0,
+    periodos_incluidos: [],
+    avisos_recalculo_posterior: [],
+    avisos_periodos_no_calculados: [],
+    errores: [],
+  };
+
+  for (const p of proyectos) {
+    const r = await consolidarPlanillaMensual(p, anio, mes, usuarioId);
+    resultado.proyectos_consolidados.push(p);
+    resultado.trabajadores_consolidados += r.trabajadores_consolidados;
+    resultado.periodos_incluidos.push(...r.periodos_incluidos.map((x) => ({ ...x, proyecto: p })));
+    resultado.avisos_recalculo_posterior.push(...r.avisos_recalculo_posterior.map((x) => ({ ...x, proyecto: p })));
+    resultado.avisos_periodos_no_calculados.push(...r.avisos_periodos_no_calculados.map((x) => ({ ...x, proyecto: p })));
+    resultado.errores.push(...r.errores.map((x) => ({ ...x, proyecto: p })));
+  }
+
+  return resultado;
+}
+
 /** Lee una Planilla Mensual ya consolidada (cabecera + detalle por trabajador), o null si nunca se consolido. */
 export async function obtenerPlanillaMensual(proyecto: string, anio: number, mes: number) {
   const cabeceraResult = await pool.query(

@@ -417,33 +417,39 @@ export function porcentajeRecargo(factor: number | null | undefined): string {
 }
 
 // ---------------------------------------------------------------------
-// Planilla Mensual Consolidada (Ronda E, migracion_034): junta el Tareo
-// Diario de todas las quincenas/semanas de un {proyecto, anio, mes} en un
-// solo calculo mensual, para declarar PLAME/AFPnet/Asiento Contable por MES
-// CALENDARIO. Aplica solo a obreros (construccion civil) - Empleados ya
-// declaran por su propio periodo MENSUAL. Ver src/planillaMensual.ts (backend).
+// Planilla Mensual (Ronda E, migracion_034 + unificacion Reportes/Planilla
+// Mensual, 22/09/2026): junta el Tareo Diario de todas las quincenas/
+// semanas de un mes calendario en un solo calculo, para declarar PLAME/
+// AFPnet/Asiento Contable por MES en vez de por periodo de pago. Desde la
+// unificacion trabaja siempre por un ALCANCE {anio, mes, proyecto?}, en 2
+// modalidades: "Por proyecto" (obreros consolidados de ese proyecto MAS los
+// empleados de regimen general de ese mismo proyecto/mes, que no requieren
+// consolidarse) o "Todos los proyectos" (junta obreros de CADA proyecto con
+// periodos ese mes mas empleados de TODOS los proyectos - solo ADMIN). Ver
+// src/planillaMensual.ts (backend).
 // ---------------------------------------------------------------------
-export interface PlanillaMensualCabecera {
+export interface CabeceraObrerosConsolidados {
   id: number;
   proyecto: string;
-  anio: number;
-  mes: number;
   calculado_en: string;
   calculado_por: number | null;
-  creado_en: string;
 }
 
 // Espejo de DetallePlanilla (mismas columnas de asistencia/ingresos/
-// descuentos/aportes), con el contrato/trabajador ya unido - ver
-// obtenerPlanillaMensual en planillaMensual.ts.
-export interface DetallePlanillaMensualFila {
-  id: number;
-  planilla_mensual_id: number;
+// descuentos/aportes), con el contrato/trabajador ya unido. Una fila puede
+// venir de un OBRERO ya consolidado (detalle_planilla_mensual) o de un
+// EMPLEADO de regimen general (su propia boleta MENSUAL, detalle_planilla,
+// leida tal cual sin consolidar) - ver obtenerVistaMensual en planillaMensual.ts.
+export interface DetalleTrabajadorMensualFila {
   contrato_id: number;
   numero_documento: string;
   apellidos_nombres: string;
   categoria_ocupacional: CategoriaOcupacional;
   proyecto: string;
+  tipo_trabajador: "OBRERO" | "EMPLEADO";
+  // Solo los OBREROS tienen planilla_mensual_id (vienen de una consolidacion
+  // ya guardada); los EMPLEADOS siempre traen null aca (nunca se "consolidan").
+  planilla_mensual_id: number | null;
 
   dias_trabajados: number;
   dias_dominical: number;
@@ -502,13 +508,37 @@ export interface DetallePlanillaMensualFila {
   conceptos_personalizados?: { codigo: string; nombre: string; tipo: "INGRESO" | "APORTE" | "DESCUENTO"; monto: number }[];
 }
 
-export interface PlanillaMensualConsolidada {
-  planillaMensual: PlanillaMensualCabecera;
-  detalle: DetallePlanillaMensualFila[];
+export interface DiagnosticoAfpnetMensual {
+  trabajadores_consolidados: number;
+  por_sistema_pension: { sistema_pension: string; total: number }[];
+}
+
+// Migracion 042: un periodo MENSUAL (de empleados) que todavia no paso por
+// "Calcular" en la pantalla Periodos - sus boletas podrian no estar completas.
+export interface PeriodoMensualEmpleadosNoCalculado {
+  id: number;
+  proyecto: string | null;
+  fecha_inicio: string;
+  fecha_fin: string;
+}
+
+// Respuesta de GET /api/planilla-mensual (unificacion 22/09/2026) - siempre
+// 200, con arreglos vacios si nunca se toco este mes/proyecto (antes 404).
+export interface VistaDeclaracionMensual {
+  anio: number;
+  mes: number;
+  proyecto: string | null;
+  cabeceras_obreros: CabeceraObrerosConsolidados[];
+  detalle: DetalleTrabajadorMensualFila[];
+  avisos_periodos_empleados_no_calculados: PeriodoMensualEmpleadosNoCalculado[];
   // Migracion 041: advertencias del archivo oficial de AFPnet (apellidos
   // referenciales incompletos en Trabajadores, o tipo de documento sin
   // mapeo confirmado a AFPnet) - no bloquean la descarga, ver afpnetExcel.ts.
   avisos_datos_afpnet: string[];
+  // Migracion 043: diagnostico de Sistema de Pension, visible siempre al
+  // cargar la pantalla (ver el comentario completo en el backend,
+  // obtenerDiagnosticoAfpnetMensual en afpnetExcel.ts).
+  diagnostico_afpnet: DiagnosticoAfpnetMensual;
 }
 
 export interface AvisoRecalculoPosteriorMensual {
@@ -518,6 +548,7 @@ export interface AvisoRecalculoPosteriorMensual {
   quincena: number | null;
   tipo: string;
   calculado_en: string;
+  proyecto: string;
 }
 
 export interface PeriodoIncluidoConsolidacion {
@@ -527,18 +558,22 @@ export interface PeriodoIncluidoConsolidacion {
   fecha_inicio: string;
   fecha_fin: string;
   estado: string;
+  proyecto: string;
 }
 
-export interface ResultadoConsolidacion {
-  planilla_mensual_id: number;
-  proyecto: string;
+// Respuesta de POST /api/planilla-mensual/consolidar - un proyecto (el
+// pedido) o TODOS los proyectos con periodos ese mes (proyecto=null,
+// consolida cada uno y suma los resultados).
+export interface ResultadoConsolidacionMensual {
   anio: number;
   mes: number;
+  proyecto: string | null;
+  proyectos_consolidados: string[];
   trabajadores_consolidados: number;
   periodos_incluidos: PeriodoIncluidoConsolidacion[];
   avisos_recalculo_posterior: AvisoRecalculoPosteriorMensual[];
-  avisos_periodos_no_calculados: Omit<PeriodoIncluidoConsolidacion, "estado">[];
-  errores: { contrato_id: number; dni: string; nombre: string; motivo: string }[];
+  avisos_periodos_no_calculados: (Omit<PeriodoIncluidoConsolidacion, "estado">)[];
+  errores: { contrato_id: number; dni: string; nombre: string; motivo: string; proyecto: string }[];
 }
 
 // Migracion 042: una fila del historial de meses ya consolidados (GET

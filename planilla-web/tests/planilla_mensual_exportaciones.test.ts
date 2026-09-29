@@ -76,6 +76,8 @@ beforeAll(async () => {
   planillaMensualId = resultado.planilla_mensual_id;
 });
 
+const ALCANCE = { anio: 2026, mes: 9, proyecto: PROYECTO };
+
 afterAll(async () => {
   await pool.query("DELETE FROM detalle_planilla_mensual WHERE planilla_mensual_id = $1", [planillaMensualId]);
   await pool.query("DELETE FROM planilla_mensual WHERE proyecto = $1 AND anio = 2026 AND mes = 9", [PROYECTO]);
@@ -94,7 +96,7 @@ afterAll(async () => {
 
 describe("generarLineasREMMensual", () => {
   it("genera lineas .rem a partir de detalle_planilla_mensual (mismo formato que generarLineasREM por periodo)", async () => {
-    const lineas = await generarLineasREMMensual(planillaMensualId);
+    const lineas = await generarLineasREMMensual(ALCANCE);
     expect(lineas.length).toBeGreaterThan(0);
     // Cada linea sigue el formato TIPO|DNI|CODIGO|DEVENGADO|PERCIBIDO|
     for (const linea of lineas) {
@@ -108,7 +110,7 @@ describe("generarLineasREMMensual", () => {
 
 describe("generarCSVAFPnetMensual", () => {
   it("genera el CSV de aportes AFP a partir de detalle_planilla_mensual, con encabezado y 1 fila (contrato AFP)", async () => {
-    const csv = await generarCSVAFPnetMensual(planillaMensualId);
+    const csv = await generarCSVAFPnetMensual(ALCANCE);
     const filas = csv.split("\n");
     expect(filas[0]).toBe(
       "DNI,Apellidos y nombres,CUSPP,AFP,Proyecto,Remuneracion afecta,Aporte obligatorio,Comision,Prima de seguro,Total aporte AFP"
@@ -119,16 +121,16 @@ describe("generarCSVAFPnetMensual", () => {
     expect(filas[1]).toContain("INTEGRA");
   });
 
-  it("ya no filtra por proyecto (bug real de produccion, corregido 21/09/2026 - ver comentario en afpnet.ts): una planilla mensual sin trabajadores consolidados da solo el encabezado", async () => {
-    const otraCabecera = await pool.query<{ id: number }>(
+  it("una planilla mensual de otro proyecto, sin trabajadores consolidados, da solo el encabezado", async () => {
+    const otroProyecto = "Proyecto Sin Consolidar EXPORTACIONES-TEST";
+    await pool.query(
       `INSERT INTO planilla_mensual (proyecto, anio, mes, calculado_en, calculado_por)
-       VALUES ('Proyecto Sin Consolidar EXPORTACIONES-TEST', 2026, 9, now(), $1) RETURNING id`,
-      [adminUserId]
+       VALUES ($1, 2026, 9, now(), $2)`,
+      [otroProyecto, adminUserId]
     );
-    const otraId = otraCabecera.rows[0].id;
-    const csv = await generarCSVAFPnetMensual(otraId);
+    const csv = await generarCSVAFPnetMensual({ anio: 2026, mes: 9, proyecto: otroProyecto });
     const filas = csv.split("\n");
     expect(filas).toHaveLength(1); // solo el encabezado
-    await pool.query("DELETE FROM planilla_mensual WHERE id = $1", [otraId]);
+    await pool.query("DELETE FROM planilla_mensual WHERE proyecto = $1 AND anio = 2026 AND mes = 9", [otroProyecto]);
   });
 });

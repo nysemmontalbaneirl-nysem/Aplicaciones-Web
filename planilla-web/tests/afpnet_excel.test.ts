@@ -7,7 +7,7 @@
 // (DECLARACION_AFPNET_JULIO2026_-_P009.xlsx) que el mismo subio.
 import { pool } from "../src/db";
 import { consolidarPlanillaMensual } from "../src/planillaMensual";
-import { generarFilasAFPnetExcel, construirWorkbookAFPnetExcel } from "../src/afpnetExcel";
+import { generarFilasAFPnetExcel, construirWorkbookAFPnetExcel, obtenerDiagnosticoAfpnetMensual } from "../src/afpnetExcel";
 import { generarCSVAFPnetMensual } from "../src/afpnet";
 
 const PROYECTO = "Proyecto AFPNET-EXCEL-TEST"; // proyecto de texto libre, no requiere fila en "proyectos"
@@ -20,6 +20,7 @@ const empleadosCreados: number[] = [];
 const contratosCreados: number[] = [];
 let periodoId: number;
 let planillaMensualId: number;
+const ALCANCE = { anio: ANIO, mes: MES, proyecto: PROYECTO };
 
 // DNI de cada trabajador de prueba, para identificar filas/advertencias sin
 // depender del orden (generarFilasAFPnetExcel ordena por apellidos_nombres).
@@ -201,7 +202,7 @@ afterAll(async () => {
 
 describe("generarFilasAFPnetExcel", () => {
   it("arma 17 columnas por trabajador, excluye el tipo de documento sin mapeo y avisa de ambos casos no bloqueantes", async () => {
-    const { filas, advertencias } = await generarFilasAFPnetExcel(planillaMensualId, ANIO, MES);
+    const { filas, advertencias } = await generarFilasAFPnetExcel(ALCANCE);
 
     // Se excluye solo el trabajador con tipo de documento sin mapeo -> 5 filas, no 6.
     expect(filas).toHaveLength(5);
@@ -217,7 +218,7 @@ describe("generarFilasAFPnetExcel", () => {
   });
 
   it("mapea el tipo de documento propio de AFPnet (01->0 DNI, 04->1 Carne de Extranjeria)", async () => {
-    const { filas } = await generarFilasAFPnetExcel(planillaMensualId, ANIO, MES);
+    const { filas } = await generarFilasAFPnetExcel(ALCANCE);
 
     const filaNormal = filas.find((f) => f[3] === DNI_NORMAL)!;
     expect(filaNormal[2]).toBe("0");
@@ -227,7 +228,7 @@ describe("generarFilasAFPnetExcel", () => {
   });
 
   it("normaliza el tipo_documento LEGADO de 1 solo digito ('1') al mismo DNI que '01' (bug real de produccion, 19/09)", async () => {
-    const { filas, advertencias } = await generarFilasAFPnetExcel(planillaMensualId, ANIO, MES);
+    const { filas, advertencias } = await generarFilasAFPnetExcel(ALCANCE);
 
     const filaLegado = filas.find((f) => f[3] === DNI_LEGADO_UN_DIGITO)!;
     expect(filaLegado).toBeDefined(); // antes del fix, esta fila se excluia por "sin mapeo"
@@ -236,7 +237,7 @@ describe("generarFilasAFPnetExcel", () => {
   });
 
   it("arma apellido paterno/materno/nombres en columnas separadas, en blanco si faltan (no bloquea)", async () => {
-    const { filas } = await generarFilasAFPnetExcel(planillaMensualId, ANIO, MES);
+    const { filas } = await generarFilasAFPnetExcel(ALCANCE);
 
     const filaNormal = filas.find((f) => f[3] === DNI_NORMAL)!;
     expect([filaNormal[4], filaNormal[5], filaNormal[6]]).toEqual(["PEREZ", "GOMEZ", "JUAN"]);
@@ -246,14 +247,14 @@ describe("generarFilasAFPnetExcel", () => {
   });
 
   it('Excepcion de Aportar (columna K, indice 10) siempre en blanco', async () => {
-    const { filas } = await generarFilasAFPnetExcel(planillaMensualId, ANIO, MES);
+    const { filas } = await generarFilasAFPnetExcel(ALCANCE);
     for (const fila of filas) {
       expect(fila[10]).toBe("");
     }
   });
 
   it("aportes voluntarios (columnas M, N, O) siempre en 0, y AFP (columna Q) siempre en blanco", async () => {
-    const { filas } = await generarFilasAFPnetExcel(planillaMensualId, ANIO, MES);
+    const { filas } = await generarFilasAFPnetExcel(ALCANCE);
     for (const fila of filas) {
       expect([fila[12], fila[13], fila[14]]).toEqual([0, 0, 0]);
       expect(fila[16]).toBe("");
@@ -261,7 +262,7 @@ describe("generarFilasAFPnetExcel", () => {
   });
 
   it('Inicio/Cese de RL (S/N) segun si la fecha de ingreso/cese cae dentro del mes consolidado', async () => {
-    const { filas } = await generarFilasAFPnetExcel(planillaMensualId, ANIO, MES);
+    const { filas } = await generarFilasAFPnetExcel(ALCANCE);
 
     // Ingreso antes del mes, sin cese -> Inicio N, Cese N.
     const filaNormal = filas.find((f) => f[3] === DNI_NORMAL)!;
@@ -278,7 +279,7 @@ describe("generarFilasAFPnetExcel", () => {
   });
 
   it("tipo de trabajo (columna P, indice 15): 'C' para categorias de construccion civil, 'N' para las demas", async () => {
-    const { filas } = await generarFilasAFPnetExcel(planillaMensualId, ANIO, MES);
+    const { filas } = await generarFilasAFPnetExcel(ALCANCE);
     for (const fila of filas) {
       expect(fila[15]).toBe("C"); // todos los trabajadores de este fixture son PEON (construccion civil)
     }
@@ -305,7 +306,7 @@ describe("generarFilasAFPnetExcel", () => {
       [planillaMensualId, contratoId]
     );
 
-    const { filas: filasConRegimenGeneral } = await generarFilasAFPnetExcel(planillaMensualId, ANIO, MES);
+    const { filas: filasConRegimenGeneral } = await generarFilasAFPnetExcel(ALCANCE);
     const filaRegimenGeneral = filasConRegimenGeneral.find((f) => f[3] === "55551099")!;
     expect(filaRegimenGeneral).toBeDefined();
     expect(filaRegimenGeneral[15]).toBe("N");
@@ -317,8 +318,8 @@ describe("generarFilasAFPnetExcel", () => {
   });
 
   it("remuneracion asegurable (columna L, indice 11) usa la MISMA formula que el CSV simplificado de AFPnet", async () => {
-    const { filas } = await generarFilasAFPnetExcel(planillaMensualId, ANIO, MES);
-    const csv = await generarCSVAFPnetMensual(planillaMensualId);
+    const { filas } = await generarFilasAFPnetExcel(ALCANCE);
+    const csv = await generarCSVAFPnetMensual(ALCANCE);
     const filasCsv = csv.split("\n").slice(1); // sin encabezado
 
     const filaNormal = filas.find((f) => f[3] === DNI_NORMAL)!;
@@ -337,7 +338,11 @@ describe("generarFilasAFPnetExcel", () => {
       [ANIO, MES, adminUserId]
     );
     const otraId = otraCabecera.rows[0].id;
-    const { filas, advertencias } = await generarFilasAFPnetExcel(otraId, ANIO, MES);
+    const { filas, advertencias } = await generarFilasAFPnetExcel({
+      anio: ANIO,
+      mes: MES,
+      proyecto: "Proyecto Sin Consolidar AFPNET-EXCEL-TEST",
+    });
     expect(filas).toEqual([]);
     expect(advertencias).toEqual([]);
     await pool.query("DELETE FROM planilla_mensual WHERE id = $1", [otraId]);
@@ -384,7 +389,7 @@ describe("generarFilasAFPnetExcel", () => {
       [planillaMensualId, contratoId]
     );
 
-    const { filas, advertencias } = await generarFilasAFPnetExcel(planillaMensualId, ANIO, MES);
+    const { filas, advertencias } = await generarFilasAFPnetExcel(ALCANCE);
     const fila = filas.find((f) => f[3] === "55551098");
     expect(fila).toBeDefined();
     expect(advertencias.some((a) => a.includes("55551098"))).toBe(false);
@@ -393,9 +398,35 @@ describe("generarFilasAFPnetExcel", () => {
   });
 });
 
+describe("obtenerDiagnosticoAfpnetMensual", () => {
+  it("cuenta a TODOS los trabajadores consolidados (los 6 del fixture, todos AFP), sin importar advertencias/exclusiones del Excel", async () => {
+    const diagnostico = await obtenerDiagnosticoAfpnetMensual(ALCANCE);
+    expect(diagnostico).toEqual({
+      trabajadores_consolidados: 6,
+      por_sistema_pension: [{ sistema_pension: "AFP", total: 6 }],
+    });
+  });
+
+  it("planilla mensual sin ningun trabajador consolidado -> 0 trabajadores, sin lanzar error", async () => {
+    const otraCabecera = await pool.query<{ id: number }>(
+      `INSERT INTO planilla_mensual (proyecto, anio, mes, calculado_en, calculado_por)
+       VALUES ('Proyecto Sin Consolidar DIAGNOSTICO-TEST', $1, $2, now(), $3) RETURNING id`,
+      [ANIO, MES, adminUserId]
+    );
+    const otraId = otraCabecera.rows[0].id;
+    const diagnostico = await obtenerDiagnosticoAfpnetMensual({
+      anio: ANIO,
+      mes: MES,
+      proyecto: "Proyecto Sin Consolidar DIAGNOSTICO-TEST",
+    });
+    expect(diagnostico).toEqual({ trabajadores_consolidados: 0, por_sistema_pension: [] });
+    await pool.query("DELETE FROM planilla_mensual WHERE id = $1", [otraId]);
+  });
+});
+
 describe("construirWorkbookAFPnetExcel", () => {
   it("arma un workbook de una sola hoja 'AFPnet', SIN fila de encabezado, con DNI y CUSPP como texto", async () => {
-    const { filas } = await generarFilasAFPnetExcel(planillaMensualId, ANIO, MES);
+    const { filas } = await generarFilasAFPnetExcel(ALCANCE);
     const workbook = construirWorkbookAFPnetExcel(filas);
 
     const hoja = workbook.getWorksheet("AFPnet");
