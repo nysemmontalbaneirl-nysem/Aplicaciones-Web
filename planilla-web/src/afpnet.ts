@@ -158,23 +158,30 @@ export async function generarCSVAFPnet(periodoId: number, proyecto?: string): Pr
  * solo a obreros (construccion civil, nunca EVENTUAL - ver
  * consolidarPlanillaMensual en planillaMensual.ts), asi que no hace falta
  * repetir aqui el filtro por categoria_ocupacional.
+ *
+ * A diferencia de generarCSVAFPnet (por periodo de pago, arriba), esta
+ * variante YA NO acepta un "proyecto" opcional para filtrar por
+ * "c.proyecto" (bug real de produccion, corregido 21/09/2026 - mismo
+ * problema y misma correccion que generarFilasAFPnetExcel en afpnetExcel.ts,
+ * ver el comentario detallado ahi). La diferencia clave con
+ * generarCSVAFPnet: un periodo de pago (periodo_id) SI puede ser "legado"
+ * y abarcar varios proyectos a la vez (Ronda C, proyecto=NULL), por lo que
+ * ahi ese filtro opcional tiene un uso real; una Planilla Mensual
+ * (planilla_mensual_id) en cambio pertenece SIEMPRE a un unico proyecto por
+ * construccion (indice unico proyecto+anio+mes) - agregar ahi ademas
+ * "c.proyecto = $2" solo agregaba el riesgo de excluir en silencio a un
+ * trabajador cuyo contrato tuviera el campo proyecto desactualizado o con
+ * una diferencia de texto, sin ganar ninguna precision real.
  */
-export async function generarCSVAFPnetMensual(planillaMensualId: number, proyecto?: string): Promise<string> {
-  const condiciones = ["d.planilla_mensual_id = $1", "c.sistema_pension = 'AFP'"];
-  const valores: unknown[] = [planillaMensualId];
-  if (proyecto) {
-    valores.push(proyecto);
-    condiciones.push(`c.proyecto = $${valores.length}`);
-  }
-
+export async function generarCSVAFPnetMensual(planillaMensualId: number): Promise<string> {
   const resultado = await pool.query<FilaAFPnet>(
     `SELECT ${COLUMNAS_FILA_AFPNET_MENSUAL}
      FROM detalle_planilla_mensual d
      JOIN contratos c ON c.id = d.contrato_id
      JOIN empleados e ON e.id = c.empleado_id
-     WHERE ${condiciones.join(" AND ")}
+     WHERE d.planilla_mensual_id = $1 AND c.sistema_pension = 'AFP'
      ORDER BY e.apellidos_nombres`,
-    valores
+    [planillaMensualId]
   );
 
   return construirCSVAFPnet(resultado.rows);

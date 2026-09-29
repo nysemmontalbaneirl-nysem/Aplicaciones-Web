@@ -140,12 +140,7 @@ planillaMensualRouter.get(
     // se recalculan en cada carga de esta pantalla (no solo al consolidar),
     // porque dependen de datos de Trabajadores que pueden corregirse en
     // cualquier momento sin necesidad de volver a consolidar el mes.
-    const { advertencias: avisosDatosAfpnet } = await generarFilasAFPnetExcel(
-      consolidado.planillaMensual.id,
-      proyecto,
-      anio,
-      mes
-    );
+    const { advertencias: avisosDatosAfpnet } = await generarFilasAFPnetExcel(consolidado.planillaMensual.id, anio, mes);
     res.json({ ...consolidado, avisos_datos_afpnet: avisosDatosAfpnet });
   })
 );
@@ -180,7 +175,7 @@ planillaMensualRouter.get(
     if (acceso.tipo === "no_encontrada") return res.status(404).json({ error: "Planilla Mensual no encontrada" });
     const cabecera = acceso.cabecera;
 
-    const csv = await generarCSVAFPnetMensual(cabecera.id, cabecera.proyecto);
+    const csv = await generarCSVAFPnetMensual(cabecera.id);
     const nombreArchivo = `AFPnet_${cabecera.anio}${String(cabecera.mes).padStart(2, "0")}_mensual_${cabecera.proyecto}.csv`;
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -202,7 +197,7 @@ planillaMensualRouter.get(
     if (acceso.tipo === "no_encontrada") return res.status(404).json({ error: "Planilla Mensual no encontrada" });
     const cabecera = acceso.cabecera;
 
-    const { filas, advertencias } = await generarFilasAFPnetExcel(cabecera.id, cabecera.proyecto, cabecera.anio, cabecera.mes);
+    const { filas, advertencias } = await generarFilasAFPnetExcel(cabecera.id, cabecera.anio, cabecera.mes);
     if (filas.length === 0) {
       return res.status(400).json({
         error:

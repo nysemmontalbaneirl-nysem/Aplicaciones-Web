@@ -119,10 +119,28 @@ function sN(fecha: unknown, desde: string, hasta: string): "S" | "N" {
  * oficial de AFPnet para una Planilla Mensual Consolidada ya calculada
  * (Ronda E), y la lista de advertencias no bloqueantes (datos referenciales
  * incompletos, o trabajadores excluidos por tipo de documento sin mapeo).
+ *
+ * IMPORTANTE (bug real de produccion, corregido 21/09/2026): esta funcion ya
+ * NO filtra por "c.proyecto" (el proyecto ACTUAL del contrato). Antes lo
+ * hacia, comparando contra el proyecto de la Planilla Mensual - un filtro
+ * redundante y peligroso, porque `planilla_mensual_id` YA identifica de
+ * forma unica (indice unico proyecto+anio+mes) el proyecto/mes exacto: todo
+ * registro en detalle_planilla_mensual con ese id fue puesto ahi por
+ * consolidarPlanillaMensual() precisamente para ese proyecto, sin importar
+ * cual sea el valor ACTUAL de contratos.proyecto (texto libre, sin relacion
+ * de llave foranea con periodos_planilla.proyecto/planilla_mensual.proyecto -
+ * ver Ronda C). Si el proyecto de un contrato cambiaba o se corregia despues
+ * de haberse usado para consolidar un mes (o si el texto no coincidia por un
+ * caracter especial/espacio, ej. el "N°" de un nombre de proyecto largo),
+ * ese filtro excluia SILENCIOSAMENTE al trabajador de este archivo - sin
+ * ningun aviso, porque el WHERE lo descartaba antes de que el loop de abajo
+ * pudiera generar una advertencia. Esto reproducia exactamente el sintoma
+ * reportado por el usuario: "el reporte consolidado si tiene datos, pero el
+ * Excel de AFPnet genera vacio" - el reporte general (obtenerPlanillaMensual,
+ * en planillaMensual.ts) nunca tuvo este filtro y por eso nunca fallaba.
  */
 export async function generarFilasAFPnetExcel(
   planillaMensualId: number,
-  proyecto: string,
   anio: number,
   mes: number
 ): Promise<{ filas: (string | number)[][]; advertencias: string[] }> {
@@ -133,9 +151,9 @@ export async function generarFilasAFPnetExcel(
      FROM detalle_planilla_mensual d
      JOIN contratos c ON c.id = d.contrato_id
      JOIN empleados e ON e.id = c.empleado_id
-     WHERE d.planilla_mensual_id = $1 AND c.sistema_pension = 'AFP' AND c.proyecto = $2
+     WHERE d.planilla_mensual_id = $1 AND c.sistema_pension = 'AFP'
      ORDER BY e.apellidos_nombres`,
-    [planillaMensualId, proyecto]
+    [planillaMensualId]
   );
 
   const filas: (string | number)[][] = [];

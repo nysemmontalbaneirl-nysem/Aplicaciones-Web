@@ -119,9 +119,16 @@ describe("generarCSVAFPnetMensual", () => {
     expect(filas[1]).toContain("INTEGRA");
   });
 
-  it("filtra por proyecto igual que la variante por periodo (proyecto inexistente -> sin filas)", async () => {
-    const csv = await generarCSVAFPnetMensual(planillaMensualId, "Proyecto Que No Existe");
+  it("ya no filtra por proyecto (bug real de produccion, corregido 21/09/2026 - ver comentario en afpnet.ts): una planilla mensual sin trabajadores consolidados da solo el encabezado", async () => {
+    const otraCabecera = await pool.query<{ id: number }>(
+      `INSERT INTO planilla_mensual (proyecto, anio, mes, calculado_en, calculado_por)
+       VALUES ('Proyecto Sin Consolidar EXPORTACIONES-TEST', 2026, 9, now(), $1) RETURNING id`,
+      [adminUserId]
+    );
+    const otraId = otraCabecera.rows[0].id;
+    const csv = await generarCSVAFPnetMensual(otraId);
     const filas = csv.split("\n");
     expect(filas).toHaveLength(1); // solo el encabezado
+    await pool.query("DELETE FROM planilla_mensual WHERE id = $1", [otraId]);
   });
 });
