@@ -413,8 +413,13 @@ export function calcularRemuneracionFeriado(
  * los primeros 20 dias/año de "Descanso Medico" por enfermedad, a cargo del
  * empleador (D.S. 009-97-SA, concepto DESCANSO_MEDICO, casilla PLAME 0121).
  * Valorizado igual que un dia normal trabajado (confirmado con el usuario:
- * afecto a EsSalud/SCTR/SENATI/ONP-AFP/Renta5ta/Conafovicer igual que
- * SUELDO_BASICO). El tope de 20 dias/año por contrato NO se aplica aqui
+ * afecto a EsSalud/SCTR/SENATI/ONP-AFP/Renta5ta igual que SUELDO_BASICO).
+ * EXCEPCION (migracion 039): NO esta afecto a Conafovicer - el usuario
+ * confirmo que los dias de descanso medico, subsidiados o no, no deben
+ * considerarse en la base imponible de ese aporte (ver
+ * sql/migracion_039_conafovicer_excluye_descanso_medico.sql; el ajuste es
+ * puramente de datos, vive en conceptos_planilla.afecto_conafovicer, no en
+ * este calculo). El tope de 20 dias/año por contrato NO se aplica aqui
  * (seria demasiado tarde: este calculo solo ve UN periodo/tramo a la vez, no
  * el acumulado del año) sino en agregarTareoDiario (routes/planilla.ts),
  * que divide automaticamente, por contrato y por año calendario, cuantos de
@@ -531,6 +536,21 @@ export function calcularAsignacionFamiliar(
  * dias_trabajados + descanso medico + feriados para este calculo, SIN
  * dominical, a diferencia de la Gratificacion). No incluye maternidad/
  * paternidad (el usuario solo confirmo el criterio para descanso medico).
+ *
+ * Migracion 039 (18/09/2026): en produccion se agrega dias_dominical_no_laborado
+ * (el proporcional de descanso semanal NO trabajado, migracion 023 -
+ * jornal/6 por semana completa) a los dias computables - confirmado
+ * explicitamente por el usuario. OJO: esto es DISTINTO de dias_dominical
+ * (domingo EFECTIVAMENTE trabajado), que el usuario confirmo dejar FUERA
+ * del calculo de escolaridad (a diferencia de la Gratificacion, que si
+ * incluye ambos).
+ *
+ * NOTA (recon 26/46): "dias_dominical_no_laborado" no existe todavia en
+ * AsistenciaEntrada en este arbol (migraciones 022/023/026 no
+ * reconstruidas, ver RECONSTRUCCION_BRECHAS.md brecha #4) - se omite ese
+ * sumando aqui (mismo criterio ya usado en el resto del motor de calculo
+ * para esta brecha). Reincorporar cuando se reconstruya esa
+ * infraestructura.
  */
 export function calcularAsignacionEscolar(
   jornalDiario: number,
@@ -1157,6 +1177,27 @@ function vigenteEnMes(concepto: ConceptoPlanilla, mes: number, anio: number): bo
 }
 
 /**
+ * Migracion 039: "interruptor" para desactivar temporalmente un concepto de
+ * CODIGO FIJO (sin formula) sin borrarlo del catalogo - pensado para poder
+ * usar, en su lugar, un concepto personalizado con formula propia ("gemelo")
+ * que calcule ese mismo concepto con una regla distinta (ej. Escolaridad sin
+ * el proporcional de dominical), sin pagarlo dos veces. Un codigo que no
+ * existe en el catalogo (no deberia pasar en la practica) se trata como
+ * activo, para no romper el calculo por un dato faltante.
+ *
+ * OJO: SUELDO_BASICO/EsSalud/SCTR/SENATI/ONP/AFP/Renta5ta NO pasan por este
+ * mecanismo - el sueldo basico no se calcula a partir de un lookup a
+ * conceptos_planilla (ver calcularSueldoBasico) y los aportes/descuentos son
+ * un mecanismo generico (sumarBase) que no se "apaga" por concepto, por eso
+ * quedan fuera de este interruptor sin necesidad de un guard aca (el guard
+ * de "esto no se puede desactivar" para SUELDO_BASICO vive en la API, ver
+ * PUT /api/conceptos/:codigo).
+ */
+function estaActivo(conceptos: ConceptosPlanilla, codigo: string): boolean {
+  return conceptos[codigo]?.activo !== false;
+}
+
+/**
  * Suma los montos de los conceptos que esten marcados afectos a "campo"
  * (afecto_essalud, afecto_afp, afecto_renta5ta, etc.) en conceptos_planilla.
  * Esta es la pieza central de la pestana Configuracion: reemplaza las
@@ -1203,51 +1244,77 @@ export function calcularLineaPlanilla(
 
   const jornalDiario = calcularJornalDiario(contrato, tablaCategorias, diasPeriodo);
   const sueldoBasico = calcularSueldoBasico(jornalDiario, asistencia);
-  const remDominical = calcularRemuneracionDominical(jornalDiario, asistencia);
-  const remFeriado = calcularRemuneracionFeriado(jornalDiario, asistencia);
-  const importeHorasExtra = calcularHorasExtra(
-    jornalDiario,
-    asistencia,
-    contrato.categoria_ocupacional,
-    [
-      obtenerFactor(conceptos, "HORAS_EXTRA_CONSTRUCCION", "factor1"),
-      obtenerFactor(conceptos, "HORAS_EXTRA_CONSTRUCCION", "factor2"),
-      obtenerFactor(conceptos, "HORAS_EXTRA_CONSTRUCCION", "factor3"),
-    ],
-    [
-      obtenerFactor(conceptos, "HORAS_EXTRA_GENERAL", "factor1"),
-      obtenerFactor(conceptos, "HORAS_EXTRA_GENERAL", "factor2"),
-      obtenerFactor(conceptos, "HORAS_EXTRA_GENERAL", "factor3"),
-    ]
-  );
+  // Migracion 039: cada concepto de codigo fijo de abajo se calcula solo si
+  // conceptos_planilla.activo no esta en false para su codigo (ver
+  // estaActivo arriba) - permite apagar temporalmente un concepto (ej. para
+  // reemplazarlo por un "gemelo" con formula propia) sin borrar su fila del
+  // catalogo.
+  // NOTA (recon 26/46): el parche original tambien gateaba
+  // remDominicalProporcional/sobretasaDominical/sobretasaFeriado/
+  // condicionTrabajo con este mismo interruptor - esos campos no existen
+  // todavia en este arbol (migraciones 022/023/026, ver brecha #4), asi que
+  // se omiten aqui igual que en el resto del motor de calculo.
+  const remDominical = estaActivo(conceptos, "REM_DOMINICAL")
+    ? calcularRemuneracionDominical(jornalDiario, asistencia)
+    : 0;
+  const remFeriado = estaActivo(conceptos, "REM_FERIADO") ? calcularRemuneracionFeriado(jornalDiario, asistencia) : 0;
+  const codigoHorasExtra = esConstruccionCivil(contrato.categoria_ocupacional)
+    ? "HORAS_EXTRA_CONSTRUCCION"
+    : "HORAS_EXTRA_GENERAL";
+  const importeHorasExtra = estaActivo(conceptos, codigoHorasExtra)
+    ? calcularHorasExtra(
+        jornalDiario,
+        asistencia,
+        contrato.categoria_ocupacional,
+        [
+          obtenerFactor(conceptos, "HORAS_EXTRA_CONSTRUCCION", "factor1"),
+          obtenerFactor(conceptos, "HORAS_EXTRA_CONSTRUCCION", "factor2"),
+          obtenerFactor(conceptos, "HORAS_EXTRA_CONSTRUCCION", "factor3"),
+        ],
+        [
+          obtenerFactor(conceptos, "HORAS_EXTRA_GENERAL", "factor1"),
+          obtenerFactor(conceptos, "HORAS_EXTRA_GENERAL", "factor2"),
+          obtenerFactor(conceptos, "HORAS_EXTRA_GENERAL", "factor3"),
+        ]
+      )
+    : 0;
   const factorAsignacionFamiliar = obtenerFactor(conceptos, "ASIGNACION_FAMILIAR", "factor1");
-  const asignacionFamiliar = calcularAsignacionFamiliar(
-    contrato,
-    numeroHijos,
-    asistencia,
-    parametros,
-    diasPeriodo,
-    factorAsignacionFamiliar
-  );
-  const bonificacionBUC = calcularBonificacionBUC(contrato, jornalDiario, asistencia, tablaCategorias);
-  const asignacionEscolaridad = calcularAsignacionEscolar(
-    jornalDiario,
-    numeroHijos,
-    asistencia,
-    contrato.categoria_ocupacional,
-    obtenerFactor(conceptos, "ASIGNACION_ESCOLARIDAD", "factor1")
-  );
-  const bonificacionBAE = calcularBonificacionBAE(contrato, jornalDiario, asistencia, tablaCategorias);
-  const bonificacionMovilidad = calcularBonificacionMovilidad(contrato, asistencia, tablaCategorias);
+  const asignacionFamiliar = estaActivo(conceptos, "ASIGNACION_FAMILIAR")
+    ? calcularAsignacionFamiliar(contrato, numeroHijos, asistencia, parametros, diasPeriodo, factorAsignacionFamiliar)
+    : 0;
+  const bonificacionBUC = estaActivo(conceptos, "BUC")
+    ? calcularBonificacionBUC(contrato, jornalDiario, asistencia, tablaCategorias)
+    : 0;
+  const asignacionEscolaridad = estaActivo(conceptos, "ASIGNACION_ESCOLARIDAD")
+    ? calcularAsignacionEscolar(
+        jornalDiario,
+        numeroHijos,
+        asistencia,
+        contrato.categoria_ocupacional,
+        obtenerFactor(conceptos, "ASIGNACION_ESCOLARIDAD", "factor1")
+      )
+    : 0;
+  const bonificacionBAE = estaActivo(conceptos, "BAE")
+    ? calcularBonificacionBAE(contrato, jornalDiario, asistencia, tablaCategorias)
+    : 0;
+  const bonificacionMovilidad = estaActivo(conceptos, "MOVILIDAD")
+    ? calcularBonificacionMovilidad(contrato, asistencia, tablaCategorias)
+    : 0;
   // Migracion 030: pago real de descanso medico por enfermedad/licencia por
   // paternidad (ver las funciones puras de arriba y su comentario). No
   // entran a remuneracionComputable/remuneracionComputableRegular (mismo
   // criterio que horas extra/sobretasas: son variables/ocasionales, no
   // remuneracion "regular" para gratificacion/CTS de EMPLEADO).
-  const subsidioEnfermedad = calcularSubsidioEnfermedad(jornalDiario, asistencia);
+  const subsidioEnfermedad = estaActivo(conceptos, "DESCANSO_MEDICO")
+    ? calcularSubsidioEnfermedad(jornalDiario, asistencia)
+    : 0;
   // Migracion 038: ver el comentario completo en calcularIncapacidadEnfermedad.
-  const incapacidadEnfermedad = calcularIncapacidadEnfermedad(jornalDiario, asistencia);
-  const licenciaPaternidad = calcularLicenciaPaternidad(jornalDiario, asistencia);
+  const incapacidadEnfermedad = estaActivo(conceptos, "INCAPACIDAD_ENFERMEDAD")
+    ? calcularIncapacidadEnfermedad(jornalDiario, asistencia)
+    : 0;
+  const licenciaPaternidad = estaActivo(conceptos, "LICENCIA_PATERNIDAD")
+    ? calcularLicenciaPaternidad(jornalDiario, asistencia)
+    : 0;
 
   // Remuneracion computable del periodo actual (solo para mostrar en el detalle)
   const remuneracionComputable = sueldoBasico + remDominical + asignacionFamiliar + bonificacionBUC;
@@ -1263,38 +1330,41 @@ export function calcularLineaPlanilla(
     tablaCategorias,
     factorAsignacionFamiliar
   );
-  const gratificacion = calcularGratificacion(
-    contrato,
-    asistencia,
-    jornalDiario,
-    remuneracionComputableRegular,
-    mes,
-    anio,
-    contrato.fecha_ingreso,
-    obtenerFactor(conceptos, "GRATIFICACION", "factor1"),
-    obtenerFactor(conceptos, "GRATIFICACION", "factor2")
-  );
-  const bonificacionExtraordinaria = calcularBonificacionExtraordinaria(
-    gratificacion,
-    obtenerFactor(conceptos, "BONIFICACION_EXTRAORDINARIA", "factor1")
-  );
-  const cts = calcularCTS(
-    contrato,
-    jornalDiario,
-    asistencia,
-    remuneracionComputableRegular,
-    gratificacion,
-    mes,
-    anio,
-    contrato.fecha_ingreso,
-    obtenerFactor(conceptos, "CTS", "factor1")
-  );
-  const vacaciones = calcularVacaciones(
-    contrato,
-    jornalDiario,
-    asistencia,
-    obtenerFactor(conceptos, "VACACIONES", "factor1")
-  );
+  const gratificacion = estaActivo(conceptos, "GRATIFICACION")
+    ? calcularGratificacion(
+        contrato,
+        asistencia,
+        jornalDiario,
+        remuneracionComputableRegular,
+        mes,
+        anio,
+        contrato.fecha_ingreso,
+        obtenerFactor(conceptos, "GRATIFICACION", "factor1"),
+        obtenerFactor(conceptos, "GRATIFICACION", "factor2")
+      )
+    : 0;
+  // bonificacionExtraordinaria/cts usan "gratificacion" (ya en 0 si el
+  // concepto GRATIFICACION esta apagado) como insumo - si ademas su PROPIO
+  // concepto esta apagado, tambien quedan en 0 independientemente.
+  const bonificacionExtraordinaria = estaActivo(conceptos, "BONIFICACION_EXTRAORDINARIA")
+    ? calcularBonificacionExtraordinaria(gratificacion, obtenerFactor(conceptos, "BONIFICACION_EXTRAORDINARIA", "factor1"))
+    : 0;
+  const cts = estaActivo(conceptos, "CTS")
+    ? calcularCTS(
+        contrato,
+        jornalDiario,
+        asistencia,
+        remuneracionComputableRegular,
+        gratificacion,
+        mes,
+        anio,
+        contrato.fecha_ingreso,
+        obtenerFactor(conceptos, "CTS", "factor1")
+      )
+    : 0;
+  const vacaciones = estaActivo(conceptos, "VACACIONES")
+    ? calcularVacaciones(contrato, jornalDiario, asistencia, obtenerFactor(conceptos, "VACACIONES", "factor1"))
+    : 0;
 
   const totalIngresos = redondear(
     sueldoBasico +
@@ -1323,8 +1393,7 @@ export function calcularLineaPlanilla(
     SUELDO_BASICO: sueldoBasico,
     REM_DOMINICAL: remDominical,
     REM_FERIADO: remFeriado,
-    [esConstruccionCivil(contrato.categoria_ocupacional) ? "HORAS_EXTRA_CONSTRUCCION" : "HORAS_EXTRA_GENERAL"]:
-      importeHorasExtra,
+    [codigoHorasExtra]: importeHorasExtra,
     ASIGNACION_FAMILIAR: asignacionFamiliar,
     ASIGNACION_ESCOLARIDAD: asignacionEscolaridad,
     BUC: bonificacionBUC,

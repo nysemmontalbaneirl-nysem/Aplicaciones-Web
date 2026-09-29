@@ -609,6 +609,9 @@ export interface ConceptoPlanilla {
   afecto_afp: boolean;
   afecto_renta5ta: boolean | null;
   afecto_conafovicer: boolean;
+  // Migracion 039: interruptor activo/inactivo por concepto (ver
+  // estaActivo en motorCalculo.ts). SUELDO_BASICO no se puede desactivar.
+  activo: boolean;
 }
 
 export interface PeriodoVacacional {

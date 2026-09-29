@@ -14,7 +14,7 @@ const COLUMNAS_AFECTO: { campo: CampoAfecto; etiqueta: string }[] = [
   { campo: "afecto_conafovicer", etiqueta: "CONAFOVICER" },
 ];
 
-type Edicion = Partial<Pick<ConceptoPlanilla, "factor1" | "factor2" | "factor3" | CampoAfecto>>;
+type Edicion = Partial<Pick<ConceptoPlanilla, "factor1" | "factor2" | "factor3" | "activo" | CampoAfecto>>;
 
 export default function Configuracion() {
   const [conceptos, setConceptos] = useState<ConceptoPlanilla[]>([]);
@@ -133,6 +133,28 @@ export default function Configuracion() {
     );
   }
 
+  // Migracion 039: interruptor activo/inactivo para conceptos de codigo fijo
+  // (sin formula) - permite apagar temporalmente uno (ej. para reemplazarlo
+  // por un "gemelo" con formula propia) sin borrarlo del catalogo.
+  // SUELDO_BASICO no se puede apagar (el sueldo/jornal basico siempre se
+  // calcula, ver motorCalculo.ts:estaActivo) - el checkbox aparece
+  // deshabilitado para ese codigo puntual, con una explicacion al pasar el
+  // mouse.
+  function celdaActivo(c: ConceptoPlanilla) {
+    const valor = valorActual(c, "activo");
+    if (c.codigo === "SUELDO_BASICO") {
+      return (
+        <input
+          type="checkbox"
+          checked={true}
+          disabled
+          title="El sueldo/jornal básico siempre se calcula - no se puede desactivar"
+        />
+      );
+    }
+    return <input type="checkbox" checked={valor} onChange={(e) => editar(c.codigo, "activo", e.target.checked)} />;
+  }
+
   return (
     <div className="card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
@@ -169,6 +191,9 @@ export default function Configuracion() {
                     {col.etiqueta}
                   </th>
                 ))}
+                <th style={{ textAlign: "center" }} title="Interruptor para desactivar temporalmente el concepto sin borrarlo">
+                  Activo
+                </th>
                 <th></th>
               </tr>
             </thead>
@@ -189,6 +214,7 @@ export default function Configuracion() {
                       {celdaAfecto(c, col.campo)}
                     </td>
                   ))}
+                  <td style={{ textAlign: "center" }}>{celdaActivo(c)}</td>
                   <td>
                     {esFilaEditada(c.codigo) && (
                       <button

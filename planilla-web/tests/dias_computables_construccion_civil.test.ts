@@ -160,7 +160,14 @@ describe("calcularCTS (funcion pura) - construccion civil suma descanso medico c
   });
 });
 
-describe("calcularAsignacionEscolar (funcion pura) - suma descanso medico computable + feriado (sin dominical)", () => {
+// NOTA (recon 26/46): el titulo original de este describe menciona tambien
+// "+ dominical proporcional (migracion 039)" - esa parte de la migracion 039
+// (sumar dias_dominical_no_laborado a los dias computables de Escolaridad)
+// no se pudo reconstruir: ese campo no existe todavia en AsistenciaEntrada
+// en este arbol (migraciones 022/023/026, ver RECONSTRUCCION_BRECHAS.md
+// brecha #4). El resto de la migracion 039 (interruptor "Activo" por
+// concepto, exclusion de Descanso Medico de CONAFOVICER) SI se reconstruyo.
+describe("calcularAsignacionEscolar (funcion pura) - suma descanso medico computable + feriado", () => {
   it("caso ARTEAGA CARCAMO: 10.94 dias trabajados + 1 dia de descanso medico + 3 hijos -> S/266.56", () => {
     const escolaridad = calcularAsignacionEscolar(
       JORNAL_ARTEAGA,
@@ -355,6 +362,14 @@ describe("Integracion: Vacaciones/CTS/Escolaridad via Tareo Diario + /calcular c
       2
     );
     expect(Number(detalleCon.cts) - Number(detalleSin.cts)).toBeCloseTo(Math.round(jornalDiario * 0.15 * 100) / 100, 2);
+    // NOTA (recon 26/46): en produccion (migracion 039) esta diferencia ya
+    // no es SOLO el dia de descanso medico computable - el dominical
+    // PROPORCIONAL no laborado de esa semana tambien entraria a la formula
+    // de Escolaridad desde esa migracion. Esa parte de la migracion 039 no
+    // se pudo reconstruir ("dias_dominical_no_laborado" no existe todavia
+    // en este arbol - migraciones 022/023/026, ver RECONSTRUCCION_BRECHAS.md
+    // brecha #4), asi que se mantiene la asercion original: la diferencia es
+    // exactamente 1 dia de descanso medico computable.
     expect(Number(detalleCon.asignacion_escolaridad) - Number(detalleSin.asignacion_escolaridad)).toBeCloseTo(
       (jornalDiario / 12) * 3,
       2

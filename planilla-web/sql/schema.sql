@@ -867,10 +867,13 @@ VALUES
     -- 'DESCANSO_MEDICO' (<=20 dias/año por contrato, a cargo del EMPLEADOR,
     -- D.S. 009-97-SA): afecto a TODO como si fuese un dia de trabajo normal,
     -- mismos flags que SUELDO_BASICO, y comparte su misma casilla PLAME 0121.
+    -- EXCEPCION (migracion 039): afecto_conafovicer se corrige a false - el
+    -- usuario confirmo que los dias de descanso medico (subsidiados o no)
+    -- NO deben considerarse en la base imponible de CONAFOVICER.
     ('DESCANSO_MEDICO', 'Días de Descanso Médico',
      'Pago de los primeros 20 dias por año calendario de descanso medico por enfermedad, a cargo del empleador (D.S. 009-97-SA) - se paga y se afecta a aportes igual que un dia normal de trabajo. Del dia 21 en adelante, ver el concepto "Días por Incapacidad por Enfermedad".', 145, '0121',
      NULL, NULL, NULL, NULL, NULL, NULL,
-     true, true, true, true, true, true, true),
+     true, true, true, true, true, true, false),
 
     -- 'INCAPACIDAD_ENFERMEDAD' (21+ dias/año por contrato, subsidiado por
     -- EsSalud directamente al trabajador): mantiene EXACTAMENTE los mismos

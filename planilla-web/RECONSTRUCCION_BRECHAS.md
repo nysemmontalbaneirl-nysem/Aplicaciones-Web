@@ -303,3 +303,41 @@ en este árbol, ninguno de los 3 es una brecha NUEVA de este parche):
 `tests/asiento_contable.test.ts` y `tests/gratificacion_construccion_civil.test.ts`
 no existen (brechas 5 y 2 de arriba), y `tests/dominical_proporcional.test.ts`
 tampoco (brecha 4 de arriba).
+
+## 11. Migración 039 (parche #26/46) — interruptor "Activo" por concepto (reconstruido) + confirmación adicional de la brecha #4
+
+El grueso de este parche (interruptor `activo`/`estaActivo()` para
+conceptos de código fijo en `motorCalculo.ts`, validación y persistencia en
+`PUT /api/conceptos/:codigo`, columna "Activo" en la pestaña Configuración,
+y la exclusión de `DESCANSO_MEDICO` de la base de CONAFOVICER) SÍ se
+reconstruyó por completo — la columna `conceptos_planilla.activo` ya
+existía desde la migración 033 (Ronda D), así que no dependía de ninguna
+infraestructura faltante. `tests/activo_conceptos.test.ts` y
+`tests/conafovicer_descanso_medico.test.ts` (ambos nuevos de este parche)
+pasan sin modificaciones.
+
+Una sola pieza del parche SÍ dependía de la brecha #4 (dominical
+proporcional, migraciones 022/023/026) y se omitió: el requerimiento
+funcional 1 de esta migración agregaba `dias_dominical_no_laborado` a la
+fórmula de `calcularAsignacionEscolar` (Escolaridad) — ese campo no existe
+todavía en `AsistenciaEntrada` en este árbol. Se dejó la fórmula de
+Escolaridad como estaba (solo `dias_trabajados + dias_subsidio_enfermedad_computable
++ dias_feriado`) y se adaptaron en consecuencia el `describe()` de
+`tests/dias_computables_construccion_civil.test.ts` (título y las 2 pruebas
+que antes ejercitaban `dias_dominical_no_laborado`) y la prueba de
+integración de Vacaciones/CTS/Escolaridad más abajo en el mismo archivo
+(volvió a su aserción original, sin el término de dominical proporcional).
+
+**Bug de datos preexistente descubierto y corregido de paso:** la ruta
+`PUT /api/conceptos/:codigo` (conceptos de código fijo) nunca tuvo su
+propio `try/catch` — cualquier `ErrorValidacion` lanzada ahí (incluidas las
+validaciones YA existentes de `factor1/2/3` y `afecto_*`, anteriores a esta
+migración) caía al manejador de errores centralizado de `app.ts`, que
+siempre responde 500 sin distinguir `ErrorValidacion` (a diferencia de
+`PUT /formula/:codigo`, que sí envuelve su lógica en `try/catch` desde
+antes). Esto quedó expuesto porque las pruebas nuevas de este parche sí
+verifican una respuesta 400 concreta (`SUELDO_BASICO` no se puede
+desactivar, `activo` no booleano). Se agregó el mismo patrón `try/catch` ya
+usado en el resto de `src/routes/conceptos.ts` — no es una regresión de
+esta reconstrucción: la ruta nunca tuvo ese manejo en ningún punto de los
+46 parches recuperados hasta ahora.

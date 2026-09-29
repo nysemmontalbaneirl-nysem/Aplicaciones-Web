@@ -215,68 +215,100 @@ conceptosRouter.put(
   "/:codigo",
   requierePermiso("conceptos.editar"),
   asyncHandler(async (req: Request, res: Response) => {
-    const existente = await pool.query("SELECT * FROM conceptos_planilla WHERE codigo = $1", [req.params.codigo]);
-    if (existente.rowCount === 0) {
-      return res.status(404).json({ error: "Concepto no encontrado" });
-    }
-    const actual = existente.rows[0];
-    const b = req.body;
+    try {
+      const existente = await pool.query("SELECT * FROM conceptos_planilla WHERE codigo = $1", [req.params.codigo]);
+      if (existente.rowCount === 0) {
+        return res.status(404).json({ error: "Concepto no encontrado" });
+      }
+      const actual = existente.rows[0];
+      const b = req.body;
 
-    for (const campoFactor of ["factor1", "factor2", "factor3"] as const) {
-      if (b[campoFactor] !== undefined && b[campoFactor] !== null) {
-        if (typeof b[campoFactor] !== "number" || !Number.isFinite(b[campoFactor])) {
-          throw new ErrorValidacion(`${campoFactor} debe ser un numero`);
+      for (const campoFactor of ["factor1", "factor2", "factor3"] as const) {
+        if (b[campoFactor] !== undefined && b[campoFactor] !== null) {
+          if (typeof b[campoFactor] !== "number" || !Number.isFinite(b[campoFactor])) {
+            throw new ErrorValidacion(`${campoFactor} debe ser un numero`);
+          }
         }
       }
-    }
-    for (const campo of CAMPOS_AFECTO) {
-      if (b[campo] !== undefined && typeof b[campo] !== "boolean") {
-        throw new ErrorValidacion(`${campo} debe ser verdadero o falso`);
+      for (const campo of CAMPOS_AFECTO) {
+        if (b[campo] !== undefined && typeof b[campo] !== "boolean") {
+          throw new ErrorValidacion(`${campo} debe ser verdadero o falso`);
+        }
       }
-    }
-    if (b.afecto_renta5ta !== undefined && b.afecto_renta5ta !== null && typeof b.afecto_renta5ta !== "boolean") {
-      throw new ErrorValidacion("afecto_renta5ta debe ser verdadero, falso, o nulo");
-    }
+      if (b.afecto_renta5ta !== undefined && b.afecto_renta5ta !== null && typeof b.afecto_renta5ta !== "boolean") {
+        throw new ErrorValidacion("afecto_renta5ta debe ser verdadero, falso, o nulo");
+      }
+      // Migracion 039: interruptor activo/inactivo para conceptos de codigo
+      // fijo (ver estaActivo en motorCalculo.ts). SUELDO_BASICO nunca se
+      // puede apagar por aca - no es solo una convencion de negocio: el
+      // sueldo/jornal basico ni siquiera se calcula leyendo este flag (ver
+      // comentario de estaActivo), asi que "desactivarlo" seria un boton que
+      // aparenta hacer algo y no hace nada - se rechaza explicitamente para
+      // no confundir al usuario.
+      if (b.activo !== undefined && typeof b.activo !== "boolean") {
+        throw new ErrorValidacion("activo debe ser verdadero o falso");
+      }
+      if (b.activo === false && req.params.codigo === "SUELDO_BASICO") {
+        throw new ErrorValidacion("SUELDO_BASICO no se puede desactivar (el sueldo/jornal basico siempre se calcula)");
+      }
 
-    const r = await pool.query(
-      `UPDATE conceptos_planilla SET
-         factor1 = $1, factor2 = $2, factor3 = $3,
-         afecto_essalud = $4, afecto_sctr = $5, afecto_senati = $6,
-         afecto_onp = $7, afecto_afp = $8, afecto_renta5ta = $9, afecto_conafovicer = $10,
-         actualizado_en = now()
-       WHERE codigo = $11
-       RETURNING *`,
-      [
-        b.factor1 !== undefined ? b.factor1 : actual.factor1,
-        b.factor2 !== undefined ? b.factor2 : actual.factor2,
-        b.factor3 !== undefined ? b.factor3 : actual.factor3,
-        b.afecto_essalud !== undefined ? b.afecto_essalud : actual.afecto_essalud,
-        b.afecto_sctr !== undefined ? b.afecto_sctr : actual.afecto_sctr,
-        b.afecto_senati !== undefined ? b.afecto_senati : actual.afecto_senati,
-        b.afecto_onp !== undefined ? b.afecto_onp : actual.afecto_onp,
-        b.afecto_afp !== undefined ? b.afecto_afp : actual.afecto_afp,
-        b.afecto_renta5ta !== undefined ? b.afecto_renta5ta : actual.afecto_renta5ta,
-        b.afecto_conafovicer !== undefined ? b.afecto_conafovicer : actual.afecto_conafovicer,
-        req.params.codigo,
-      ]
-    );
-    await registrarBitacora(req.usuario!.id, "EDICION_CONCEPTO_PLANILLA", "conceptos_planilla", r.rows[0].id, {
-      codigo: req.params.codigo,
-      antes: {
-        factor1: actual.factor1,
-        factor2: actual.factor2,
-        factor3: actual.factor3,
-        afecto_essalud: actual.afecto_essalud,
-        afecto_sctr: actual.afecto_sctr,
-        afecto_senati: actual.afecto_senati,
-        afecto_onp: actual.afecto_onp,
-        afecto_afp: actual.afecto_afp,
-        afecto_renta5ta: actual.afecto_renta5ta,
-        afecto_conafovicer: actual.afecto_conafovicer,
-      },
-      despues: filaAConcepto(r.rows[0]),
-    });
-    res.json(filaAConcepto(r.rows[0]));
+      const r = await pool.query(
+        `UPDATE conceptos_planilla SET
+           factor1 = $1, factor2 = $2, factor3 = $3,
+           afecto_essalud = $4, afecto_sctr = $5, afecto_senati = $6,
+           afecto_onp = $7, afecto_afp = $8, afecto_renta5ta = $9, afecto_conafovicer = $10,
+           activo = $11,
+           actualizado_en = now()
+         WHERE codigo = $12
+         RETURNING *`,
+        [
+          b.factor1 !== undefined ? b.factor1 : actual.factor1,
+          b.factor2 !== undefined ? b.factor2 : actual.factor2,
+          b.factor3 !== undefined ? b.factor3 : actual.factor3,
+          b.afecto_essalud !== undefined ? b.afecto_essalud : actual.afecto_essalud,
+          b.afecto_sctr !== undefined ? b.afecto_sctr : actual.afecto_sctr,
+          b.afecto_senati !== undefined ? b.afecto_senati : actual.afecto_senati,
+          b.afecto_onp !== undefined ? b.afecto_onp : actual.afecto_onp,
+          b.afecto_afp !== undefined ? b.afecto_afp : actual.afecto_afp,
+          b.afecto_renta5ta !== undefined ? b.afecto_renta5ta : actual.afecto_renta5ta,
+          b.afecto_conafovicer !== undefined ? b.afecto_conafovicer : actual.afecto_conafovicer,
+          b.activo !== undefined ? b.activo : actual.activo,
+          req.params.codigo,
+        ]
+      );
+      await registrarBitacora(req.usuario!.id, "EDICION_CONCEPTO_PLANILLA", "conceptos_planilla", r.rows[0].id, {
+        codigo: req.params.codigo,
+        antes: {
+          factor1: actual.factor1,
+          factor2: actual.factor2,
+          factor3: actual.factor3,
+          afecto_essalud: actual.afecto_essalud,
+          afecto_sctr: actual.afecto_sctr,
+          afecto_senati: actual.afecto_senati,
+          afecto_onp: actual.afecto_onp,
+          afecto_afp: actual.afecto_afp,
+          afecto_renta5ta: actual.afecto_renta5ta,
+          afecto_conafovicer: actual.afecto_conafovicer,
+          activo: actual.activo,
+        },
+        despues: filaAConcepto(r.rows[0]),
+      });
+      res.json(filaAConcepto(r.rows[0]));
+    } catch (err) {
+      // NOTA (recon 26/46): esta ruta no tenia try/catch propio - cualquier
+      // ErrorValidacion (incluidas las validaciones YA existentes de
+      // factor1/2/3 y afecto_*, anteriores a esta migracion) caia al
+      // manejador de errores centralizado de app.ts, que siempre responde
+      // 500 (no distingue ErrorValidacion). Se agrega este catch, igual
+      // patron que el resto de rutas de este archivo (ver PUT
+      // /formula/:codigo mas abajo), necesario para que el interruptor
+      // "Activo" nuevo (y las validaciones previas) respondan 400 en vez
+      // de 500 ante un body invalido.
+      if (err instanceof ErrorValidacion) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
+    }
   })
 );
 
