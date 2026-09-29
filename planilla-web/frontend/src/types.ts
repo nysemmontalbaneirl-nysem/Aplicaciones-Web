@@ -471,6 +471,11 @@ export interface DetallePlanillaMensualFila {
   senati: number;
 
   neto_pagar: number;
+
+  // Migracion 037: montos de conceptos PERSONALIZADOS (formula propia, ver
+  // Configuracion) ya calculados para este mes - antes se guardaban pero
+  // nunca se volvian a leer para esta pantalla.
+  conceptos_personalizados?: { codigo: string; nombre: string; tipo: "INGRESO" | "APORTE" | "DESCUENTO"; monto: number }[];
 }
 
 export interface PlanillaMensualConsolidada {

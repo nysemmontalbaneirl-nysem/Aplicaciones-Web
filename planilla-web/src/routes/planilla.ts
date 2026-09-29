@@ -123,6 +123,49 @@ async function obtenerDetallePeriodo(periodoId: string, q: string | undefined, u
   return { periodo, detalle: resultado.rows };
 }
 
+// Adjunta los montos de conceptos PERSONALIZADOS (formula propia, "Ronda D",
+// migracion 033) a cada fila de detalle (por id de detalle_planilla o de
+// detalle_planilla_mensual). Estos montos se calculan y se guardan UNA sola
+// vez al calcular/consolidar (con la formula vigente en ese momento) y no se
+// recalculan despues aunque el concepto cambie de formula o se desactive -
+// misma foto historica que el resto de detalle_planilla.
+// NOTA (recon 23/46): la definicion original (version de un solo argumento)
+// de esta funcion no llego en ninguno de los 46 parches recuperados - se
+// reconstruyo aqui a partir del contexto disponible en el parche que la
+// modifica (b2d02632, migracion 037) mas los usos ya existentes en
+// planillaMensual.ts/db871772 y el test nuevo de ese mismo parche
+// (tests/planilla_mensual_conceptos_personalizados.test.ts), que fijan la
+// forma exacta del resultado esperado (conceptos_personalizados: {codigo,
+// nombre, tipo, monto}[] por fila). Ver RECONSTRUCCION_BRECHAS.md.
+export async function agregarConceptosPersonalizadosBatch<T extends { id: number }>(
+  filas: T[],
+  tablaDetalleConceptos: "detalle_planilla_conceptos" | "detalle_planilla_conceptos_mensual" = "detalle_planilla_conceptos"
+): Promise<T[]> {
+  if (filas.length === 0) return filas;
+  const detalleIds = filas.map((f) => f.id);
+  // tablaDetalleConceptos: la Planilla Mensual Consolidada (Ronda E) guarda
+  // sus montos personalizados en su propia tabla espejo
+  // (detalle_planilla_conceptos_mensual, referenciando detalle_planilla_mensual.id)
+  // en vez de detalle_planilla_conceptos - el nombre de la tabla viene
+  // fijo de una lista blanca (nunca interpolado desde el usuario), asi que
+  // no hay riesgo de inyeccion SQL al armarlo en el string de la query.
+  const r = await pool.query<{ detalle_id: number; codigo: string; nombre: string; tipo: "INGRESO" | "APORTE" | "DESCUENTO"; monto: string }>(
+    `SELECT dpc.detalle_id, cp.codigo, cp.nombre, cp.tipo, dpc.monto
+     FROM ${tablaDetalleConceptos} dpc
+     JOIN conceptos_planilla cp ON cp.codigo = dpc.concepto_codigo
+     WHERE dpc.detalle_id = ANY($1::int[])
+     ORDER BY cp.orden`,
+    [detalleIds]
+  );
+  const porDetalle = new Map<number, { codigo: string; nombre: string; tipo: "INGRESO" | "APORTE" | "DESCUENTO"; monto: number }[]>();
+  for (const fila of r.rows) {
+    const lista = porDetalle.get(fila.detalle_id) ?? [];
+    lista.push({ codigo: fila.codigo, nombre: fila.nombre, tipo: fila.tipo, monto: Number(fila.monto) });
+    porDetalle.set(fila.detalle_id, lista);
+  }
+  return filas.map((fila) => ({ ...fila, conceptos_personalizados: porDetalle.get(fila.id) ?? [] }));
+}
+
 // Adjunta firma_archivo/firma_mime a cada fila (por contrato_id -> empleado)
 // SOLO para las filas que efectivamente se van a convertir en PDF (boletas/
 // pdf, boletas/zip) - migracion 031. No se agrega a obtenerDetallePeriodo

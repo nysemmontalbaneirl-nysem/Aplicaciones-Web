@@ -68,7 +68,14 @@
 import { pool } from "./db";
 import { calcularLineaPlanilla, esConstruccionCivil, ResultadoCalculoLinea } from "./motorCalculo";
 import { obtenerConceptos } from "./routes/conceptos";
-import { agregarTareoDiario, fechaISO, obtenerAfpTasas, obtenerParametros, obtenerTablaCategorias } from "./routes/planilla";
+import {
+  agregarConceptosPersonalizadosBatch,
+  agregarTareoDiario,
+  fechaISO,
+  obtenerAfpTasas,
+  obtenerParametros,
+  obtenerTablaCategorias,
+} from "./routes/planilla";
 import {
   AsistenciaEntrada,
   AvisoRecalculoPosteriorMensual,
@@ -437,8 +444,13 @@ export async function obtenerPlanillaMensual(proyecto: string, anio: number, mes
      ORDER BY e.apellidos_nombres`,
     [planillaMensual.id]
   );
+  // Conceptos personalizados (formula propia, "Ronda D"): se guardan en su
+  // propia tabla espejo (detalle_planilla_conceptos_mensual) al consolidar
+  // (ver consolidarPlanillaMensual mas arriba) pero antes no se volvian a
+  // leer aqui - la pantalla "Planilla Mensual" quedaba sin poder mostrarlos.
+  const detalle = await agregarConceptosPersonalizadosBatch(detalleResult.rows, "detalle_planilla_conceptos_mensual");
 
-  return { planillaMensual, detalle: detalleResult.rows };
+  return { planillaMensual, detalle };
 }
 
 /** Cabecera por id (usada por las rutas de exportacion: REM/AFPnet/Asiento mensual). */

@@ -190,3 +190,36 @@ recalcular un periodo ya CALCULADO funciona directo, sin necesitar
 un vacío de documentación anterior al 14-sep-2026 — sin cambios desde
 segmentos anteriores, no se volvió a intentar localizarlos en este
 segmento.
+
+## 9. `agregarConceptosPersonalizadosBatch` (versión de un solo argumento) — RECONSTRUIDA a mano en el patch #23/46
+
+**Estado: reconstruida (con comentario `NOTA (recon 23/46)` en el propio
+código), no saltada — a diferencia de las brechas 1 y 4.1 de arriba.**
+
+El patch `#23` (`b2d02632`, "Muestra todos los ingresos, aportes y
+descuentos en Planilla Mensual", migración 037) modifica una función
+`agregarConceptosPersonalizadosBatch` en `src/routes/planilla.ts` que se
+asume YA EXISTENTE (le agrega un segundo parámetro opcional
+`tablaDetalleConceptos`). Pero esa función no aparece definida en ningún
+punto de los 46 parches recuperados — ni siquiera en el patch #15 (Ronda D,
+migración 033, que introdujo la tabla `detalle_planilla_conceptos` que esta
+función lee). Debió agregarse en alguno de los parches que nunca se
+recuperaron (ver punto 8 de arriba).
+
+Como sí se cuenta con el "antes" completo de la firma y el cuerpo de la
+consulta SQL (via el diff del propio patch #23, que los muestra como
+contexto/líneas removidas), y el test nuevo que trae ese mismo patch
+(`tests/planilla_mensual_conceptos_personalizados.test.ts`) deja clarísima
+la forma exacta del resultado esperado (`conceptos_personalizados:
+{codigo, nombre, tipo, monto}[]` adjunto a cada fila, agrupado por
+`detalle_id`/`id`), se optó por reconstruir la función completa a mano en
+vez de saltar el parche — es un caso distinto a la brecha 1 (formulario
+flotante) o 4.1 (`conceptos_aportes`), donde faltaba una funcionalidad
+entera sin ninguna pista concreta de su forma final.
+
+Los 281 tests (incluida la prueba nueva de este parche) pasan con esta
+reconstrucción. Si alguna vez aparece el parche original que definió esta
+función por primera vez, comparar su cuerpo con el reconstruido aquí (en
+`src/routes/planilla.ts`, buscar el comentario `NOTA (recon 23/46)`) por si
+hay alguna diferencia de detalle (por ejemplo, algún manejo de error o
+caso borde que no se haya podido inferir del contexto disponible).
