@@ -93,6 +93,19 @@ export default function Boletas({ periodoInicial }: Props) {
     return conToken(`${BASE_URL}/periodos/${periodoId}/planilla/${formato}?${params.toString()}`);
   }
 
+  // URL de descarga de las boletas COMPLETAS (no el resumen tabular de
+  // arriba): "pdf" arma un solo PDF con una boleta por pagina, "zip" un PDF
+  // por trabajador dentro de un ZIP. Sin ids seleccionados exporta TODAS
+  // las boletas visibles en pantalla (mismo texto de busqueda), pedido
+  // explicito del usuario (sept. 2026) para poder guardar las boletas de
+  // un periodo completo sin tener que seleccionarlas una por una.
+  function urlExportarBoletas(formato: "pdf" | "zip", ids: number[]): string {
+    const params = new URLSearchParams();
+    if (busqueda.trim()) params.set("q", busqueda.trim());
+    if (ids.length > 0) params.set("ids", ids.join(","));
+    return conToken(`${BASE_URL}/periodos/${periodoId}/boletas/${formato}?${params.toString()}`);
+  }
+
   function alternarSeleccion(id: number) {
     setSeleccionados((prev) => {
       const nuevo = new Set(prev);
@@ -192,7 +205,21 @@ export default function Boletas({ periodoInicial }: Props) {
                 <button type="button">Exportar a Excel</button>
               </a>
               <a href={urlExportar("pdf")}>
-                <button type="button">Exportar a PDF</button>
+                <button type="button">Exportar a PDF (resumen)</button>
+              </a>
+              <a href={urlExportarBoletas("pdf", Array.from(seleccionados))}>
+                <button type="button" title="Un solo PDF con las boletas completas, una por pagina">
+                  {seleccionados.size > 0
+                    ? `Descargar boletas en PDF (${seleccionados.size})`
+                    : "Descargar todas las boletas en PDF"}
+                </button>
+              </a>
+              <a href={urlExportarBoletas("zip", Array.from(seleccionados))}>
+                <button type="button" title="Un archivo ZIP con un PDF de boleta por trabajador">
+                  {seleccionados.size > 0
+                    ? `Descargar boletas en ZIP (${seleccionados.size})`
+                    : "Descargar todas las boletas en ZIP"}
+                </button>
               </a>
             </div>
           </div>

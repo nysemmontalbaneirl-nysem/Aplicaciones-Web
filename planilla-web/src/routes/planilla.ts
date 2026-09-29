@@ -12,6 +12,7 @@ import { Contrato, ParametrosNormativos, TablaSalarialMensual, TasasAFPMensuales
 import { ErrorValidacion } from "../validaciones";
 import { registrarBitacora } from "../bitacora";
 import { generarPdfTabla } from "../pdfTabla";
+import { DetalleBoletaPdf, generarPdfBoletas, generarZipBoletas } from "../boletaPdf";
 
 export const planillaRouter = Router();
 
@@ -101,7 +102,7 @@ async function obtenerDetallePeriodo(periodoId: string, q: string | undefined, u
   const resultado = await pool.query(
     `SELECT d.*, e.apellidos_nombres, e.numero_documento, e.numero_hijos,
             c.proyecto, c.categoria_ocupacional, c.sistema_pension, c.afp_nombre,
-            c.cuspp, c.fecha_ingreso
+            c.cuspp, c.fecha_ingreso, c.fecha_cese
      FROM detalle_planilla d
      JOIN contratos c ON c.id = d.contrato_id
      JOIN empleados e ON e.id = c.empleado_id
@@ -247,6 +248,75 @@ planillaRouter.get(
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="planilla_${periodo.mes}_${periodo.anio}.pdf"`);
+    res.send(buffer);
+  })
+);
+
+// Filtra el listado de boletas de un periodo (ya resuelto por
+// obtenerDetallePeriodo, que ya aplica el acceso por proyecto del usuario)
+// por una lista opcional de ids separados por coma (?ids=12,15,20) - si no
+// se manda "ids", se exportan TODAS las boletas del periodo (respetando el
+// mismo filtro ?q= que ya usan los demas exportes de este archivo).
+function filtrarPorIds<T extends { id: number }>(detalle: T[], idsParam: string | undefined): T[] {
+  if (!idsParam || !idsParam.trim()) return detalle;
+  const ids = new Set(
+    idsParam
+      .split(",")
+      .map((s) => Number(s.trim()))
+      .filter((n) => !Number.isNaN(n))
+  );
+  return detalle.filter((d) => ids.has(d.id));
+}
+
+// GET /api/periodos/:id/boletas/pdf?ids=1,2,3&q=texto -> descarga UN SOLO
+// PDF con las boletas seleccionadas (o todas las del periodo si no se
+// manda "ids"), cada una en su propio formato completo de boleta de pago
+// (no el resumen tabular de /planilla/pdf de mas arriba). Pedido explicito
+// del usuario (sept. 2026): antes solo se podia "Imprimir seleccionadas"
+// desde el navegador (window.print()), sin poder guardar un archivo PDF
+// real de esas boletas.
+planillaRouter.get(
+  "/:id/boletas/pdf",
+  requierePermiso("boletas.ver"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const datos = await obtenerDetallePeriodo(req.params.id, req.query.q as string | undefined, req.usuario!);
+    if (!datos) return res.status(404).json({ error: "Periodo no encontrado" });
+    const { periodo, detalle } = datos;
+
+    const filas = filtrarPorIds(detalle, req.query.ids as string | undefined);
+    if (filas.length === 0) {
+      return res.status(400).json({ error: "No hay boletas para exportar (revisa la seleccion o el periodo)" });
+    }
+
+    const buffer = await generarPdfBoletas(filas as unknown as DetalleBoletaPdf[], periodo);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="boletas_${periodo.mes}_${periodo.anio}.pdf"`);
+    res.send(buffer);
+  })
+);
+
+// GET /api/periodos/:id/boletas/zip?ids=1,2,3&q=texto -> descarga un ZIP
+// con un PDF POR TRABAJADOR (mismo criterio que ids/q de la ruta de
+// arriba). Pedido explicito del usuario (sept. 2026): poder guardar las
+// boletas de un periodo en archivos PDF individuales, comprimidos en un
+// solo ZIP, en vez de descargarlas una por una o solo poder enviarlas por
+// correo.
+planillaRouter.get(
+  "/:id/boletas/zip",
+  requierePermiso("boletas.ver"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const datos = await obtenerDetallePeriodo(req.params.id, req.query.q as string | undefined, req.usuario!);
+    if (!datos) return res.status(404).json({ error: "Periodo no encontrado" });
+    const { periodo, detalle } = datos;
+
+    const filas = filtrarPorIds(detalle, req.query.ids as string | undefined);
+    if (filas.length === 0) {
+      return res.status(400).json({ error: "No hay boletas para exportar (revisa la seleccion o el periodo)" });
+    }
+
+    const buffer = await generarZipBoletas(filas as unknown as DetalleBoletaPdf[], periodo);
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="boletas_${periodo.mes}_${periodo.anio}.zip"`);
     res.send(buffer);
   })
 );

@@ -1,4 +1,7 @@
 import PDFDocument from "pdfkit";
+import archiver from "archiver";
+import { esConstruccionCivil } from "./motorCalculo";
+import { CategoriaOcupacional } from "./tipos";
 
 // Genera el PDF de una boleta de pago para enviar por correo. El contenido
 // replica la boleta que ya se ve/imprime en pantalla (frontend/Boleta.tsx),
@@ -30,7 +33,17 @@ export interface DetalleBoletaPdf {
   // se consultan directo desde el backend - a diferencia del frontend, que
   // recibe el JSON ya con fechas convertidas a texto por Express.
   fecha_ingreso: string | Date;
+  // Solo si el trabajador ceso (contratos.fecha_cese) - se muestra en la
+  // boleta cuando esta presente (pedido explicito del usuario, sept. 2026).
+  fecha_cese: string | Date | null;
   dias_trabajados: number;
+  dias_feriado: number;
+  // Numero de horas extra por tramo (no el importe, ya cubierto por
+  // importe_horas_extra) - se muestra igual que dias_trabajados (pedido
+  // explicito del usuario). Ver camposHorasExtra() mas abajo.
+  horas_extra_25: number;
+  horas_extra_35: number;
+  horas_extra_100: number;
 
   sueldo_basico: number;
   remuneracion_dominical: number;
@@ -88,7 +101,38 @@ function fechaTexto(valor: string | Date | null | undefined): string {
   return iso.slice(0, 10);
 }
 
-export async function generarPdfBoleta(detalle: DetalleBoletaPdf, periodo: Periodo): Promise<Buffer> {
+// Numero de horas extra por tramo, mostrado igual que "Dias trabajados"
+// (pedido explicito del usuario, sept. 2026) - mismo criterio que
+// frontend/src/components/Boleta.tsx (camposHorasExtra): construccion civil
+// fusiona horas_extra_35 y horas_extra_100 en una sola cifra "100%" (ambos
+// tramos pagan el mismo recargo, ver calcularHorasExtra en motorCalculo.ts);
+// regimen general muestra sus 3 tramos (25%/35%/100%) por separado.
+export function camposHorasExtra(
+  detalle: Pick<DetalleBoletaPdf, "categoria_ocupacional" | "horas_extra_25" | "horas_extra_35" | "horas_extra_100">
+): Array<[string, string]> {
+  const h25 = Number(detalle.horas_extra_25);
+  const h35 = Number(detalle.horas_extra_35);
+  const h100 = Number(detalle.horas_extra_100);
+  if (esConstruccionCivil(detalle.categoria_ocupacional as CategoriaOcupacional)) {
+    return [
+      ["Horas extra 60%", String(h25)],
+      ["Horas extra 100%", String(h35 + h100)],
+    ];
+  }
+  return [
+    ["Horas extra 25%", String(h25)],
+    ["Horas extra 35%", String(h35)],
+    ["Horas extra 100%", String(h100)],
+  ];
+}
+
+// Dibuja una boleta completa sobre un PDFDocument ya existente, en la
+// posicion actual del cursor (doc.y) - no crea el documento ni lo cierra
+// (doc.end()), para poder usarse tanto para una sola boleta
+// (generarPdfBoleta) como para varias en un mismo PDF combinado
+// (generarPdfBoletas, ver mas abajo: llama doc.addPage() antes de cada
+// boleta salvo la primera).
+function dibujarBoleta(doc: InstanceType<typeof PDFDocument>, detalle: DetalleBoletaPdf, periodo: Periodo): void {
   const aporte = detalle.detalle_json?.aporte_pension_detalle ?? {};
 
   const ingresos = sinCero([
@@ -128,11 +172,6 @@ export async function generarPdfBoleta(detalle: DetalleBoletaPdf, periodo: Perio
     { etiqueta: "Essalud + Vida", valor: detalle.seguro_vida },
     { etiqueta: "Fondo de Capacitacion", valor: detalle.senati },
   ]);
-
-  const doc = new PDFDocument({ margin: 45, size: "A4" });
-  const trozos: Buffer[] = [];
-  doc.on("data", (trozo: Buffer) => trozos.push(trozo));
-  const listo = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(trozos))));
 
   const anchoUtil = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   const xEtiqueta = doc.page.margins.left;
@@ -184,6 +223,22 @@ export async function generarPdfBoleta(detalle: DetalleBoletaPdf, periodo: Perio
     ],
     ["Dias trabajados", String(detalle.dias_trabajados)],
   ];
+  // Fecha de cese (solo si aplica) + horas extra por tramo (pedido explicito
+  // del usuario, sept. 2026): se agregan de a pares en las 2 columnas ya
+  // existentes, igual criterio que frontend/src/components/Boleta.tsx
+  // (agruparDeADos) - la ultima fila queda con la celda derecha vacia si la
+  // cantidad de campos extra es impar. NOTA: el parche original usaba una
+  // funcion "fechaCorta" (formato DD/MM/AAAA) que no existe todavia en este
+  // punto de la reconstruccion - se usa fechaTexto() (formato AAAA-MM-DD,
+  // ya existente en este archivo) hasta que un parche posterior la agregue.
+  const camposAdicionales: Array<[string, string]> = [
+    ...(detalle.fecha_cese ? ([["Fecha de cese", fechaTexto(detalle.fecha_cese)]] as Array<[string, string]>) : []),
+    ...camposHorasExtra(detalle),
+  ];
+  for (let i = 0; i < camposAdicionales.length; i += 2) {
+    infoIzquierda.push(camposAdicionales[i]);
+    infoDerecha.push(camposAdicionales[i + 1] ?? ["", ""]);
+  }
   const yInicioInfo = doc.y;
   const anchoColInfo = anchoUtil / 2;
   for (let i = 0; i < infoIzquierda.length; i++) {
@@ -207,7 +262,64 @@ export async function generarPdfBoleta(detalle: DetalleBoletaPdf, periodo: Perio
     .font("Helvetica-Bold")
     .fontSize(13)
     .text(`Neto a pagar: ${moneda(detalle.neto_pagar)}`, xEtiqueta, doc.y, { width: anchoUtil, align: "right" });
+}
 
+// Genera el PDF de UNA sola boleta (usado para el envio por correo,
+// routes/envios.ts).
+export async function generarPdfBoleta(detalle: DetalleBoletaPdf, periodo: Periodo): Promise<Buffer> {
+  const doc = new PDFDocument({ margin: 45, size: "A4" });
+  const trozos: Buffer[] = [];
+  doc.on("data", (trozo: Buffer) => trozos.push(trozo));
+  const listo = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(trozos))));
+  dibujarBoleta(doc, detalle, periodo);
   doc.end();
+  return listo;
+}
+
+// Genera UN SOLO PDF con varias boletas, una por pagina (pedido explicito
+// del usuario, sept. 2026: exportar/descargar en PDF las boletas
+// seleccionadas o de un periodo completo, en vez de imprimirlas una por
+// una desde el navegador). Usa el mismo PDFDocument para todas - pdfkit ya
+// soporta documentos de varias paginas de forma nativa, asi que solo hace
+// falta doc.addPage() antes de cada boleta salvo la primera (el
+// constructor ya crea la primera pagina).
+export async function generarPdfBoletas(filas: DetalleBoletaPdf[], periodo: Periodo): Promise<Buffer> {
+  const doc = new PDFDocument({ margin: 45, size: "A4" });
+  const trozos: Buffer[] = [];
+  doc.on("data", (trozo: Buffer) => trozos.push(trozo));
+  const listo = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(trozos))));
+  filas.forEach((fila, indice) => {
+    if (indice > 0) doc.addPage();
+    dibujarBoleta(doc, fila, periodo);
+  });
+  doc.end();
+  return listo;
+}
+
+// Genera un archivo ZIP con UN PDF POR TRABAJADOR (pedido explicito del
+// usuario, sept. 2026: "guardar las boletas de un periodo determinado en
+// PDF en un archivo comprimido tipo ZIP") - mismo nombre de archivo que ya
+// se usaba al enviar boletas por correo (routes/envios.ts), para que el
+// usuario reconozca el mismo criterio en ambos lugares. Se arma el ZIP
+// completo en memoria (junta todos los bytes antes de resolver la
+// promesa) en vez de transmitirlo en streaming directo a la respuesta
+// HTTP: mismo criterio de "generar el buffer completo y luego res.send()"
+// que ya usan el resto de descargas de este archivo/proyecto (Excel, PDF
+// resumen), asi un error a mitad de camino (ej. una boleta que falla)
+// nunca deja una respuesta HTTP a medio enviar con headers ya fijados.
+export async function generarZipBoletas(filas: DetalleBoletaPdf[], periodo: Periodo): Promise<Buffer> {
+  const archivo = archiver("zip", { zlib: { level: 9 } });
+  const trozos: Buffer[] = [];
+  archivo.on("data", (trozo: Buffer) => trozos.push(trozo));
+  const listo = new Promise<Buffer>((resolve, reject) => {
+    archivo.on("end", () => resolve(Buffer.concat(trozos)));
+    archivo.on("error", (err) => reject(err));
+  });
+  for (const fila of filas) {
+    const pdf = await generarPdfBoleta(fila, periodo);
+    const nombreArchivo = `Boleta_${MESES[periodo.mes - 1]}_${periodo.anio}_${fila.numero_documento}.pdf`;
+    archivo.append(pdf, { name: nombreArchivo });
+  }
+  await archivo.finalize();
   return listo;
 }

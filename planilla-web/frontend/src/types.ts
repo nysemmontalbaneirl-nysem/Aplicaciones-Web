@@ -193,6 +193,10 @@ export interface DetallePlanilla {
   afp_nombre: string | null;
   cuspp: string | null;
   fecha_ingreso: string;
+  // Solo si el trabajador ceso en algun momento (contratos.fecha_cese, no
+  // necesariamente dentro de este periodo puntual) - se muestra en la
+  // boleta cuando esta presente (pedido explicito del usuario, sept. 2026).
+  fecha_cese: string | null;
 
   dias_trabajados: number;
   dias_dominical: number;

@@ -1,4 +1,4 @@
-import { DetallePlanilla, PeriodoPlanilla } from "../types";
+import { DetallePlanilla, PeriodoPlanilla, esConstruccionCivil } from "../types";
 
 interface Props {
   detalle: DetallePlanilla;
@@ -27,8 +27,67 @@ function filasSinCero(lineas: Linea[]): Linea[] {
   return lineas.filter((l) => l.valor !== 0);
 }
 
+// NOTA (recon 3/46): el parche original de esta funcionalidad asumia que ya
+// existia una funcion "formatearFechaCorta" en este archivo (agregada por un
+// parche posterior, junto con el logo de la empresa - ver logoJhcr en
+// versiones futuras). Como todavia no llega a este punto de la
+// reconstruccion, se define aqui una version minima equivalente
+// (DD/MM/AAAA) solo para esta fecha de cese; si un parche posterior
+// introduce "formatearFechaCorta" de verdad, revisar si esta funcion queda
+// redundante y unificarlas.
+function formatearFechaCeseCorta(fecha: string): string {
+  const [anio, mes, dia] = fecha.slice(0, 10).split("-");
+  return `${dia}/${mes}/${anio}`;
+}
+
+// Numero de horas extra por tramo, mostrado igual que "Dias trabajados"
+// (pedido explicito del usuario, sept. 2026): antes solo se veia el IMPORTE
+// total de horas extra ("Horas extra" en Ingresos), sin indicar cuantas
+// horas eran de cada tramo. Construccion civil usa un recargo de 60% en el
+// primer tramo y 100% en los otros 2 (horas_extra_35 y horas_extra_100 se
+// fusionan en una sola cifra "100%", ya que ambos tramos pagan el mismo
+// recargo - ver calcularHorasExtra en motorCalculo.ts, recargosConstruccion
+// = [1.60, 2.00, 2.00]); regimen general (Empleado) usa 25%/35%/100%, sus 3
+// tramos por separado (recargosGeneral = [1.25, 1.35, 2.00]). Mismos
+// porcentajes ya usados en Parametros.tsx (calcHoraExtra) y TareoDiario.tsx.
+function camposHorasExtra(detalle: DetallePlanilla): { label: string; valor: string }[] {
+  const h25 = Number(detalle.horas_extra_25);
+  const h35 = Number(detalle.horas_extra_35);
+  const h100 = Number(detalle.horas_extra_100);
+  if (esConstruccionCivil(detalle.categoria_ocupacional)) {
+    return [
+      { label: "Horas extra 60%", valor: String(h25) },
+      { label: "Horas extra 100%", valor: String(h35 + h100) },
+    ];
+  }
+  return [
+    { label: "Horas extra 25%", valor: String(h25) },
+    { label: "Horas extra 35%", valor: String(h35) },
+    { label: "Horas extra 100%", valor: String(h100) },
+  ];
+}
+
+// Agrupa una lista plana de campos en filas de a 2 (misma tabla de 4
+// columnas ya usada para los datos del trabajador) - la ultima fila queda
+// con las 2 ultimas celdas vacias si la cantidad de campos es impar.
+function agruparDeADos<T>(items: T[]): [T, T | null][] {
+  const filas: [T, T | null][] = [];
+  for (let i = 0; i < items.length; i += 2) {
+    filas.push([items[i], items[i + 1] ?? null]);
+  }
+  return filas;
+}
+
 export default function Boleta({ detalle, periodo, onCerrar, ocultarControles }: Props) {
   const aporteDetalle = detalle.detalle_json?.aporte_pension_detalle;
+
+  // Fecha de cese: solo se muestra si el trabajador efectivamente ceso
+  // (pedido explicito del usuario, sept. 2026) - contratos.fecha_cese es
+  // NULL para cualquier trabajador activo.
+  const camposAdicionales: { label: string; valor: string }[] = [
+    ...(detalle.fecha_cese ? [{ label: "Fecha de cese", valor: formatearFechaCeseCorta(detalle.fecha_cese) }] : []),
+    ...camposHorasExtra(detalle),
+  ];
 
   const ingresos = filasSinCero([
     { etiqueta: "Sueldo / Jornal básico", valor: detalle.sueldo_basico },
@@ -123,6 +182,14 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles }:
             <td style={{ color: "#5a6172" }}>Días trabajados</td>
             <td>{detalle.dias_trabajados}</td>
           </tr>
+          {agruparDeADos(camposAdicionales).map(([a, b], i) => (
+            <tr key={`extra-${i}`}>
+              <td style={{ color: "#5a6172" }}>{a.label}</td>
+              <td>{a.valor}</td>
+              <td style={{ color: "#5a6172" }}>{b?.label ?? ""}</td>
+              <td>{b?.valor ?? ""}</td>
+            </tr>
+          ))}
         </tbody>
       </table>
 

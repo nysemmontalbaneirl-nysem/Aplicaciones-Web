@@ -41,7 +41,8 @@ enviosRouter.post(
     const esAdmin = req.usuario!.rol === "ADMIN";
     const filas = await pool.query(
       `SELECT d.*, e.apellidos_nombres, e.numero_documento, e.numero_hijos, e.correo,
-              c.proyecto, c.categoria_ocupacional, c.sistema_pension, c.afp_nombre, c.cuspp, c.fecha_ingreso
+              c.proyecto, c.categoria_ocupacional, c.sistema_pension, c.afp_nombre, c.cuspp,
+              c.fecha_ingreso, c.fecha_cese
        FROM detalle_planilla d
        JOIN contratos c ON c.id = d.contrato_id
        JOIN empleados e ON e.id = c.empleado_id
