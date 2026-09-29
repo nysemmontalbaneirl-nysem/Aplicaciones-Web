@@ -187,7 +187,7 @@ export default function Proyectos() {
   return (
     <div>
       <div className="card">
-        <h2>Nuevo proyecto</h2>
+        <h2 className="titulo-reporte">Nuevo proyecto</h2>
         <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
           El nombre debe escribirse exactamente igual a como aparece en los contratos de los
           trabajadores (ej. "P013-Tecnologico La Union-Piura"), para que coincida al asignar
@@ -282,7 +282,7 @@ export default function Proyectos() {
       </div>
 
       <div className="card">
-        <h2>Proyectos ({proyectos.length})</h2>
+        <h2 className="titulo-reporte">Proyectos ({proyectos.length})</h2>
         <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
           La cuota sindical es una tarifa FIJA semanal por trabajador sindicalizado (no un
           porcentaje del sueldo) y varía por proyecto/obra. Se descuenta solo a los trabajadores

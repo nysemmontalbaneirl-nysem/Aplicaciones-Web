@@ -113,7 +113,7 @@ export default function Importar() {
   return (
     <div>
       <div className="card">
-        <h2>Importar trabajadores desde CSV</h2>
+        <h2 className="titulo-reporte">Importar trabajadores desde CSV</h2>
         <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
           Sube un archivo CSV con encabezado en la primera fila. Cada fila crea (o actualiza,
           si el DNI ya existe) un empleado y su contrato. Las filas con errores se reportan
@@ -209,7 +209,7 @@ export default function Importar() {
       </div>
 
       <div className="card">
-        <h2>Actualizar apellidos/nombres (AFPnet)</h2>
+        <h2 className="titulo-reporte">Actualizar apellidos/nombres (AFPnet)</h2>
         <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
           Distinta de la importación de arriba: esta <strong>no crea trabajadores nuevos ni cambia
           ningún otro dato</strong> (proyecto, categoría, sueldo, etc.). Sirve solo para completar el
@@ -288,7 +288,7 @@ export default function Importar() {
 
       {resultado && (
         <div className="card">
-          <h2>Resultado de la importación</h2>
+          <h2 className="titulo-reporte">Resultado de la importación</h2>
           <div className="mensaje-ok">
             {resultado.total_filas} filas procesadas — {resultado.empleados_creados} empleados
             nuevos, {resultado.empleados_actualizados} actualizados, {resultado.contratos_creados}{" "}

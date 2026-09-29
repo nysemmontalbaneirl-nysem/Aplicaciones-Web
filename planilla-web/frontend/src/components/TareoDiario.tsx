@@ -298,7 +298,7 @@ export default function TareoDiario({ periodo }: Props) {
       {ok && <div className="mensaje-ok">{ok}</div>}
 
       <div className="card">
-        <h2>
+        <h2 className="titulo-reporte">
           Registrar Tareo Diario — {periodo.mes}/{periodo.anio}
         </h2>
         <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>

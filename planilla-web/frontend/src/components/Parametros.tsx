@@ -123,7 +123,7 @@ function SeccionAnual() {
 
   return (
     <div className="card">
-      <h2>Valores anuales (UIT, RMV, ESSALUD, ONP, SENATI, CONAFOVICER, SCTR)</h2>
+      <h2 className="titulo-reporte">Valores anuales (UIT, RMV, ESSALUD, ONP, SENATI, CONAFOVICER, SCTR)</h2>
       {error && <div className="mensaje-error">{error}</div>}
       {ok && <div className="mensaje-ok">{ok}</div>}
 
@@ -310,7 +310,7 @@ function SeccionMensual() {
 
   return (
     <div className="card">
-      <h2>Tasas AFP y tabla salarial construcción civil (mensual)</h2>
+      <h2 className="titulo-reporte">Tasas AFP y tabla salarial construcción civil (mensual)</h2>
       <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
         SBS publica las comisiones/prima de AFP cada mes, y la tabla salarial de construcción
         civil también puede cambiar mes a mes. Por eso cada mes tiene sus propios valores,

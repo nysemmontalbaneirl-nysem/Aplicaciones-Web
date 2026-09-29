@@ -214,7 +214,7 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
       {error && <div className="mensaje-error">{error}</div>}
 
       <div className="card">
-        <h2>
+        <h2 className="titulo-reporte">
           Tareo — {periodo.mes}/{periodo.anio}
         </h2>
         <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
@@ -287,7 +287,7 @@ export default function Tareo({ periodo, onIrACalcular }: Props) {
 
       <div className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-          <h2>
+          <h2 className="titulo-reporte">
             Trabajadores con tareo cargado ({tareoFiltrado.length}
             {busquedaTareo.trim() ? ` de ${tareo.length}` : ""})
           </h2>

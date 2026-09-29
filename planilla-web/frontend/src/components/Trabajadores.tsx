@@ -716,6 +716,24 @@ export default function Trabajadores() {
         </button>
       </div>
 
+      {/* NOTA (recon 37/46): el parche #37/46 ("Trabajadores: formulario
+          flotante + estilo uniforme de encabezados/botones") envuelve esta
+          tarjeta en un formulario flotante (modal-overlay/modal-flotante-
+          ancho, con navegacion "trabajador anterior/siguiente" y guardado
+          automatico al cambiar) - su codigo JS/TS es completo y autonomo (no
+          depende de estado de otro archivo), pero usa las mismas clases CSS
+          genericas (modal-overlay, modal-flotante, modal-flotante-cabecera,
+          modal-flotante-flecha, modal-flotante-cerrar, modal-flotante-
+          buscador, modal-flotante-resultados, modal-flotante-resultado-
+          vacio) que la brecha #1 (parches #16/#17/#18, SALTADOS) nunca
+          reconstruyo - confirmado que ninguna existe en styles.css. Mismo
+          criterio que la brecha #1: se omitio el envoltorio de modal
+          completo (y su estado/funciones asociadas: cambiandoTrabajador,
+          busquedaModal, indiceTrabajadorModal, cambiarTrabajadorDesdeModal,
+          etc.), se conserva la tarjeta simple de siempre. Las mejoras de
+          este mismo parche que NO dependen del modal (clases "titulo-
+          reporte"/"secundario" en esta pantalla) si se aplicaron - ver
+          RECONSTRUCCION_BRECHAS.md seccion de este parche. */}
       {mostrarFormulario && (
       <div className="card" ref={formularioRef} style={{ order: 4 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 18 }}>
@@ -1214,7 +1232,7 @@ export default function Trabajadores() {
                 ? "Registrar reingreso"
                 : "Registrar trabajador"}
             </button>
-            <button type="button" onClick={cancelarEdicion} disabled={guardando}>
+            <button type="button" className="secundario" onClick={cancelarEdicion} disabled={guardando}>
               Cancelar
             </button>
           </div>
@@ -1225,7 +1243,7 @@ export default function Trabajadores() {
 
       {cesando && (
         <div className="card" ref={cesandoRef} style={{ order: 2 }}>
-          <h2>
+          <h2 className="titulo-reporte">
             {editandoCese ? `Corregir datos de cese — ${cesando.apellidos_nombres}` : `Dar de baja a ${cesando.apellidos_nombres}`}
           </h2>
           {editandoCese && (
@@ -1256,6 +1274,7 @@ export default function Trabajadores() {
             </button>
             <button
               type="button"
+              className="secundario"
               onClick={() => {
                 setCesando(null);
                 setEditandoCese(false);
@@ -1270,7 +1289,7 @@ export default function Trabajadores() {
 
       {historialEmpleadoId !== null && (
         <div className="card" ref={historialRef} style={{ order: 3 }}>
-          <h2>Historial de periodos — {historialNombre}</h2>
+          <h2 className="titulo-reporte">Historial de periodos — {historialNombre}</h2>
           {error && <div className="mensaje-error">{error}</div>}
           {cargandoHistorial && <p style={{ color: "#5a6172" }}>Cargando historial...</p>}
           {!cargandoHistorial && historialContratos.length === 0 && (
@@ -1319,13 +1338,13 @@ export default function Trabajadores() {
             </table>
           )}
           <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-            <button type="button" onClick={cerrarHistorial}>Cerrar</button>
+            <button type="button" className="secundario" onClick={cerrarHistorial}>Cerrar</button>
           </div>
         </div>
       )}
 
       <div className="card" style={{ order: 1 }}>
-        <h2>
+        <h2 className="titulo-reporte">
           {filtroEstado === "HABIL" && "Trabajadores hábiles"}
           {filtroEstado === "CESADO" && "Trabajadores cesados"}
           {filtroEstado === "TODOS" && "Todos los trabajadores"}

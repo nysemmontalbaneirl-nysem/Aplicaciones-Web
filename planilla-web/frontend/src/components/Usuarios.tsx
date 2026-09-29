@@ -119,7 +119,7 @@ export default function Usuarios() {
   return (
     <div>
       <div className="card">
-        <h2>{editandoId ? "Editar usuario" : "Nuevo usuario"}</h2>
+        <h2 className="titulo-reporte">{editandoId ? "Editar usuario" : "Nuevo usuario"}</h2>
         {error && <div className="mensaje-error">{error}</div>}
         {ok && <div className="mensaje-ok">{ok}</div>}
         <form onSubmit={guardar}>
@@ -196,7 +196,7 @@ export default function Usuarios() {
               {guardando ? "Guardando..." : editandoId ? "Guardar cambios" : "Crear usuario"}
             </button>
             {editandoId && (
-              <button type="button" onClick={cancelarEdicion}>
+              <button type="button" className="secundario" onClick={cancelarEdicion}>
                 Cancelar
               </button>
             )}
@@ -205,7 +205,7 @@ export default function Usuarios() {
       </div>
 
       <div className="card">
-        <h2>Usuarios ({usuarios.length})</h2>
+        <h2 className="titulo-reporte">Usuarios ({usuarios.length})</h2>
         <table>
           <thead>
             <tr>

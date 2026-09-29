@@ -94,7 +94,7 @@ export default function Roles() {
   return (
     <div>
       <div className="card">
-        <h2>{editandoCodigo ? `Editar rol: ${form.nombre}` : "Nuevo rol"}</h2>
+        <h2 className="titulo-reporte">{editandoCodigo ? `Editar rol: ${form.nombre}` : "Nuevo rol"}</h2>
         <p style={{ color: "#5a6172", maxWidth: 800 }}>
           Cada rol define qué puede hacer un usuario. Marca las casillas de lo que este rol puede hacer; lo que
           quede sin marcar queda bloqueado para cualquier usuario con este rol. Además de esto, un usuario solo ve
@@ -151,7 +151,7 @@ export default function Roles() {
               {guardando ? "Guardando..." : editandoCodigo ? "Guardar cambios" : "Crear rol"}
             </button>
             {editandoCodigo && (
-              <button type="button" onClick={cancelarEdicion}>
+              <button type="button" className="secundario" onClick={cancelarEdicion}>
                 Cancelar
               </button>
             )}
@@ -160,7 +160,7 @@ export default function Roles() {
       </div>
 
       <div className="card">
-        <h2>Roles ({roles.length})</h2>
+        <h2 className="titulo-reporte">Roles ({roles.length})</h2>
         {cargando && <p>Cargando...</p>}
         {!cargando && (
           <table>

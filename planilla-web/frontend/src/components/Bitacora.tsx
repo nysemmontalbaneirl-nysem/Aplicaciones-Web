@@ -70,7 +70,7 @@ export default function Bitacora() {
 
   return (
     <div className="card">
-      <h2>Bitácora de auditoría</h2>
+      <h2 className="titulo-reporte">Bitácora de auditoría</h2>
       <p style={{ color: "#5a6172", marginBottom: 16, maxWidth: 800 }}>
         Registro de acciones sensibles: quién cambió una tasa o un concepto de planilla, quién dio de baja a un
         trabajador, quién calculó o eliminó un período, y quién creó o editó un usuario. Es de solo lectura — no

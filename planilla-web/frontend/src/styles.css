@@ -411,6 +411,35 @@ button.primario:disabled {
   cursor: not-allowed;
 }
 
+/* Boton secundario (Cancelar/Cerrar), a pedido explicito del usuario (sept.
+   2026, junto con ".titulo-reporte" arriba): mismo lenguaje visual que
+   ".primario" (mismo padding, radio de bordes, tamano y peso de letra) pero
+   en gris neutro, para que las acciones de "cancelar"/"cerrar" ya no se
+   vean con el diseno por defecto del navegador. No se aplica a botones de
+   accion por fila dentro de una tabla (Editar, Reingresar, etc.) - esos
+   funcionan mas como enlaces de texto y verse como un boton grande ahi
+   recargaria las tablas. */
+button.secundario {
+  background: #eef0f3;
+  color: #454c5c;
+  border: 1px solid #d5d9e0;
+  padding: 10px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+button.secundario:hover {
+  background: #e3e5ea;
+}
+
+button.secundario:disabled {
+  background: #f4f5f7;
+  color: #a9b0bd;
+  cursor: not-allowed;
+}
+
 .mensaje-error {
   background: #fdecec;
   color: #a02020;

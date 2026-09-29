@@ -940,3 +940,86 @@ reconciliación adicional para conectar sus fragmentos con esa base.
 Verificado: `tsc --noEmit` limpio (backend y frontend). 365/365 tests
 (sin cambios en el número de tests - este parche no trae pruebas propias,
 "Cambio 100% de frontend" según su propio mensaje de commit).
+
+---
+
+## 21. Parche #37/46 (`941a0b73`, "Trabajadores: formulario flotante + estilo uniforme de encabezados/botones") — 20 archivos; el "formulario flotante" de Trabajadores es OTRA VEZ la brecha #1 (aunque su código sea 100% completo y autónomo); se aplica todo lo demás
+
+**Estado: aplicado parcialmente y verificado (todo el rediseño cosmético
+—`.titulo-reporte`/`button.secundario`— se aplicó en 18 de los 20
+archivos; el envoltorio de formulario flotante de `Trabajadores.tsx` se
+omitió por la brecha #1).**
+
+Parche grande (20 archivos) con 2 mejoras independientes mezcladas en un
+solo commit: (1) el registro/edición de trabajadores pasa de una tarjeta
+al final de la lista a un formulario flotante (mismo patrón que
+`TareoDiario.tsx`/`Boletas.tsx`), con navegación "trabajador
+anterior/siguiente" y guardado automático al saltar de uno a otro; y (2)
+se unifica el estilo de encabezados (clase `.titulo-reporte`, ya usada
+por Reportes) y se agrega `button.secundario` (gris neutro, para
+Cancelar/Cerrar) en 19 componentes del sistema.
+
+**La mejora (2) se aplicó completa**: `.titulo-reporte` en los `<h2>` de
+18 archivos (`Bitacora.tsx`, `Boletas.tsx`, `Calculo.tsx`,
+`CambiarPassword.tsx`, `Configuracion.tsx` —solo su única sección que
+existe, "Límites de tareo"—, `Dashboard.tsx`, `Empresa.tsx` (3 títulos),
+`Importar.tsx`, `Parametros.tsx`, `Periodos.tsx`, `Proyectos.tsx`,
+`Roles.tsx`, `Tareo.tsx`, `TareoDiario.tsx`, `Trabajadores.tsx` (3
+títulos, ver más abajo), `Usuarios.tsx`, `Vacaciones.tsx`) y
+`button.secundario` (definido en `styles.css`) en los botones
+Cancelar/Cerrar correspondientes. 2 hunks (uno en `Periodos.tsx`, uno en
+`PlanillaMensual.tsx`) no se aplicaron porque el `<h2>Faltan cuentas
+contables por configurar</h2>` que tocaban no existe en este árbol — es
+la misma brecha #5 (`asientoContable.ts`/"Faltan cuentas contables",
+nunca reconstruido), no una brecha nueva.
+
+**La mejora (1), en `Trabajadores.tsx`, es OTRA VEZ la brecha #1 — con
+un matiz importante**: a diferencia de los casos anteriores (`#16`/`#17`,
+que asumían estado ya existente que nunca llegó), el código de este
+formulario flotante para Trabajadores es 100% completo, nuevo y autónomo
+(define su propio estado desde cero: `cambiandoTrabajador`,
+`busquedaModal`, `indiceTrabajadorModal`, `coincidenciasModal`,
+`cambiarTrabajadorDesdeModal`, `guardarDatosFormulario` extraído de
+`guardarTrabajador` — nada de esto depende de código de
+`TareoDiario.tsx` ni de ningún otro archivo) — de hecho, 12 de los 13
+hunks de este archivo aplicaron solos, sin ningún conflicto de contexto.
+El bloqueo es exactamente el mismo que ya
+documentó la sección 1 para el parche `#18` (Tareo, formulario de
+totales): usa las clases CSS genéricas `modal-overlay`, `modal-flotante`,
+`modal-flotante-ancho`, `modal-flotante-cabecera`, `modal-flotante-
+flecha`, `modal-flotante-cerrar`, `modal-flotante-buscador`,
+`modal-flotante-resultados`, `modal-flotante-resultado-vacio` que NINGÚN
+parche de los 46 recuperados define — confirmado (de nuevo) que ninguna
+existe en `styles.css`. El propio `styles.css` de ESTE parche solo agrega
+`button.secundario`, no las clases de modal — es decir, ni siquiera este
+parche (el más reciente en tocar el tema) las trae.
+
+**Decisión, con el mismo criterio que la sección 1 (parche `#18`)**: se
+revirtió el envoltorio completo de `Trabajadores.tsx` a su tarjeta
+simple de siempre (sin modal), y con él todo el estado/funciones que solo
+existían para servirlo (`cambiandoTrabajador`, `busquedaModal`,
+`indiceTrabajadorModal`, `hayTrabajadorAnterior`, `hayTrabajadorSiguiente`,
+`irATrabajadorAnterior`, `irATrabajadorSiguiente`, `coincidenciasModal`,
+`cambiarTrabajadorDesdeModal`) — dejarlos habría sido código muerto
+(nunca invocado desde ningún JSX) y el compilador ya marcaba un error
+real (`guardarDatosFormulario` referenciado sin definir, por el mismo
+patrón de "éxito parcial de hunks": el hunk que EXTRAE esa función de
+`guardarTrabajador` falló, pero el hunk que la USA desde
+`cambiarTrabajadorDesdeModal` sí aplicó). Se dejó un comentario `NOTA
+(recon 37/46): ...` justo antes de la tarjeta del formulario, explicando
+la causa exacta y que las mejoras (2) de esta misma pantalla (clases
+"titulo-reporte"/"secundario") sí se aplicaron.
+
+**Nota para el futuro**: esta es ya la 2da vez (después de `#18`) que un
+parche trae código de modal 100% autocontenido y completo, bloqueado
+ÚNICAMENTE por CSS genérico faltante (no por lógica de negocio). Si en
+algún momento aparecen los parches faltantes que originalmente crearon
+`.modal-overlay`/`.modal-flotante`/etc. en `styles.css` (probablemente
+los mismos que faltan de la brecha #1, parches previos a `#16`), valdría
+la pena reintentar TODOS los fragmentos ya marcados como bloqueados por
+esta causa (`#18` en `Tareo.tsx`, este `#37` en `Trabajadores.tsx`) de
+una sola vez, ya que su código JS/TS no necesita cambios, solo la base
+CSS.
+
+Verificado: `tsc --noEmit` limpio (backend y frontend). 365/365 tests
+(sin tests propios de este parche, cambio de frontend puro).

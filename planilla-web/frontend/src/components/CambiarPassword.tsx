@@ -27,7 +27,7 @@ export default function CambiarPassword({ onListo }: { onListo: () => void }) {
 
   return (
     <div className="card" style={{ maxWidth: 360 }}>
-      <h2>Cambiar contraseña</h2>
+      <h2 className="titulo-reporte">Cambiar contraseña</h2>
       {error && <div className="mensaje-error">{error}</div>}
       <form onSubmit={enviar}>
         <label>

@@ -80,7 +80,7 @@ export default function Calculo({ periodo, onVerBoletas }: Props) {
       {error && <div className="mensaje-error">{error}</div>}
 
       <div className="card">
-        <h2>
+        <h2 className="titulo-reporte">
           Calcular planilla — {periodo.mes}/{periodo.anio}
         </h2>
         {cantidadTareo === null ? (

@@ -281,7 +281,7 @@ export default function PlanillaMensual() {
   return (
     <div>
       <div className="card">
-        <h2>Planilla Mensual</h2>
+        <h2 className="titulo-reporte">Planilla Mensual</h2>
         <p style={{ color: "#5a6172", maxWidth: 800 }}>
           Junta el Tareo Diario de todas las quincenas/semanas en un solo calculo por MES CALENDARIO, para poder
           declarar PLAME, AFPnet y el Asiento Contable por mes en vez de por periodo de pago. Incluye a los obreros ya
@@ -437,7 +437,7 @@ export default function PlanillaMensual() {
 
       {mostrarHistorial && (
         <div className="card">
-          <h2>Historial de meses consolidados (obreros)</h2>
+          <h2 className="titulo-reporte">Historial de meses consolidados (obreros)</h2>
           {errorHistorial && <div className="mensaje-error">{errorHistorial}</div>}
           {cargandoHistorial ? (
             <p>Cargando...</p>
@@ -490,7 +490,7 @@ export default function PlanillaMensual() {
 
       {vista && !cargando && (
         <div className="card">
-          <h2>
+          <h2 className="titulo-reporte">
             {MESES[vista.mes - 1]} {vista.anio} — {vista.proyecto ?? "Todos los proyectos"} (
             {vista.detalle.length} trabajador{vista.detalle.length === 1 ? "" : "es"})
           </h2>

@@ -208,7 +208,7 @@ export default function Periodos({ onCargarTareo, onTareoDiario, onCalcular }: P
   return (
     <div>
       <div className="card">
-        <h2>Nuevo periodo de planilla</h2>
+        <h2 className="titulo-reporte">Nuevo periodo de planilla</h2>
         {error && <div className="mensaje-error">{error}</div>}
         <form onSubmit={crearPeriodo}>
           <div className="form-grid">
@@ -292,7 +292,7 @@ export default function Periodos({ onCargarTareo, onTareoDiario, onCalcular }: P
       </div>
 
       <div className="card">
-        <h2>Periodos existentes</h2>
+        <h2 className="titulo-reporte">Periodos existentes</h2>
         <table>
           <thead>
             <tr>
@@ -370,7 +370,7 @@ export default function Periodos({ onCargarTareo, onTareoDiario, onCalcular }: P
                         >
                           {guardandoEdicionId === p.id ? "Guardando..." : "Guardar"}
                         </button>
-                        <button type="button" onClick={cancelarEdicion} disabled={guardandoEdicionId === p.id}>
+                        <button type="button" className="secundario" onClick={cancelarEdicion} disabled={guardandoEdicionId === p.id}>
                           Cancelar
                         </button>
                       </>

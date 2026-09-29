@@ -221,7 +221,7 @@ export default function Boletas({ periodoInicial }: Props) {
       {error && <div className="mensaje-error">{error}</div>}
 
       <div className="card">
-        <h2>Boletas</h2>
+        <h2 className="titulo-reporte">Boletas</h2>
         <div className="form-grid" style={{ maxWidth: 700 }}>
           <label>
             Periodo
@@ -263,7 +263,7 @@ export default function Boletas({ periodoInicial }: Props) {
       {periodoActual && (
         <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-            <h2>
+            <h2 className="titulo-reporte">
               {resultado.length} boletas — {MESES[periodoActual.mes - 1]} {periodoActual.anio}
             </h2>
             {resultado.length > 0 && (

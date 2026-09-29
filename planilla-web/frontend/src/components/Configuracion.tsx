@@ -330,7 +330,7 @@ export default function Configuracion() {
 
     {!cargando && limitesTareo && (
       <div className="card" style={{ marginTop: 18 }}>
-        <h2>Límites de tareo</h2>
+        <h2 className="titulo-reporte">Límites de tareo</h2>
         <p style={{ color: "#5a6172", maxWidth: 800 }}>
           Límite máximo de horas y minutos que se puede registrar por día en el Tareo Diario, distinto para
           días de lunes a viernes y para sábados (domingo no tiene límite configurable aquí — se paga aparte

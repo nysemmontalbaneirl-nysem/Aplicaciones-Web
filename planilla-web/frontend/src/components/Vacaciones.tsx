@@ -103,7 +103,7 @@ export default function Vacaciones() {
 
   return (
     <div className="card">
-      <h2>Vacaciones de Empleados</h2>
+      <h2 className="titulo-reporte">Vacaciones de Empleados</h2>
       <p style={{ color: "#5a6172", marginBottom: 16 }}>
         Récord vacacional anual (aniversario a aniversario) para trabajadores en régimen general
         (categoría Empleado). Se exige un mínimo de 260 días efectivos laborados en el año

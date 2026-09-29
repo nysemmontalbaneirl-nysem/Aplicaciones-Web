@@ -171,7 +171,7 @@ export default function Empresa() {
       {ok && <div className="mensaje-ok">{ok}</div>}
 
       <div className="card">
-        <h2>Logo de la empresa</h2>
+        <h2 className="titulo-reporte">Logo de la empresa</h2>
         <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
           Aparece en la Boleta de pago, en el resumen de planilla (Excel), en el asiento contable (Excel) y en la
           pantalla de inicio de sesión. Formatos admitidos: JPG, PNG o WEBP (máx. 5 MB) — para los reportes Excel
@@ -209,7 +209,7 @@ export default function Empresa() {
       </div>
 
       <div className="card">
-        <h2>Firma del empleador</h2>
+        <h2 className="titulo-reporte">Firma del empleador</h2>
         <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
           Aparece en la Boleta de pago, junto al nombre del representante legal (campo &quot;Representante legal&quot;
           en el formulario de abajo). Solo de referencia visual — no reemplaza el espacio de firma física.
@@ -246,7 +246,7 @@ export default function Empresa() {
       </div>
 
       <div className="card">
-        <h2>Datos de la empresa</h2>
+        <h2 className="titulo-reporte">Datos de la empresa</h2>
         <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
           Estos datos se usan como referencia del empleador para PLAME/T-Registro.
         </p>

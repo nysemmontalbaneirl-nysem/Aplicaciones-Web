@@ -82,7 +82,7 @@ export default function Dashboard({ nombreUsuario }: { nombreUsuario: string }) 
   return (
     <div>
       <div className="card">
-        <h2>Hola, {nombreUsuario}</h2>
+        <h2 className="titulo-reporte">Hola, {nombreUsuario}</h2>
         <p style={{ color: "#5a6172" }}>Resumen general del sistema.</p>
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginTop: 12 }}>
@@ -99,7 +99,7 @@ export default function Dashboard({ nombreUsuario }: { nombreUsuario: string }) 
 
       {resumen.alertas.length > 0 && (
         <div className="card">
-          <h2>Alertas</h2>
+          <h2 className="titulo-reporte">Alertas</h2>
           <ul style={{ margin: 0, paddingLeft: 20 }}>
             {resumen.alertas.map((a, i) => (
               <li key={i} style={{ marginBottom: 6, color: "#9a5b00" }}>
