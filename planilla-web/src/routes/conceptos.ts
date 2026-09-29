@@ -3,7 +3,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import { asyncHandler } from "../asyncHandler";
 import { requierePermiso, requiereRol } from "../authMiddleware";
 import { pool } from "../db";
-import { ConceptoPlanilla, ConceptosPlanilla, CuotaSindicalCategoria, CategoriaOcupacional } from "../tipos";
+import { ConceptoPlanilla, ConceptosPlanilla, CuotaSindicalCategoria, CategoriaOcupacional, HorarioProyecto } from "../tipos";
 import { ErrorValidacion } from "../validaciones";
 import { registrarBitacora } from "../bitacora";
 import { validarFormula, ErrorFormula, VARIABLES_FORMULA } from "../formulas";
@@ -281,6 +281,151 @@ conceptosRouter.put(
         guardadas.push(filaACuotaSindical(r.rows[0]));
       }
       await registrarBitacora(req.usuario!.id, "EDICION_CUOTA_SINDICAL", "cuota_sindical_categoria", null, {
+        cantidad: guardadas.length,
+      });
+      res.json(guardadas);
+    } catch (err) {
+      if (err instanceof ErrorValidacion) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
+    }
+  })
+);
+
+// ===========================================================================
+// Horario de proyecto + tasa de tramo3 de horas extra (horarios_proyecto,
+// migracion_045, "Control de Asistencia Diaria" - Ronda 1). Una fila por
+// proyecto: hora_ingreso/hora_salida/minutos_refrigerio (y sus variantes de
+// sabado) todavia no se usan en ningun calculo - quedan guardadas para el
+// futuro importador de marcaciones biometricas (Ronda 2/3). tasa_tramo3 SI
+// se usa desde ya en routes/planilla.ts y planillaMensual.ts
+// (calcularHorasExtra en motorCalculo.ts): si un proyecto no la configura
+// (null), se sigue usando el recargo general de la empresa.
+// ===========================================================================
+
+// Convierte una fila del SELECT (proyectos LEFT JOIN horarios_proyecto) a
+// HorarioProyecto. Si el proyecto todavia no tiene fila en horarios_proyecto
+// (LEFT JOIN trae todo en null), se completa con los mismos valores por
+// DEFAULT de la tabla (08:00/17:00/60) solo para que la pantalla de
+// Configuracion muestre algo editable de entrada - no implica que exista una
+// fila guardada hasta que el usuario presione guardar. Las columnas TIME de
+// Postgres llegan como "HH:MM:SS" - se recortan a "HH:MM".
+function filaAHorarioProyecto(fila: Record<string, unknown>): HorarioProyecto {
+  const hora = (v: unknown): string | null => (v == null ? null : (v as string).slice(0, 5));
+  return {
+    proyecto_id: fila.proyecto_id as number,
+    proyecto_nombre: fila.proyecto_nombre as string | undefined,
+    hora_ingreso: hora(fila.hora_ingreso) ?? "08:00",
+    hora_salida: hora(fila.hora_salida) ?? "17:00",
+    minutos_refrigerio: fila.minutos_refrigerio != null ? Number(fila.minutos_refrigerio) : 60,
+    hora_ingreso_sabado: hora(fila.hora_ingreso_sabado),
+    hora_salida_sabado: hora(fila.hora_salida_sabado),
+    tasa_tramo3: fila.tasa_tramo3 != null ? Number(fila.tasa_tramo3) : null,
+  };
+}
+
+// GET /api/conceptos/horarios-proyecto -> TODOS los proyectos (ACTIVO o no),
+// con su configuracion si ya la tienen (columnas de horarios_proyecto en
+// null si el proyecto todavia no la configuro), para la pantalla "Horario /
+// Tramo3" de Configuracion (una fila editable por proyecto).
+conceptosRouter.get(
+  "/horarios-proyecto",
+  requierePermiso("conceptos.editar"),
+  asyncHandler(async (_req: Request, res: Response) => {
+    const r = await pool.query(
+      `SELECT p.id AS proyecto_id, p.nombre AS proyecto_nombre,
+              h.hora_ingreso, h.hora_salida, h.minutos_refrigerio,
+              h.hora_ingreso_sabado, h.hora_salida_sabado, h.tasa_tramo3
+       FROM proyectos p
+       LEFT JOIN horarios_proyecto h ON h.proyecto_id = p.id
+       ORDER BY p.nombre ASC`
+    );
+    res.json(r.rows.map(filaAHorarioProyecto));
+  })
+);
+
+// PUT /api/conceptos/horarios-proyecto -> guarda de una vez todas las filas
+// editadas (upsert de cada proyecto). Body: { entradas: [{ proyecto_id,
+// hora_ingreso, hora_salida, minutos_refrigerio, hora_ingreso_sabado,
+// hora_salida_sabado, tasa_tramo3 }, ...] }
+conceptosRouter.put(
+  "/horarios-proyecto",
+  requierePermiso("conceptos.editar"),
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const entradas = req.body?.entradas;
+      if (!Array.isArray(entradas) || entradas.length === 0) {
+        throw new ErrorValidacion("entradas debe ser un arreglo no vacio");
+      }
+
+      const proyectos = await pool.query("SELECT id FROM proyectos");
+      const proyectosValidos = new Set(proyectos.rows.map((r) => r.id as number));
+      const horaValida = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+      for (const e of entradas) {
+        if (typeof e.proyecto_id !== "number" || !proyectosValidos.has(e.proyecto_id)) {
+          throw new ErrorValidacion(`proyecto_id invalido: ${e.proyecto_id}`);
+        }
+        if (typeof e.hora_ingreso !== "string" || !horaValida.test(e.hora_ingreso)) {
+          throw new ErrorValidacion(`hora_ingreso invalida (formato HH:MM): ${e.hora_ingreso}`);
+        }
+        if (typeof e.hora_salida !== "string" || !horaValida.test(e.hora_salida)) {
+          throw new ErrorValidacion(`hora_salida invalida (formato HH:MM): ${e.hora_salida}`);
+        }
+        if (
+          typeof e.minutos_refrigerio !== "number" ||
+          !Number.isFinite(e.minutos_refrigerio) ||
+          e.minutos_refrigerio < 0 ||
+          e.minutos_refrigerio > 240
+        ) {
+          throw new ErrorValidacion(`minutos_refrigerio invalido (0 a 240): ${e.minutos_refrigerio}`);
+        }
+        if (e.hora_ingreso_sabado != null && (typeof e.hora_ingreso_sabado !== "string" || !horaValida.test(e.hora_ingreso_sabado))) {
+          throw new ErrorValidacion(`hora_ingreso_sabado invalida (formato HH:MM): ${e.hora_ingreso_sabado}`);
+        }
+        if (e.hora_salida_sabado != null && (typeof e.hora_salida_sabado !== "string" || !horaValida.test(e.hora_salida_sabado))) {
+          throw new ErrorValidacion(`hora_salida_sabado invalida (formato HH:MM): ${e.hora_salida_sabado}`);
+        }
+        if (e.tasa_tramo3 != null) {
+          if (typeof e.tasa_tramo3 !== "number" || !Number.isFinite(e.tasa_tramo3) || e.tasa_tramo3 < 1) {
+            throw new ErrorValidacion(
+              `tasa_tramo3 invalida (debe ser el multiplicador del valor hora, ej. 1.60 para 60% de recargo): ${e.tasa_tramo3}`
+            );
+          }
+        }
+      }
+
+      const guardadas: HorarioProyecto[] = [];
+      for (const e of entradas) {
+        const r = await pool.query(
+          `INSERT INTO horarios_proyecto (
+             proyecto_id, hora_ingreso, hora_salida, minutos_refrigerio,
+             hora_ingreso_sabado, hora_salida_sabado, tasa_tramo3
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (proyecto_id) DO UPDATE SET
+             hora_ingreso = EXCLUDED.hora_ingreso,
+             hora_salida = EXCLUDED.hora_salida,
+             minutos_refrigerio = EXCLUDED.minutos_refrigerio,
+             hora_ingreso_sabado = EXCLUDED.hora_ingreso_sabado,
+             hora_salida_sabado = EXCLUDED.hora_salida_sabado,
+             tasa_tramo3 = EXCLUDED.tasa_tramo3,
+             actualizado_en = now()
+           RETURNING proyecto_id, hora_ingreso, hora_salida, minutos_refrigerio,
+                     hora_ingreso_sabado, hora_salida_sabado, tasa_tramo3`,
+          [
+            e.proyecto_id,
+            e.hora_ingreso,
+            e.hora_salida,
+            e.minutos_refrigerio,
+            e.hora_ingreso_sabado || null,
+            e.hora_salida_sabado || null,
+            e.tasa_tramo3 ?? null,
+          ]
+        );
+        guardadas.push(filaAHorarioProyecto(r.rows[0]));
+      }
+      await registrarBitacora(req.usuario!.id, "EDICION_HORARIO_PROYECTO", "horarios_proyecto", null, {
         cantidad: guardadas.length,
       });
       res.json(guardadas);

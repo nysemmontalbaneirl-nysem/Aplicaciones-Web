@@ -1445,12 +1445,17 @@ planillaRouter.post(
               -- al valor unico legado de proyectos.cuota_sindical_semanal (nunca
               -- se deja de descontar por accidente por una combinacion sin
               -- configurar, ej. un proyecto recien creado).
-              COALESCE(csc.monto_semanal, p.cuota_sindical_semanal, 0) AS cuota_sindical_semanal
+              COALESCE(csc.monto_semanal, p.cuota_sindical_semanal, 0) AS cuota_sindical_semanal,
+              -- migracion_045: recargo de tramo3 de horas extra pactado por el
+              -- proyecto (NULL si el proyecto no tiene uno propio configurado -
+              -- calcularHorasExtra usa el recargo general de la empresa en ese caso).
+              h.tasa_tramo3 AS tasa_tramo3_proyecto
        FROM asistencia_periodo a
        JOIN contratos c ON c.id = a.contrato_id
        JOIN empleados e ON e.id = c.empleado_id
        LEFT JOIN proyectos p ON p.nombre = c.proyecto
        LEFT JOIN cuota_sindical_categoria csc ON csc.proyecto_id = p.id AND csc.categoria = c.categoria_ocupacional
+       LEFT JOIN horarios_proyecto h ON h.proyecto_id = p.id
        WHERE a.periodo_id = $1 ${esAdminCalculo ? "" : "AND c.proyecto = ANY($2::text[])"}`,
       esAdminCalculo ? [req.params.id] : [req.params.id, req.usuario!.proyectos]
     );
@@ -1648,6 +1653,11 @@ planillaRouter.post(
         dias_subsidio_enfermedad_computable: Number(fila.dias_subsidio_enfermedad_computable) || 0,
       };
 
+      // Migracion 045: NULL (proyecto sin tasa propia configurada) se deja
+      // en undefined a proposito - calcularHorasExtra usa entonces el
+      // recargo general de la empresa, exactamente igual que antes.
+      const tasaTramo3Proyecto = fila.tasa_tramo3_proyecto != null ? Number(fila.tasa_tramo3_proyecto) : undefined;
+
       await cliente.query(`SAVEPOINT trabajador_${i}`);
       try {
         let resultado: ResultadoCalculoLinea;
@@ -1676,7 +1686,8 @@ planillaRouter.post(
                 tramo.anio,
                 Number(fila.cuota_sindical_semanal),
                 conceptos,
-                periodo.tipo
+                periodo.tipo,
+                tasaTramo3Proyecto
               )
             );
           }
@@ -1705,7 +1716,8 @@ planillaRouter.post(
             periodo.anio,
             Number(fila.cuota_sindical_semanal),
             conceptos,
-            periodo.tipo
+            periodo.tipo,
+            tasaTramo3Proyecto
           );
         }
         const { detalle } = resultado;

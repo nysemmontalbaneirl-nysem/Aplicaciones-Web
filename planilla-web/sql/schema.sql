@@ -128,6 +128,30 @@ CREATE TABLE cuota_sindical_categoria (
 );
 
 -- -------------------------------------------------------------------------
+-- horarios_proyecto (migracion_045, "Control de Asistencia Diaria" - Ronda
+-- 1): horario de ingreso/salida/refrigerio por proyecto (para el futuro
+-- importador de marcaciones biometricas, Ronda 2/3 - todavia no se usa en
+-- ningun calculo) + tasa_tramo3, el recargo de horas extra de "tramo3"
+-- (mas de 6 horas extra acumuladas en el dia) que SI se pacta por proyecto
+-- y SI se usa desde ya en el calculo de planilla (ver calcularHorasExtra
+-- en motorCalculo.ts). tasa_tramo3 es el MULTIPLICADOR del valor hora,
+-- misma convencion que conceptos_planilla.factor1/2/3 (ej. 1.60 = 60% de
+-- recargo); NULL = usa el factor3 general de la empresa (comportamiento
+-- actual, sin cambios). Una fila por proyecto (proyecto_id es la propia
+-- PRIMARY KEY, no hay secuencia propia).
+-- -------------------------------------------------------------------------
+CREATE TABLE horarios_proyecto (
+    proyecto_id          INT PRIMARY KEY REFERENCES proyectos(id) ON DELETE CASCADE,
+    hora_ingreso         TIME NOT NULL DEFAULT '08:00',
+    hora_salida          TIME NOT NULL DEFAULT '17:00',
+    minutos_refrigerio   SMALLINT NOT NULL DEFAULT 60 CHECK (minutos_refrigerio BETWEEN 0 AND 240),
+    hora_ingreso_sabado  TIME,
+    hora_salida_sabado   TIME,
+    tasa_tramo3          NUMERIC(5,4) CHECK (tasa_tramo3 IS NULL OR tasa_tramo3 >= 1),
+    actualizado_en       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- -------------------------------------------------------------------------
 -- datos_empresa: datos del empleador para PLAME/T-Registro (fila unica)
 -- -------------------------------------------------------------------------
 CREATE TABLE datos_empresa (

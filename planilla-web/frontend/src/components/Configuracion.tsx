@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost, apiPut } from "../api";
-import { ClaveConceptoLimiteTareo, ConceptoPlanilla, LimitesTareo } from "../types";
+import { ClaveConceptoLimiteTareo, ConceptoPlanilla, HorarioProyecto, LimitesTareo, Proyecto } from "../types";
 
 type CampoAfecto = "afecto_essalud" | "afecto_sctr" | "afecto_senati" | "afecto_onp" | "afecto_afp" | "afecto_renta5ta" | "afecto_conafovicer";
 
@@ -31,6 +31,22 @@ const TIPOS_DIA_LIMITE_TAREO: { clave: "lun_vie" | "sabado"; etiqueta: string }[
   { clave: "lun_vie", etiqueta: "Lunes a viernes" },
   { clave: "sabado", etiqueta: "Sábado" },
 ];
+
+// Horario de proyecto + tasa de tramo3 (migracion_045, "Control de
+// Asistencia Diaria" - Ronda 1): campos editables por proyecto, todos en
+// una sola fila (a diferencia de la cuota sindical, que tiene una columna
+// por categoria) - se guardan todos juntos con un solo boton "Guardar".
+type CampoHorarioProyecto =
+  | "hora_ingreso"
+  | "hora_salida"
+  | "minutos_refrigerio"
+  | "hora_ingreso_sabado"
+  | "hora_salida_sabado"
+  | "tasa_tramo3";
+
+function claveHorario(proyectoId: number, campo: CampoHorarioProyecto): string {
+  return `${proyectoId}|${campo}`;
+}
 
 export default function Configuracion() {
   const [conceptos, setConceptos] = useState<ConceptoPlanilla[]>([]);
@@ -64,6 +80,19 @@ export default function Configuracion() {
   });
   const [guardandoLimites, setGuardandoLimites] = useState(false);
 
+  // Horario de proyecto + tasa de tramo3 (migracion_045, "Control de
+  // Asistencia Diaria" - Ronda 1).
+  // NOTA (recon 41/46): el parche original agrega esta seccion como una
+  // pestana mas del sub-menu de Configuracion (type Seccion = "ingresos" |
+  // "aportes" | ... | "horarioProyecto") - ese sub-menu es la misma brecha
+  // #12 ya documentada (nunca se reconstruyo en este arbol). Se agrega aqui
+  // como una tercera tarjeta simple apilada, igual criterio que "Limites de
+  // tareo" (ver la NOTA de mas arriba).
+  const [proyectos, setProyectos] = useState<Proyecto[]>([]);
+  const [horarios, setHorarios] = useState<HorarioProyecto[]>([]);
+  const [edicionesHorario, setEdicionesHorario] = useState<Record<string, string>>({});
+  const [guardandoHorarioProyecto, setGuardandoHorarioProyecto] = useState<number | null>(null);
+
   useEffect(() => {
     cargar();
   }, []);
@@ -72,13 +101,18 @@ export default function Configuracion() {
     setCargando(true);
     setError(null);
     try {
-      const [datos, datosLimites] = await Promise.all([
+      const [datos, datosLimites, datosProyectos, datosHorarios] = await Promise.all([
         apiGet<ConceptoPlanilla[]>("/conceptos"),
         apiGet<LimitesTareo>("/conceptos/limites-tareo"),
+        apiGet<Proyecto[]>("/proyectos"),
+        apiGet<HorarioProyecto[]>("/conceptos/horarios-proyecto"),
       ]);
       setConceptos(datos);
       setEdiciones({});
       setLimitesTareo(datosLimites);
+      setProyectos(datosProyectos);
+      setHorarios(datosHorarios);
+      setEdicionesHorario({});
       const edicionInicial: Record<string, string> = {};
       for (const c of CONCEPTOS_LIMITE_TAREO) {
         for (const tipoDia of TIPOS_DIA_LIMITE_TAREO) {
@@ -204,6 +238,117 @@ export default function Configuracion() {
       );
     }
     return <input type="checkbox" checked={valor} onChange={(e) => editar(c.codigo, "activo", e.target.checked)} />;
+  }
+
+  // ------------------------------------------------------------------
+  // Horario de proyecto + tasa de tramo3 (migracion_045, "Control de
+  // Asistencia Diaria" - Ronda 1): una fila por proyecto, con todos sus
+  // campos editables juntos y un solo boton "Guardar" por fila (a
+  // diferencia de la cuota sindical, que seria una matriz proyecto x
+  // categoria). El GET ya trae, para cada proyecto, valores por defecto
+  // (08:00/17:00/60) si todavia no configuro nada - por eso aqui no hace
+  // falta un "0" de respaldo.
+  // ------------------------------------------------------------------
+  const mapaHorario = useMemo(() => {
+    const m = new Map<number, HorarioProyecto>();
+    for (const h of horarios) m.set(h.proyecto_id, h);
+    return m;
+  }, [horarios]);
+
+  function valorHorario(proyectoId: number, campo: CampoHorarioProyecto): string {
+    const clave = claveHorario(proyectoId, campo);
+    if (clave in edicionesHorario) return edicionesHorario[clave];
+    const fila = mapaHorario.get(proyectoId);
+    if (!fila) return "";
+    const v = fila[campo];
+    return v === null || v === undefined ? "" : String(v);
+  }
+
+  function editarHorario(proyectoId: number, campo: CampoHorarioProyecto, valor: string) {
+    setEdicionesHorario((prev) => ({ ...prev, [claveHorario(proyectoId, campo)]: valor }));
+    setMensaje(null);
+  }
+
+  function esProyectoHorarioEditado(proyectoId: number): boolean {
+    const campos: CampoHorarioProyecto[] = [
+      "hora_ingreso",
+      "hora_salida",
+      "minutos_refrigerio",
+      "hora_ingreso_sabado",
+      "hora_salida_sabado",
+      "tasa_tramo3",
+    ];
+    return campos.some((campo) => claveHorario(proyectoId, campo) in edicionesHorario);
+  }
+
+  async function guardarHorarioProyecto(proyecto: Proyecto) {
+    const horaIngreso = valorHorario(proyecto.id, "hora_ingreso");
+    const horaSalida = valorHorario(proyecto.id, "hora_salida");
+    const refrigerioTexto = valorHorario(proyecto.id, "minutos_refrigerio");
+    const horaIngresoSabado = valorHorario(proyecto.id, "hora_ingreso_sabado");
+    const horaSalidaSabado = valorHorario(proyecto.id, "hora_salida_sabado");
+    const tasaTramo3Texto = valorHorario(proyecto.id, "tasa_tramo3");
+
+    if (!horaIngreso || !horaSalida) {
+      setError(`Hora de ingreso y hora de salida son obligatorias en ${proyecto.nombre}`);
+      return;
+    }
+    const minutosRefrigerio = Number(refrigerioTexto);
+    if (refrigerioTexto.trim() === "" || Number.isNaN(minutosRefrigerio) || minutosRefrigerio < 0 || minutosRefrigerio > 240) {
+      setError(`Minutos de refrigerio invalido (0 a 240) en ${proyecto.nombre}`);
+      return;
+    }
+    let tasaTramo3: number | null = null;
+    if (tasaTramo3Texto.trim() !== "") {
+      tasaTramo3 = Number(tasaTramo3Texto);
+      if (Number.isNaN(tasaTramo3) || tasaTramo3 < 1) {
+        setError(
+          `Tasa de tramo 3 invalida en ${proyecto.nombre}: debe ser el multiplicador del valor hora (ej. 1.60 para 60% de recargo), o dejarse vacio para usar el recargo general`
+        );
+        return;
+      }
+    }
+
+    setGuardandoHorarioProyecto(proyecto.id);
+    setError(null);
+    try {
+      const guardadas = await apiPut<HorarioProyecto[]>("/conceptos/horarios-proyecto", {
+        entradas: [
+          {
+            proyecto_id: proyecto.id,
+            hora_ingreso: horaIngreso,
+            hora_salida: horaSalida,
+            minutos_refrigerio: minutosRefrigerio,
+            hora_ingreso_sabado: horaIngresoSabado || null,
+            hora_salida_sabado: horaSalidaSabado || null,
+            tasa_tramo3: tasaTramo3,
+          },
+        ],
+      });
+      setHorarios((prev) => {
+        const otras = prev.filter((x) => !guardadas.some((g) => g.proyecto_id === x.proyecto_id));
+        return [...otras, ...guardadas];
+      });
+      setEdicionesHorario((prev) => {
+        const copia = { ...prev };
+        for (const campo of [
+          "hora_ingreso",
+          "hora_salida",
+          "minutos_refrigerio",
+          "hora_ingreso_sabado",
+          "hora_salida_sabado",
+          "tasa_tramo3",
+        ] as CampoHorarioProyecto[]) {
+          delete copia[claveHorario(proyecto.id, campo)];
+        }
+        return copia;
+      });
+      setMensaje(`Horario guardado: ${proyecto.nombre}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al guardar el horario del proyecto");
+    } finally {
+      setGuardandoHorarioProyecto(null);
+    }
   }
 
   // ------------------------------------------------------------------
@@ -390,6 +535,108 @@ export default function Configuracion() {
         >
           {guardandoLimites ? "Guardando..." : "Guardar límites"}
         </button>
+      </div>
+    )}
+
+    {!cargando && (
+      <div className="card" style={{ marginTop: 18 }}>
+        <h2 className="titulo-reporte">Horario por proyecto y tasa de tramo 3</h2>
+        <p style={{ color: "#5a6172", maxWidth: 900 }}>
+          Configura, para cada proyecto/obra, la hora de ingreso, hora de salida y minutos de refrigerio (usados por
+          el futuro control de asistencia con marcación biométrica) y la tasa de recargo del "tramo 3" de horas
+          extra (más de 6 horas extra acumuladas en el día). La tasa de tramo 3 se aplica ya mismo al calcular
+          planillas: es el multiplicador del valor hora (ej. 1.60 significa 60% de recargo). Si se deja vacía, ese
+          proyecto sigue usando el recargo general de la empresa. El horario de sábado es opcional; si se deja
+          vacío, se usa el mismo horario de lunes a viernes.
+        </p>
+        {proyectos.length === 0 && <p>No hay proyectos registrados todavía.</p>}
+        {proyectos.length > 0 && (
+          <div className="tabla-scroll-horizontal">
+            <table>
+              <thead>
+                <tr>
+                  <th>Proyecto</th>
+                  <th>Hora ingreso</th>
+                  <th>Hora salida</th>
+                  <th>Refrigerio (min)</th>
+                  <th>Hora ingreso sábado</th>
+                  <th>Hora salida sábado</th>
+                  <th>Tasa tramo 3 (multiplicador)</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {proyectos.map((p) => (
+                  <tr key={p.id}>
+                    <td>{p.nombre}</td>
+                    <td>
+                      <input
+                        type="time"
+                        value={valorHorario(p.id, "hora_ingreso")}
+                        onChange={(e) => editarHorario(p.id, "hora_ingreso", e.target.value)}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="time"
+                        value={valorHorario(p.id, "hora_salida")}
+                        onChange={(e) => editarHorario(p.id, "hora_salida", e.target.value)}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        step="1"
+                        min="0"
+                        max="240"
+                        style={{ width: 70 }}
+                        value={valorHorario(p.id, "minutos_refrigerio")}
+                        onChange={(e) => editarHorario(p.id, "minutos_refrigerio", e.target.value)}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="time"
+                        value={valorHorario(p.id, "hora_ingreso_sabado")}
+                        onChange={(e) => editarHorario(p.id, "hora_ingreso_sabado", e.target.value)}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="time"
+                        value={valorHorario(p.id, "hora_salida_sabado")}
+                        onChange={(e) => editarHorario(p.id, "hora_salida_sabado", e.target.value)}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="1"
+                        placeholder="General"
+                        style={{ width: 90 }}
+                        value={valorHorario(p.id, "tasa_tramo3")}
+                        onChange={(e) => editarHorario(p.id, "tasa_tramo3", e.target.value)}
+                      />
+                    </td>
+                    <td>
+                      {esProyectoHorarioEditado(p.id) && (
+                        <button
+                          type="button"
+                          className="primario"
+                          onClick={() => guardarHorarioProyecto(p)}
+                          disabled={guardandoHorarioProyecto === p.id}
+                        >
+                          {guardandoHorarioProyecto === p.id ? "..." : "Guardar"}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     )}
     </>

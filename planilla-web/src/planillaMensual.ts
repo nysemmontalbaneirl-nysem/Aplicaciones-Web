@@ -199,6 +199,9 @@ type FilaContratoConsolidacion = Contrato & {
   numero_documento: string;
   apellidos_nombres: string;
   cuota_sindical_semanal: string | number;
+  // Migracion 045: recargo de tramo3 de horas extra pactado por el
+  // proyecto (NULL si no tiene uno propio configurado).
+  tasa_tramo3_proyecto: string | number | null;
 };
 
 /**
@@ -286,11 +289,13 @@ export async function consolidarPlanillaMensual(
 
     const contratosInfoResult = await pool.query(
       `SELECT c.*, e.numero_hijos, e.numero_documento, e.apellidos_nombres,
-              COALESCE(csc.monto_semanal, p.cuota_sindical_semanal, 0) AS cuota_sindical_semanal
+              COALESCE(csc.monto_semanal, p.cuota_sindical_semanal, 0) AS cuota_sindical_semanal,
+              h.tasa_tramo3 AS tasa_tramo3_proyecto
        FROM contratos c
        JOIN empleados e ON e.id = c.empleado_id
        LEFT JOIN proyectos p ON p.nombre = c.proyecto
        LEFT JOIN cuota_sindical_categoria csc ON csc.proyecto_id = p.id AND csc.categoria = c.categoria_ocupacional
+       LEFT JOIN horarios_proyecto h ON h.proyecto_id = p.id
        WHERE c.id = ANY($1::int[])
        ORDER BY e.apellidos_nombres`,
       [contratoIds]
@@ -331,7 +336,8 @@ export async function consolidarPlanillaMensual(
           anio,
           Number(contrato.cuota_sindical_semanal),
           conceptos,
-          "MENSUAL"
+          "MENSUAL",
+          contrato.tasa_tramo3_proyecto != null ? Number(contrato.tasa_tramo3_proyecto) : undefined
         );
         // Ronda 4 ("piso de EsSalud mensual"): a diferencia de las boletas
         // por periodo de pago (detalle_planilla), aqui NO hace falta

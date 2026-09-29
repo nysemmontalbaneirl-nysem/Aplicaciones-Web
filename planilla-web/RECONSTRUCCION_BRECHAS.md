@@ -1235,3 +1235,83 @@ lo que ya aplicó limpio.
 
 Verificado: `tsc --noEmit` limpio (backend y frontend). 379/379 tests
 (367 previos + 12 nuevos de `tests/essalud_piso_mensual.test.ts`).
+
+## 25. Parche #41/46 (`3c96de0e`, "Control de Asistencia Diaria (Ronda 1): horario por proyecto") — migración 045 (tabla `horarios_proyecto` + tasa de tramo3 por proyecto); Configuración.tsx reconfirma la brecha #12 (9/9 hunks fallaron), y un bug de "orden de rutas de Express" nuevo, detectado por las propias pruebas del parche
+
+**Estado: aplicado completo y verificado.**
+
+Ronda 1 de un proyecto grande ("Control de Asistencia Diaria" con
+marcación biométrica) que se entrega en varias rondas — esta ronda solo
+trae la CONFIGURACIÓN del horario por proyecto (hora de ingreso/salida/
+refrigerio, todavía sin uso en ningún cálculo, reservada para el
+importador de marcaciones de la Ronda 2/3) y la tasa de recargo del
+"tramo 3" de horas extra (más de 6 horas extra acumuladas en el día),
+que SÍ se aplica ya mismo y se puede pactar por proyecto en vez de usar
+el recargo general de la empresa (`horarios_proyecto.tasa_tramo3`, NULL
+= sigue usando `conceptos_planilla.HORAS_EXTRA_CONSTRUCCION/GENERAL.factor3`
+como hasta ahora). Migración `044+1` → `045`: tabla nueva
+`horarios_proyecto` (PK `proyecto_id`, sin secuencia propia, con su
+propio `GRANT` para `grupojhc_boletas`). `calcularHorasExtra`
+(`motorCalculo.ts`) recibe un `tasaTramo3Override?: number` opcional que,
+si se pasa, reemplaza solo el recargo de tramo3 para esa llamada; el
+valor se resuelve en el caller (`routes/planilla.ts` /
+`planillaMensual.ts`, con un `LEFT JOIN horarios_proyecto` igual al
+patrón ya usado para `cuota_sindical_categoria`) — la función pura de
+`motorCalculo.ts` no conoce de dónde viene el valor, así que no hay
+riesgo de romper el comportamiento existente si un proyecto no configura
+nada (sigue en `undefined`/`NULL`).
+
+**Brecha reconfirmada (no nueva): `frontend/src/components/Configuracion.tsx`
+depende por completo del sub-menu de 7 secciones (brecha #12) — 9/9 hunks
+fallaron.** El parche agrega "Horario / Tramo 3 por proyecto" como una
+8va pestaña de ese sub-menu (`type Seccion = "ingresos" | "aportes" |
+... | "horarioProyecto"`), y también asume que la pantalla YA carga
+`proyectos`/`cuotaSindical`/etc. en el mismo `Promise.all` (el parche de
+la Ronda D en secciones anteriores confirmó que solo "Conceptos de
+ingreso" y "Límites de tareo" existen en este árbol, sin sub-menu, cada
+uno como una tarjeta simple apilada). Igual criterio que en Parámetros
+(sección 24 de este mismo documento) y que Configuración en parches
+anteriores: no se fabricó el sub-menu ni las 5 secciones que le faltan a
+Configuración — se agregó "Horario por proyecto" como una TERCERA
+tarjeta simple apilada (después de "Conceptos de ingreso" y "Límites de
+tareo"), con su propia carga de `proyectos`/`horarios` agregada al
+`Promise.all` existente. El componente `SeccionRmvMensual`-equivalente
+aquí (toda la lógica de `mapaHorario`/`valorHorario`/`editarHorario`/
+`esProyectoHorarioEditado`/`guardarHorarioProyecto`) es 100% autónomo y
+se trasladó sin cambios de lógica, solo re-cableado al patrón de
+tarjetas apiladas en vez del sub-menu inexistente. `src/routes/conceptos.ts`
+(el backend GET/PUT `/conceptos/horarios-proyecto`) SÍ es completamente
+autónomo — sus 2 hunks fallaron solo por desajuste de líneas de contexto
+(imports/orden de secciones distintos a los que asumía el parche), se
+transcribió el contenido del parche tal cual.
+
+**Bug nuevo detectado por las propias pruebas del parche: orden de rutas
+de Express.** Al colocar el bloque nuevo `GET/PUT /horarios-proyecto` al
+final de `conceptos.ts` (después de `PUT /:codigo`, el handler genérico
+que edita un concepto por código), Express intercepta cualquier
+`PUT /conceptos/horarios-proyecto` con ese handler genérico ANTES de
+llegar a la ruta especial — trata "horarios-proyecto" como si fuera un
+`:codigo`, no encuentra ningún concepto con ese código, y responde 404.
+Detectado porque 6 de las 13 pruebas de `tests/horario_proyecto_tramo3.test.ts`
+fallaban con "Expected 400/200, Received 404" (todas las que usan PUT) y
+una prueba de cálculo real fallaba por un valor incorrecto (52 esperado,
+80 recibido) — consecuencia de que el PUT de guardado nunca llegaba a
+guardar nada. Corregido reubicando el bloque completo `GET/PUT
+/horarios-proyecto` ANTES del handler genérico `PUT /:codigo` (junto a
+los otros endpoints de ruta fija como `/limites-tareo` y
+`/cuota-sindical`, que ya seguían ese mismo orden correcto). Verificado
+con un diff ordenado línea por línea contra el archivo original que la
+reubicación no perdió ni duplicó ninguna línea.
+
+**`tests/horario_proyecto_tramo3.test.ts`**: 1 ajuste manual — el
+objeto base de la función auxiliar `asistencia(...)` traía
+`dias_feriado_trabajado`/`dias_dominical_no_laborado`, que no existen en
+`AsistenciaEntrada` en este árbol (brecha #4 ya documentada, error de
+compilación real detectado por `tsc` vía jest/ts-jest, que NO corre
+sobre `tests/` en el `tsc --noEmit -p .` normal del backend — hay que
+correr jest para detectar errores de tipos dentro de las pruebas). Se
+quitaron esos 2 campos con una nota explicativa, igual criterio que el
+resto del motor de cálculo.
+
+Verificado: `tsc --noEmit` limpio (backend y frontend). 392/392 tests
+(379 previos + 13 nuevos de `tests/horario_proyecto_tramo3.test.ts`).

@@ -627,6 +627,25 @@ export interface CuotaSindicalCategoria {
   monto_semanal: number;
 }
 
+// Horario de proyecto + tasa de tramo3 de horas extra (migracion_045,
+// "Control de Asistencia Diaria" - Ronda 1). hora_ingreso/hora_salida/
+// minutos_refrigerio/sabado todavia no entran a ningun calculo (quedan
+// guardados para el futuro importador de marcaciones biometricas - Ronda
+// 2/3). tasa_tramo3 SI se usa desde ya: es el MULTIPLICADOR del valor hora
+// (ej. 1.60 = 60% de recargo) para las horas de tramo3 (mas de 6 horas
+// extra acumuladas en el dia) de este proyecto; null = usa el recargo
+// general de la empresa.
+export interface HorarioProyecto {
+  proyecto_id: number;
+  proyecto_nombre?: string;
+  hora_ingreso: string;
+  hora_salida: string;
+  minutos_refrigerio: number;
+  hora_ingreso_sabado: string | null;
+  hora_salida_sabado: string | null;
+  tasa_tramo3: number | null;
+}
+
 export interface EntradaBitacora {
   id: number;
   accion: string;

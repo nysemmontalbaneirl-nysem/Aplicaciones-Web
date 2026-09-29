@@ -481,18 +481,28 @@ export function calcularLicenciaPaternidad(jornalDiario: number, asistencia: Asi
  * Los recargos [tramo1, tramo2, tramo3] vienen de conceptos_planilla
  * (HORAS_EXTRA_CONSTRUCCION / HORAS_EXTRA_GENERAL), editables desde la
  * pestana Configuracion.
+ *
+ * Migracion 045 ("Control de Asistencia Diaria" - Ronda 1): a diferencia
+ * de tramo1/tramo2 (un solo recargo para toda la empresa), el recargo de
+ * TRAMO3 (mas de 6 horas extra acumuladas en el dia) se puede pactar por
+ * proyecto/obra - ver horarios_proyecto.tasa_tramo3. Si el caller pasa
+ * tasaTramo3Override (el valor de ESE proyecto), reemplaza al recargo
+ * general de tramo3 solo para esta llamada; si no se pasa (undefined), se
+ * usa el recargo general de conceptos_planilla como siempre.
  */
 export function calcularHorasExtra(
   jornalDiario: number,
   asistencia: AsistenciaEntrada,
   categoria: CategoriaOcupacional,
   recargosConstruccion: [number, number, number],
-  recargosGeneral: [number, number, number]
+  recargosGeneral: [number, number, number],
+  tasaTramo3Override?: number
 ): number {
   const jornalHora = jornalDiario / 8;
-  const [recargoTramo1, recargoTramo2, recargoTramo3] = esConstruccionCivil(categoria)
+  const [recargoTramo1, recargoTramo2, recargoTramo3General] = esConstruccionCivil(categoria)
     ? recargosConstruccion
     : recargosGeneral;
+  const recargoTramo3 = tasaTramo3Override ?? recargoTramo3General;
   const importeTramo1 = jornalHora * recargoTramo1 * asistencia.horas_extra_25;
   const importeTramo2 = jornalHora * recargoTramo2 * asistencia.horas_extra_35;
   const importeTramo3 = jornalHora * recargoTramo3 * asistencia.horas_extra_100;
@@ -1307,7 +1317,13 @@ export function calcularLineaPlanilla(
   anio: number,
   cuotaSindicalSemanal: number,
   conceptos: ConceptosPlanilla,
-  tipoPeriodo: TipoPeriodo
+  tipoPeriodo: TipoPeriodo,
+  // Migracion 045: recargo de tramo3 de horas extra pactado por el
+  // proyecto del contrato (horarios_proyecto.tasa_tramo3), resuelto por el
+  // caller (routes/planilla.ts / planillaMensual.ts) antes de llamar esta
+  // funcion pura. undefined = el proyecto no tiene un valor propio -> se
+  // usa el recargo general de la empresa (comportamiento actual).
+  tasaTramo3Proyecto?: number
 ): ResultadoCalculoLinea {
   if (contrato.categoria_ocupacional === "EVENTUAL") {
     return calcularLineaEventual(contrato, asistencia);
@@ -1346,7 +1362,8 @@ export function calcularLineaPlanilla(
           obtenerFactor(conceptos, "HORAS_EXTRA_GENERAL", "factor1"),
           obtenerFactor(conceptos, "HORAS_EXTRA_GENERAL", "factor2"),
           obtenerFactor(conceptos, "HORAS_EXTRA_GENERAL", "factor3"),
-        ]
+        ],
+        tasaTramo3Proyecto
       )
     : 0;
   const factorAsignacionFamiliar = obtenerFactor(conceptos, "ASIGNACION_FAMILIAR", "factor1");
