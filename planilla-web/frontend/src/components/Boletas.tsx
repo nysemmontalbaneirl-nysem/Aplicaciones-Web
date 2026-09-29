@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { apiGet, apiPost, BASE_URL, conToken } from "../api";
-import { DetallePlanilla, PeriodoPlanilla, tienePermiso } from "../types";
+import { DatosEmpresa, DetallePlanilla, PeriodoPlanilla, tienePermiso } from "../types";
 import { useAuth } from "../AuthContext";
 import Boleta from "./Boleta";
 
@@ -38,6 +38,13 @@ export default function Boletas({ periodoInicial }: Props) {
   const [imprimiendoLote, setImprimiendoLote] = useState(false);
   const [enviandoCorreo, setEnviandoCorreo] = useState(false);
   const [resultadoEnvio, setResultadoEnvio] = useState<ResultadoEnvio | null>(null);
+  // Firma del empleador + nombre del representante legal (migracion 031) -
+  // se piden UNA sola vez aqui (no dentro de <Boleta>) porque esta pantalla
+  // puede mostrar muchas boletas a la vez (imprimir lote); repetir el
+  // fetch por cada una seria redundante. Si todavia no hay datos de la
+  // empresa configurados, se sigue mostrando la boleta con normalidad, sin
+  // la firma/nombre del empleador.
+  const [datosEmpresa, setDatosEmpresa] = useState<DatosEmpresa | null>(null);
 
   // Con muchas boletas en el periodo la tabla puede ser larga - este boton de
   // acceso rapido permite volver directo al buscador/filtro sin desplazarse
@@ -58,6 +65,12 @@ export default function Boletas({ periodoInicial }: Props) {
         }
       })
       .catch((e) => setError((e as Error).message));
+    apiGet<DatosEmpresa>("/empresa")
+      .then(setDatosEmpresa)
+      .catch(() => {
+        // todavia no hay datos de la empresa configurados - la Boleta se
+        // muestra igual, sin firma/nombre del empleador.
+      });
   }, []);
 
   useEffect(() => {
@@ -314,6 +327,7 @@ export default function Boletas({ periodoInicial }: Props) {
         <Boleta
           detalle={boletaSeleccionada}
           periodo={periodoActual}
+          datosEmpresa={datosEmpresa}
           onCerrar={() => setBoletaSeleccionada(null)}
         />
       )}
@@ -329,7 +343,7 @@ export default function Boletas({ periodoInicial }: Props) {
             </button>
           </div>
           {boletasDelLote.map((d) => (
-            <Boleta key={d.id} detalle={d} periodo={periodoActual} onCerrar={() => {}} ocultarControles />
+            <Boleta key={d.id} detalle={d} periodo={periodoActual} datosEmpresa={datosEmpresa} onCerrar={() => {}} ocultarControles />
           ))}
         </div>
       )}

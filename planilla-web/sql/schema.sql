@@ -151,6 +151,12 @@ CREATE TABLE datos_empresa (
     logo_archivo          BYTEA,
     logo_mime             VARCHAR(100),
     logo_nombre           VARCHAR(200),
+    -- Firma escaneada del EMPLEADOR (migracion 031) - aparece en la Boleta
+    -- junto a la firma del trabajador, con el nombre de representante_legal
+    -- (arriba) impreso debajo. Mismo patron BYTEA que el logo.
+    firma_empleador_archivo BYTEA,
+    firma_empleador_mime    VARCHAR(100),
+    firma_empleador_nombre  VARCHAR(200),
     actualizado_en        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

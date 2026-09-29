@@ -13,7 +13,7 @@ import { ErrorValidacion } from "../validaciones";
 import { registrarBitacora } from "../bitacora";
 import { generarPdfTabla } from "../pdfTabla";
 import { DetalleBoletaPdf, generarPdfBoletas, generarZipBoletas } from "../boletaPdf";
-import { obtenerLogoEmpresa } from "./empresa";
+import { obtenerDatosEmpresaBoleta } from "./empresa";
 
 export const planillaRouter = Router();
 
@@ -309,9 +309,9 @@ planillaRouter.get(
       return res.status(400).json({ error: "No hay boletas para exportar (revisa la seleccion o el periodo)" });
     }
     filas = await agregarFirmasBatch(filas);
-    const logo = await obtenerLogoEmpresa();
+    const datosEmpresa = await obtenerDatosEmpresaBoleta();
 
-    const buffer = await generarPdfBoletas(filas as unknown as DetalleBoletaPdf[], periodo, logo?.buffer ?? null);
+    const buffer = await generarPdfBoletas(filas as unknown as DetalleBoletaPdf[], periodo, datosEmpresa);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="boletas_${periodo.mes}_${periodo.anio}.pdf"`);
     res.send(buffer);
@@ -337,9 +337,9 @@ planillaRouter.get(
       return res.status(400).json({ error: "No hay boletas para exportar (revisa la seleccion o el periodo)" });
     }
     filas = await agregarFirmasBatch(filas);
-    const logo = await obtenerLogoEmpresa();
+    const datosEmpresa = await obtenerDatosEmpresaBoleta();
 
-    const buffer = await generarZipBoletas(filas as unknown as DetalleBoletaPdf[], periodo, logo?.buffer ?? null);
+    const buffer = await generarZipBoletas(filas as unknown as DetalleBoletaPdf[], periodo, datosEmpresa);
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="boletas_${periodo.mes}_${periodo.anio}.zip"`);
     res.send(buffer);

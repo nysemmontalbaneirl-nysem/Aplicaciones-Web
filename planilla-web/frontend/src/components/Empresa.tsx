@@ -29,11 +29,19 @@ export default function Empresa() {
   const [logoVersion, setLogoVersion] = useState(0); // fuerza recargar el <img> tras subir/quitar
   const inputLogoRef = useRef<HTMLInputElement>(null);
 
+  // Firma escaneada del EMPLEADOR (pedido adicional del usuario) - misma
+  // logica que el logo, guardada tambien en datos_empresa.
+  const [tieneFirmaEmpleador, setTieneFirmaEmpleador] = useState(false);
+  const [subiendoFirmaEmpleador, setSubiendoFirmaEmpleador] = useState(false);
+  const [firmaEmpleadorVersion, setFirmaEmpleadorVersion] = useState(0);
+  const inputFirmaEmpleadorRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     apiGet<DatosEmpresa>("/empresa")
-      .then(({ id: _id, tiene_logo, ...resto }) => {
+      .then(({ id: _id, tiene_logo, tiene_firma_empleador, ...resto }) => {
         setDatos(resto);
         setTieneLogo(!!tiene_logo);
+        setTieneFirmaEmpleador(!!tiene_firma_empleador);
       })
       .catch(() => {
         // todavia no hay datos configurados, se queda con el formulario vacio
@@ -86,6 +94,55 @@ export default function Empresa() {
       setError((err as Error).message);
     } finally {
       setSubiendoLogo(false);
+    }
+  }
+
+  function abrirSelectorFirmaEmpleador() {
+    setError(null);
+    setOk(null);
+    inputFirmaEmpleadorRef.current?.click();
+  }
+
+  async function alSeleccionarFirmaEmpleador(e: React.ChangeEvent<HTMLInputElement>) {
+    const archivo = e.target.files?.[0];
+    e.target.value = "";
+    if (!archivo) return;
+
+    if (archivo.size > 5 * 1024 * 1024) {
+      setError("La imagen supera los 5 MB. Usa una foto normal en formato JPG/PNG o comprímela antes de subirla.");
+      return;
+    }
+
+    setSubiendoFirmaEmpleador(true);
+    setError(null);
+    setOk(null);
+    try {
+      const formData = new FormData();
+      formData.append("archivo", archivo);
+      await apiPostArchivo("/empresa/firma-empleador", formData);
+      setTieneFirmaEmpleador(true);
+      setFirmaEmpleadorVersion((v) => v + 1);
+      setOk("Firma del empleador guardada correctamente. Aparecerá en la Boleta.");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSubiendoFirmaEmpleador(false);
+    }
+  }
+
+  async function quitarFirmaEmpleador() {
+    if (!confirm("¿Quitar la firma del empleador configurada?")) return;
+    setSubiendoFirmaEmpleador(true);
+    setError(null);
+    setOk(null);
+    try {
+      await apiDelete("/empresa/firma-empleador");
+      setTieneFirmaEmpleador(false);
+      setFirmaEmpleadorVersion((v) => v + 1);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSubiendoFirmaEmpleador(false);
     }
   }
 
@@ -146,6 +203,43 @@ export default function Empresa() {
             accept="image/jpeg,image/png,image/webp"
             style={{ display: "none" }}
             onChange={alSeleccionarLogo}
+          />
+        </div>
+      </div>
+
+      <div className="card">
+        <h2>Firma del empleador</h2>
+        <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
+          Aparece en la Boleta de pago, junto al nombre del representante legal (campo &quot;Representante legal&quot;
+          en el formulario de abajo). Solo de referencia visual — no reemplaza el espacio de firma física.
+        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          {tieneFirmaEmpleador ? (
+            <img
+              key={firmaEmpleadorVersion}
+              src={conToken(`${BASE_URL}/empresa/firma-empleador?v=${firmaEmpleadorVersion}`)}
+              alt="Firma del empleador"
+              style={{ height: 60, maxWidth: 160, objectFit: "contain", border: "1px solid #e0e3ea", borderRadius: 6, padding: 4 }}
+            />
+          ) : (
+            <span style={{ color: "#8a90a0", fontSize: "0.85rem" }}>Todavía no se configuró ninguna firma del empleador.</span>
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" disabled={subiendoFirmaEmpleador} onClick={abrirSelectorFirmaEmpleador}>
+              {subiendoFirmaEmpleador ? "..." : tieneFirmaEmpleador ? "Reemplazar firma" : "Subir firma"}
+            </button>
+            {tieneFirmaEmpleador && (
+              <button type="button" disabled={subiendoFirmaEmpleador} onClick={quitarFirmaEmpleador}>
+                Quitar firma
+              </button>
+            )}
+          </div>
+          <input
+            ref={inputFirmaEmpleadorRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            style={{ display: "none" }}
+            onChange={alSeleccionarFirmaEmpleador}
           />
         </div>
       </div>

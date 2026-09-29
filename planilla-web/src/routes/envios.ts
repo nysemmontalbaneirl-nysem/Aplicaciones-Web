@@ -5,7 +5,7 @@ import { pool } from "../db";
 import { enviarCorreo } from "../correo";
 import { DetalleBoletaPdf, generarPdfBoleta } from "../boletaPdf";
 import { registrarBitacora } from "../bitacora";
-import { obtenerLogoEmpresa } from "./empresa";
+import { obtenerDatosEmpresaBoleta } from "./empresa";
 
 export const enviosRouter = Router();
 
@@ -52,9 +52,11 @@ enviosRouter.post(
        ${esAdmin ? "" : "AND c.proyecto = ANY($3::text[])"}`,
       esAdmin ? [req.params.id, detalleIds] : [req.params.id, detalleIds, req.usuario!.proyectos]
     );
-    // Se resuelve UNA sola vez por envio (no por cada boleta) - el logo de
-    // la empresa (migracion 031) es el mismo para todos los trabajadores.
-    const logo = await obtenerLogoEmpresa();
+    // Se resuelve UNA sola vez por envio (no por cada boleta) - el logo y la
+    // firma del empleador (migracion 031) son los mismos para todos los
+    // trabajadores. La firma del trabajador si varia por fila (ya viene en
+    // "fila" via el JOIN de arriba).
+    const datosEmpresa = await obtenerDatosEmpresaBoleta();
 
     const errores: ErrorEnvio[] = [];
     let enviados = 0;
@@ -70,7 +72,7 @@ enviosRouter.post(
         continue;
       }
       try {
-        const pdf = await generarPdfBoleta(fila as DetalleBoletaPdf, periodo, logo?.buffer ?? null);
+        const pdf = await generarPdfBoleta(fila as DetalleBoletaPdf, periodo, datosEmpresa);
         const nombreArchivo = `Boleta_${MESES[periodo.mes - 1]}_${periodo.anio}_${fila.numero_documento}.pdf`;
         await enviarCorreo({
           para: fila.correo.trim(),

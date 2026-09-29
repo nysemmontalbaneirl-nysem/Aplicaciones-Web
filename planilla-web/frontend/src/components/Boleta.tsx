@@ -1,4 +1,4 @@
-import { DetallePlanilla, PeriodoPlanilla, esConstruccionCivil } from "../types";
+import { DatosEmpresa, DetallePlanilla, PeriodoPlanilla, esConstruccionCivil } from "../types";
 import { BASE_URL, conToken } from "../api";
 import logoJhcr from "../assets/logo-jhcr.jpg";
 
@@ -9,6 +9,11 @@ interface Props {
   // Oculta los botones Imprimir/Cerrar propios de esta boleta, para cuando
   // se muestra dentro de un lote con sus propios controles compartidos.
   ocultarControles?: boolean;
+  // Firma del empleador + nombre del representante legal (migracion 031,
+  // pedido adicional) - el llamador (Boletas.tsx) los pide UNA sola vez
+  // (no por cada boleta) y los pasa aqui. Opcional: si no se pasa, o si
+  // todavia no se configuraron, la boleta se muestra igual sin ese bloque.
+  datosEmpresa?: DatosEmpresa | null;
 }
 
 const MESES = [
@@ -80,7 +85,7 @@ function agruparDeADos<T>(items: T[]): [T, T | null][] {
   return filas;
 }
 
-export default function Boleta({ detalle, periodo, onCerrar, ocultarControles }: Props) {
+export default function Boleta({ detalle, periodo, onCerrar, ocultarControles, datosEmpresa }: Props) {
   const aporteDetalle = detalle.detalle_json?.aporte_pension_detalle;
 
   // Fecha de cese: solo se muestra si el trabajador efectivamente ceso
@@ -278,12 +283,33 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles }:
         Neto a pagar: {moneda(detalle.neto_pagar)}
       </div>
 
-      {/* Espacio de firma (migracion 031) - la linea en blanco para la
-          firma FISICA se dibuja siempre (confirmado con el usuario: no se
-          reemplaza). La firma escaneada guardada en Trabajadores es
-          puramente una referencia visual de apoyo, dibujada encima de esa
-          misma linea solo si el trabajador tiene una. */}
-      <div style={{ marginTop: 36, display: "flex", justifyContent: "flex-end" }}>
+      {/* Espacio de firmas (migracion 031 + pedido adicional del usuario:
+          firma del empleador + representante legal impreso). La linea en
+          blanco para la firma FISICA se dibuja siempre a ambos lados
+          (confirmado con el usuario: no se reemplaza). Las firmas
+          escaneadas (empleador en Empresa, trabajador en Trabajadores) son
+          puramente una referencia visual de apoyo, dibujadas encima de esa
+          misma linea solo si estan configuradas. */}
+      <div style={{ marginTop: 36, display: "flex", justifyContent: "space-between", gap: 16 }}>
+        <div style={{ width: 180, textAlign: "center" as const }}>
+          {datosEmpresa?.tiene_firma_empleador && (
+            <img
+              src={conToken(`${BASE_URL}/empresa/firma-empleador`)}
+              alt="Firma del empleador"
+              style={{ height: 40, maxWidth: 160, objectFit: "contain", display: "block", margin: "0 auto" }}
+              onError={(e) => {
+                e.currentTarget.style.display = "none";
+              }}
+            />
+          )}
+          <div style={{ borderTop: "1px solid #000", marginTop: 4, paddingTop: 2, fontSize: "0.75rem", color: "#5a6172" }}>
+            Firma y sello del empleador
+            {datosEmpresa?.tiene_firma_empleador && <div>(firma registrada - solo referencial)</div>}
+            {datosEmpresa?.representante_legal && (
+              <div style={{ fontWeight: 700, color: "#000" }}>{datosEmpresa.representante_legal}</div>
+            )}
+          </div>
+        </div>
         <div style={{ width: 180, textAlign: "center" as const }}>
           {detalle.tiene_firma && (
             <img

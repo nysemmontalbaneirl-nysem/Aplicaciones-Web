@@ -455,6 +455,13 @@ export interface DatosEmpresa {
   logo_mime?: string | null;
   logo_nombre?: string | null;
   tiene_logo?: boolean;
+  // Firma escaneada del EMPLEADOR (migracion 031, pedido adicional) - misma
+  // logica que el logo: el binario nunca viaja por JSON, la imagen se sirve
+  // por GET /api/empresa/firma-empleador. Se muestra en la Boleta junto al
+  // nombre de representante_legal (arriba).
+  firma_empleador_mime?: string | null;
+  firma_empleador_nombre?: string | null;
+  tiene_firma_empleador?: boolean;
 }
 
 // Catalogo configurable de conceptos de planilla (pestana Configuracion),

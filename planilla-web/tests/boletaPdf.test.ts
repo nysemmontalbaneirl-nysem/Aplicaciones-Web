@@ -68,16 +68,32 @@ describe("generarPdfBoleta", () => {
     expect(pdf.length).toBeGreaterThan(500);
   });
 
-  // Migracion 031: logo de la empresa (configurable) + firma escaneada del
-  // trabajador (referencial). Ninguno de los 2 es obligatorio - se prueba
-  // que el PDF se sigue generando bien con y sin ellos.
+  // Migracion 031: logo de la empresa + firma del empleador (con nombre del
+  // representante legal) + firma escaneada del trabajador (referencial).
+  // Ninguno es obligatorio - se prueba que el PDF se sigue generando bien
+  // con y sin ellos.
   it("genera un PDF valido con un logo de empresa configurado (Buffer, no el archivo estatico)", async () => {
-    const pdf = await generarPdfBoleta(DETALLE_BASE, { anio: 2026, mes: 2 }, PNG_1X1);
+    const pdf = await generarPdfBoleta(DETALLE_BASE, { anio: 2026, mes: 2 }, { logo: PNG_1X1 });
     expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
   });
 
   it("genera un PDF valido con la firma escaneada del trabajador (referencial)", async () => {
     const pdf = await generarPdfBoleta({ ...DETALLE_BASE, firma_archivo: PNG_1X1, firma_mime: "image/png" }, { anio: 2026, mes: 2 });
+    expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+  });
+
+  it("genera un PDF valido con la firma del empleador y el nombre del representante legal", async () => {
+    const pdf = await generarPdfBoleta(DETALLE_BASE, { anio: 2026, mes: 2 }, {
+      firmaEmpleador: PNG_1X1,
+      representanteLegal: "MONTALBAN SANCHEZ CARLOS",
+    });
+    expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+  });
+
+  it("genera un PDF valido con el nombre del representante legal aunque NO se haya subido la firma del empleador", async () => {
+    const pdf = await generarPdfBoleta(DETALLE_BASE, { anio: 2026, mes: 2 }, {
+      representanteLegal: "MONTALBAN SANCHEZ CARLOS",
+    });
     expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
   });
 

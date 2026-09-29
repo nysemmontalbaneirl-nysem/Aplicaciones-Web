@@ -59,9 +59,15 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // Deja el logo de la empresa como estaba (sin logo) para no afectar otras
-  // pruebas/entornos que reutilicen esta misma base de datos de prueba.
-  await pool.query("UPDATE datos_empresa SET logo_archivo = NULL, logo_mime = NULL, logo_nombre = NULL");
+  // Deja los datos de la empresa como estaban (sin logo/firma del empleador
+  // y sin representante_legal) para no afectar otras pruebas/entornos que
+  // reutilicen esta misma base de datos de prueba.
+  await pool.query(
+    `UPDATE datos_empresa SET
+       logo_archivo = NULL, logo_mime = NULL, logo_nombre = NULL,
+       firma_empleador_archivo = NULL, firma_empleador_mime = NULL, firma_empleador_nombre = NULL,
+       representante_legal = NULL`
+  );
   for (const id of contratosCreados) {
     await pool.query("DELETE FROM contratos WHERE id = $1", [id]);
   }
@@ -126,6 +132,50 @@ describe("Logo de la empresa (GET/POST/DELETE /api/empresa/logo)", () => {
     expect(sigueTeniendo.status).toBe(200);
 
     await request(app).delete("/api/empresa/logo").set(authAdmin());
+  });
+});
+
+describe("Firma del EMPLEADOR (GET/POST/DELETE /api/empresa/firma-empleador) - pedido adicional del usuario", () => {
+  it("GET /api/empresa no incluye firma_empleador_archivo (bytea) en el JSON, solo metadata + tiene_firma_empleador", async () => {
+    const r = await request(app).get("/api/empresa").set(authAdmin());
+    expect(r.status).toBe(200);
+    expect(r.body).not.toHaveProperty("firma_empleador_archivo");
+    expect(r.body).toHaveProperty("tiene_firma_empleador");
+  });
+
+  it("sube, ve y quita la firma del empleador", async () => {
+    const subida = await request(app)
+      .post("/api/empresa/firma-empleador")
+      .set(authAdmin())
+      .attach("archivo", PNG_1X1, "firma-empleador.png");
+    expect(subida.status).toBe(204);
+
+    const datos = await request(app).get("/api/empresa").set(authAdmin());
+    expect(datos.body.tiene_firma_empleador).toBe(true);
+    expect(datos.body.firma_empleador_nombre).toBe("firma-empleador.png");
+
+    const imagen = await request(app).get("/api/empresa/firma-empleador").set(authAdmin());
+    expect(imagen.status).toBe(200);
+    expect((imagen.body as Buffer).equals(PNG_1X1)).toBe(true);
+
+    const quitar = await request(app).delete("/api/empresa/firma-empleador").set(authAdmin());
+    expect(quitar.status).toBe(204);
+
+    const despues = await request(app).get("/api/empresa/firma-empleador").set(authAdmin());
+    expect(despues.status).toBe(404);
+  });
+
+  it("guardar el nombre del representante legal (PUT /api/empresa) se refleja en el GET", async () => {
+    const actual = await request(app).get("/api/empresa").set(authAdmin());
+    const r = await request(app)
+      .put("/api/empresa")
+      .set(authAdmin())
+      .send({ ...actual.body, representante_legal: "MONTALBAN SANCHEZ CARLOS" });
+    expect(r.status).toBe(200);
+    expect(r.body.representante_legal).toBe("MONTALBAN SANCHEZ CARLOS");
+
+    const relectura = await request(app).get("/api/empresa").set(authAdmin());
+    expect(relectura.body.representante_legal).toBe("MONTALBAN SANCHEZ CARLOS");
   });
 });
 
