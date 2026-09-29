@@ -394,6 +394,110 @@ export function porcentajeRecargo(factor: number | null | undefined): string {
   return `${Math.round((Number(factor) - 1) * 100)}%`;
 }
 
+// ---------------------------------------------------------------------
+// Planilla Mensual Consolidada (Ronda E, migracion_034): junta el Tareo
+// Diario de todas las quincenas/semanas de un {proyecto, anio, mes} en un
+// solo calculo mensual, para declarar PLAME/AFPnet/Asiento Contable por MES
+// CALENDARIO. Aplica solo a obreros (construccion civil) - Empleados ya
+// declaran por su propio periodo MENSUAL. Ver src/planillaMensual.ts (backend).
+// ---------------------------------------------------------------------
+export interface PlanillaMensualCabecera {
+  id: number;
+  proyecto: string;
+  anio: number;
+  mes: number;
+  calculado_en: string;
+  calculado_por: number | null;
+  creado_en: string;
+}
+
+// Espejo de DetallePlanilla (mismas columnas de asistencia/ingresos/
+// descuentos/aportes), con el contrato/trabajador ya unido - ver
+// obtenerPlanillaMensual en planillaMensual.ts.
+export interface DetallePlanillaMensualFila {
+  id: number;
+  planilla_mensual_id: number;
+  contrato_id: number;
+  numero_documento: string;
+  apellidos_nombres: string;
+  categoria_ocupacional: CategoriaOcupacional;
+  proyecto: string;
+
+  dias_trabajados: number;
+  dias_dominical: number;
+  dias_dominical_no_laborado: number;
+  dias_feriado: number;
+  dias_falta: number;
+  horas_extra_25: number;
+  horas_extra_35: number;
+  horas_extra_100: number;
+  dias_subsidio_enfermedad: number;
+  dias_subsidio_maternidad: number;
+  dias_licencia_paternidad: number;
+
+  jornal_diario: number;
+  sueldo_basico: number;
+  remuneracion_dominical: number;
+  remuneracion_dominical_proporcional: number;
+  remuneracion_feriado: number;
+  sobretasa_dominical: number;
+  sobretasa_feriado: number;
+  importe_horas_extra: number;
+  asignacion_familiar: number;
+  asignacion_escolaridad: number;
+  bonificacion_buc: number;
+  bonificacion_bae: number;
+  bonificacion_movilidad: number;
+  condicion_trabajo: number;
+  subsidio_enfermedad: number;
+  licencia_paternidad: number;
+  otras_bonificaciones: number;
+  gratificacion: number;
+  bonificacion_extraordinaria: number;
+  cts: number;
+  vacaciones: number;
+  total_ingresos: number;
+
+  aporte_pension: number;
+  descuento_sindicato: number;
+  seguro_vida: number;
+  conafovicer: number;
+  renta_5ta: number;
+  otros_descuentos: number;
+  total_descuentos: number;
+
+  essalud: number;
+  sctr: number;
+  senati: number;
+
+  neto_pagar: number;
+}
+
+export interface PlanillaMensualConsolidada {
+  planillaMensual: PlanillaMensualCabecera;
+  detalle: DetallePlanillaMensualFila[];
+}
+
+export interface AvisoRecalculoPosteriorMensual {
+  periodo_id: number;
+  anio: number;
+  mes: number;
+  quincena: number | null;
+  tipo: string;
+  calculado_en: string;
+}
+
+export interface ResultadoConsolidacion {
+  planilla_mensual_id: number;
+  proyecto: string;
+  anio: number;
+  mes: number;
+  trabajadores_consolidados: number;
+  periodos_incluidos: { id: number; tipo: string; quincena: number | null; fecha_inicio: string; fecha_fin: string }[];
+  avisos_recalculo_posterior: AvisoRecalculoPosteriorMensual[];
+  errores: { contrato_id: number; dni: string; nombre: string; motivo: string }[];
+}
+
 export interface Proyecto {
   id: number;
   nombre: string;

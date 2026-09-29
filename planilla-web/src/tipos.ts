@@ -297,6 +297,99 @@ export interface DetallePlanilla {
   detalle_json: Record<string, unknown>;
 }
 
+// ---------------------------------------------------------------------
+// Planilla Mensual Consolidada (migracion 034, "Ronda E"): junta el Tareo
+// Diario de todas las quincenas/semanas de un {proyecto, anio, mes} en un
+// solo calculo mensual, para declarar PLAME/AFPnet/Asiento Contable por mes
+// calendario. Aplica solo a obreros (construccion civil) - Empleados ya
+// declaran por su periodo MENSUAL tal cual, sin cambios. Es un calculo
+// ADICIONAL: no modifica ni reemplaza detalle_planilla (boletas por
+// periodo de pago).
+// ---------------------------------------------------------------------
+export interface PlanillaMensual {
+  id: number;
+  proyecto: string;
+  anio: number;
+  mes: number;
+  calculado_en: string;
+  calculado_por: number | null;
+  creado_en: string;
+}
+
+// Espejo de DetallePlanilla, con planilla_mensual_id en vez de periodo_id -
+// mismas columnas de asistencia/ingresos/descuentos/aportes.
+export interface DetallePlanillaMensual {
+  id: number;
+  planilla_mensual_id: number;
+  contrato_id: number;
+
+  dias_trabajados: number;
+  dias_dominical: number;
+  dias_dominical_no_laborado: number;
+  dias_feriado: number;
+  dias_falta: number;
+  horas_extra_25: number;
+  horas_extra_35: number;
+  horas_extra_100: number;
+  dias_subsidio_enfermedad: number;
+  dias_subsidio_maternidad: number;
+  dias_licencia_paternidad: number;
+  dias_subsidio_enfermedad_computable: number;
+
+  jornal_diario: number;
+  sueldo_basico: number;
+  remuneracion_dominical: number;
+  remuneracion_dominical_proporcional: number;
+  remuneracion_feriado: number;
+  sobretasa_dominical: number;
+  sobretasa_feriado: number;
+  importe_horas_extra: number;
+  asignacion_familiar: number;
+  asignacion_escolaridad: number;
+  bonificacion_buc: number;
+  bonificacion_bae: number;
+  bonificacion_movilidad: number;
+  condicion_trabajo: number;
+  subsidio_enfermedad: number;
+  licencia_paternidad: number;
+  otras_bonificaciones: number;
+  gratificacion: number;
+  bonificacion_extraordinaria: number;
+  cts: number;
+  vacaciones: number;
+  total_ingresos: number;
+
+  aporte_pension: number;
+  descuento_sindicato: number;
+  seguro_vida: number;
+  conafovicer: number;
+  renta_5ta: number;
+  otros_descuentos: number;
+  total_descuentos: number;
+
+  essalud: number;
+  sctr: number;
+  senati: number;
+
+  neto_pagar: number;
+  detalle_json: Record<string, unknown>;
+
+  conceptos_personalizados?: { codigo: string; nombre: string; tipo: "INGRESO" | "APORTE" | "DESCUENTO"; monto: number }[];
+}
+
+// Aviso devuelto por POST /api/planilla-mensual/consolidar cuando una
+// quincena usada en la consolidacion se recalculo DESPUES de la ultima vez
+// que se consolido este mes (foto historica: no se recalcula sola, solo
+// avisa - el usuario decide si vuelve a presionar "Consolidar").
+export interface AvisoRecalculoPosteriorMensual {
+  periodo_id: number;
+  anio: number;
+  mes: number;
+  quincena: number | null;
+  tipo: TipoPeriodo;
+  calculado_en: string;
+}
+
 // Codigo de rol (roles.codigo): ADMIN, RESPONSABLE_PLANILLA, TAREADOR, o
 // cualquier rol nuevo que el Administrador cree desde la pestaña Roles.
 // Ya no es una union fija: los roles son configurables (ver routes/roles.ts).

@@ -649,6 +649,95 @@ CREATE TABLE configuracion_seguridad (
 );
 INSERT INTO configuracion_seguridad (id, clave_formulas_hash) VALUES (1, NULL);
 
+-- -------------------------------------------------------------------------
+-- Planilla Mensual Consolidada (migracion 034, "Ronda E"): junta el Tareo
+-- Diario de todas las quincenas/semanas de un {proyecto, anio, mes} en un
+-- solo calculo mensual, para poder declarar PLAME/AFPnet/Asiento Contable
+-- por mes calendario (aplica solo a obreros - Empleados ya declaran por su
+-- periodo MENSUAL tal cual). No modifica ni reemplaza detalle_planilla
+-- (boletas por periodo de pago) - es un calculo adicional, foto historica.
+-- -------------------------------------------------------------------------
+CREATE TABLE planilla_mensual (
+    id              SERIAL PRIMARY KEY,
+    proyecto        VARCHAR(150) NOT NULL,
+    anio            INT NOT NULL,
+    mes             INT NOT NULL CHECK (mes BETWEEN 1 AND 12),
+    calculado_en    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    calculado_por   INT REFERENCES usuarios(id),
+    creado_en       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (proyecto, anio, mes)
+);
+
+CREATE TABLE detalle_planilla_mensual (
+    id                     SERIAL PRIMARY KEY,
+    planilla_mensual_id    INT NOT NULL REFERENCES planilla_mensual(id) ON DELETE CASCADE,
+    contrato_id            INT NOT NULL REFERENCES contratos(id) ON DELETE RESTRICT,
+
+    dias_trabajados        NUMERIC(6,2) NOT NULL DEFAULT 0,
+    dias_dominical         NUMERIC(6,2) NOT NULL DEFAULT 0,
+    dias_dominical_no_laborado NUMERIC(6,2) NOT NULL DEFAULT 0,
+    dias_feriado           NUMERIC(6,2) NOT NULL DEFAULT 0,
+    dias_falta             NUMERIC(6,2) NOT NULL DEFAULT 0,
+    horas_extra_25         NUMERIC(6,2) NOT NULL DEFAULT 0,
+    horas_extra_35         NUMERIC(6,2) NOT NULL DEFAULT 0,
+    horas_extra_100        NUMERIC(6,2) NOT NULL DEFAULT 0,
+
+    jornal_diario          NUMERIC(10,2) NOT NULL DEFAULT 0,
+    sueldo_basico          NUMERIC(10,2) NOT NULL DEFAULT 0,
+    remuneracion_dominical NUMERIC(10,2) NOT NULL DEFAULT 0,
+    remuneracion_dominical_proporcional NUMERIC(10,2) NOT NULL DEFAULT 0,
+    remuneracion_feriado   NUMERIC(10,2) NOT NULL DEFAULT 0,
+    sobretasa_dominical    NUMERIC(10,2) NOT NULL DEFAULT 0,
+    sobretasa_feriado      NUMERIC(10,2) NOT NULL DEFAULT 0,
+    importe_horas_extra    NUMERIC(10,2) NOT NULL DEFAULT 0,
+    asignacion_familiar    NUMERIC(10,2) NOT NULL DEFAULT 0,
+    asignacion_escolaridad NUMERIC(10,2) NOT NULL DEFAULT 0,
+    bonificacion_buc       NUMERIC(10,2) NOT NULL DEFAULT 0,
+    bonificacion_bae       NUMERIC(10,2) NOT NULL DEFAULT 0,
+    bonificacion_movilidad NUMERIC(10,2) NOT NULL DEFAULT 0,
+    condicion_trabajo      NUMERIC(10,2) NOT NULL DEFAULT 0,
+    dias_subsidio_enfermedad NUMERIC(6,2) NOT NULL DEFAULT 0,
+    dias_subsidio_maternidad NUMERIC(6,2) NOT NULL DEFAULT 0,
+    dias_licencia_paternidad NUMERIC(6,2) NOT NULL DEFAULT 0,
+    dias_subsidio_enfermedad_computable NUMERIC(6,2) NOT NULL DEFAULT 0,
+    subsidio_enfermedad    NUMERIC(10,2) NOT NULL DEFAULT 0,
+    licencia_paternidad    NUMERIC(10,2) NOT NULL DEFAULT 0,
+    otras_bonificaciones   NUMERIC(10,2) NOT NULL DEFAULT 0,
+    gratificacion          NUMERIC(10,2) NOT NULL DEFAULT 0,
+    bonificacion_extraordinaria NUMERIC(10,2) NOT NULL DEFAULT 0,
+    cts                    NUMERIC(10,2) NOT NULL DEFAULT 0,
+    vacaciones             NUMERIC(10,2) NOT NULL DEFAULT 0,
+    total_ingresos         NUMERIC(10,2) NOT NULL DEFAULT 0,
+
+    aporte_pension         NUMERIC(10,2) NOT NULL DEFAULT 0,
+    descuento_sindicato    NUMERIC(10,2) NOT NULL DEFAULT 0,
+    seguro_vida            NUMERIC(10,2) NOT NULL DEFAULT 0,
+    conafovicer            NUMERIC(10,2) NOT NULL DEFAULT 0,
+    renta_5ta              NUMERIC(10,2) NOT NULL DEFAULT 0,
+    otros_descuentos       NUMERIC(10,2) NOT NULL DEFAULT 0,
+    total_descuentos       NUMERIC(10,2) NOT NULL DEFAULT 0,
+
+    essalud                NUMERIC(10,2) NOT NULL DEFAULT 0,
+    sctr                   NUMERIC(10,2) NOT NULL DEFAULT 0,
+    senati                 NUMERIC(10,2) NOT NULL DEFAULT 0,
+
+    neto_pagar             NUMERIC(10,2) NOT NULL DEFAULT 0,
+
+    detalle_json           JSONB,
+
+    UNIQUE (planilla_mensual_id, contrato_id)
+);
+CREATE INDEX idx_detalle_planilla_mensual_planilla ON detalle_planilla_mensual(planilla_mensual_id);
+
+CREATE TABLE detalle_planilla_conceptos_mensual (
+    id              SERIAL PRIMARY KEY,
+    detalle_id      INT NOT NULL REFERENCES detalle_planilla_mensual(id) ON DELETE CASCADE,
+    concepto_codigo VARCHAR(60) NOT NULL REFERENCES conceptos_planilla(codigo),
+    monto           NUMERIC(10,2) NOT NULL DEFAULT 0,
+    UNIQUE(detalle_id, concepto_codigo)
+);
+CREATE INDEX idx_detalle_planilla_conceptos_mensual_detalle ON detalle_planilla_conceptos_mensual(detalle_id);
+
 INSERT INTO conceptos_planilla
     (codigo, nombre, descripcion, orden,
      factor1, factor1_etiqueta, factor2, factor2_etiqueta, factor3, factor3_etiqueta,
@@ -805,6 +894,7 @@ INSERT INTO permisos_catalogo (codigo, nombre, grupo, orden) VALUES
     ('boletas.enviar',          'Enviar boletas por correo',                                  'Planillas',      65),
     ('reportes.ver',            'Ver y descargar el resumen de planilla (Excel)',             'Planillas',      70),
     ('exportaciones.descargar', 'Descargar archivos REM / AFPnet',                            'Planillas',      80),
+    ('planilla_mensual.gestionar', 'Consolidar y descargar la Planilla Mensual',              'Planillas',      85),
     ('vacaciones.gestionar',    'Registrar goces de vacaciones y generar boletas',            'Vacaciones',     90),
     ('parametros.editar',       'Editar tasas legales, AFP y tabla salarial',                 'Parametros',    100),
     ('conceptos.editar',        'Configurar a que aportes/descuentos esta afecto cada concepto', 'Configuracion', 110),
@@ -817,7 +907,7 @@ SELECT 'RESPONSABLE_PLANILLA', codigo FROM permisos_catalogo
 WHERE codigo IN (
     'empleados.gestionar', 'contratos.gestionar', 'periodos.gestionar',
     'planilla.calcular', 'boletas.ver', 'boletas.enviar', 'reportes.ver',
-    'exportaciones.descargar', 'vacaciones.gestionar'
+    'exportaciones.descargar', 'planilla_mensual.gestionar', 'vacaciones.gestionar'
 );
 
 -- -------------------------------------------------------------------------

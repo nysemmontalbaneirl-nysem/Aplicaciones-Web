@@ -11,6 +11,7 @@ import TareoDiario from "./components/TareoDiario";
 import Calculo from "./components/Calculo";
 import Boletas from "./components/Boletas";
 import Reportes from "./components/Reportes";
+import PlanillaMensual from "./components/PlanillaMensual";
 import Vacaciones from "./components/Vacaciones";
 import Configuracion from "./components/Configuracion";
 import Bitacora from "./components/Bitacora";
@@ -81,6 +82,7 @@ export default function App() {
   const puedeCalcular = tienePermiso(usuario, "planilla.calcular");
   const puedeVerBoletas = tienePermiso(usuario, "boletas.ver");
   const puedeVerReportes = tienePermiso(usuario, "reportes.ver");
+  const puedeVerPlanillaMensual = tienePermiso(usuario, "planilla_mensual.gestionar");
   const puedeVerVacaciones = tienePermiso(usuario, "vacaciones.gestionar");
   const puedeImportarMasivo = tienePermiso(usuario, "importacion.masiva");
   const puedeVerParametros = tienePermiso(usuario, "parametros.editar");
@@ -106,6 +108,7 @@ export default function App() {
           puedeCalcular={puedeCalcular}
           puedeVerBoletas={puedeVerBoletas}
           puedeVerReportes={puedeVerReportes}
+          puedeVerPlanillaMensual={puedeVerPlanillaMensual}
           puedeVerVacaciones={puedeVerVacaciones}
           puedeImportarMasivo={puedeImportarMasivo}
           puedeVerParametros={puedeVerParametros}
@@ -139,6 +142,7 @@ export default function App() {
           )}
           {pestana === "boletas" && puedeVerBoletas && <Boletas periodoInicial={periodoSeleccionado} />}
           {pestana === "reportes" && puedeVerReportes && <Reportes />}
+          {pestana === "planillaMensual" && puedeVerPlanillaMensual && <PlanillaMensual />}
           {pestana === "vacaciones" && puedeVerVacaciones && <Vacaciones />}
           {pestana === "parametros" && puedeVerParametros && <Parametros />}
           {pestana === "configuracion" && puedeVerConfiguracion && <Configuracion />}

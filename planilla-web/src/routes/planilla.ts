@@ -45,7 +45,7 @@ export async function obtenerParametros(anio: number): Promise<ParametrosNormati
   return r.rows[0] as ParametrosNormativos;
 }
 
-async function obtenerTablaCategorias(anio: number, mes: number): Promise<TablaSalarialMensual> {
+export async function obtenerTablaCategorias(anio: number, mes: number): Promise<TablaSalarialMensual> {
   const r = await pool.query(
     "SELECT categoria, jornal_basico, buc, bae, movilidad_acumulada, gratificacion_diaria FROM tabla_salarial_mensual WHERE anio = $1 AND mes = $2",
     [anio, mes]
@@ -634,7 +634,7 @@ function redondear2(valor: number): number {
  * (motorCalculo.ts, Ronda 3). El servidor corre en UTC (confirmado), asi
  * que toISOString() no desfasa el dia.
  */
-function fechaISO(v: unknown): string {
+export function fechaISO(v: unknown): string {
   if (v instanceof Date) return v.toISOString().slice(0, 10);
   return String(v).slice(0, 10);
 }
@@ -653,7 +653,7 @@ function fechaISO(v: unknown): string {
  * calcularTramosMes en motorCalculo.ts) pueda pedir el tareo diario de SOLO
  * un tramo a la vez, sin tener que releer el periodo completo cada vez.
  */
-async function agregarTareoDiario(
+export async function agregarTareoDiario(
   periodoId: string | number,
   contratoId: number,
   fechaDesde: string,

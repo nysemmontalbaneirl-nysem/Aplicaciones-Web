@@ -10,6 +10,7 @@ export type Pestana =
   | "calculo"
   | "boletas"
   | "reportes"
+  | "planillaMensual"
   | "vacaciones"
   | "parametros"
   | "usuarios"
@@ -39,6 +40,7 @@ interface Props {
   puedeCalcular: boolean;
   puedeVerBoletas: boolean;
   puedeVerReportes: boolean;
+  puedeVerPlanillaMensual: boolean;
   puedeVerVacaciones: boolean;
   puedeImportarMasivo: boolean;
   puedeVerParametros: boolean;
@@ -67,6 +69,7 @@ export default function Sidebar({
   puedeCalcular,
   puedeVerBoletas,
   puedeVerReportes,
+  puedeVerPlanillaMensual,
   puedeVerVacaciones,
   puedeImportarMasivo,
   puedeVerParametros,
@@ -109,6 +112,7 @@ export default function Sidebar({
         ...(puedeCalcular ? [{ id: "calculo" as const, etiqueta: "Calcular", disabled: !periodoSeleccionado }] : []),
         ...(puedeVerBoletas ? [{ id: "boletas" as const, etiqueta: "Boletas" }] : []),
         ...(puedeVerReportes ? [{ id: "reportes" as const, etiqueta: "Reportes" }] : []),
+        ...(puedeVerPlanillaMensual ? [{ id: "planillaMensual" as const, etiqueta: "Planilla Mensual" }] : []),
         ...(puedeVerVacaciones ? [{ id: "vacaciones" as const, etiqueta: "Vacaciones" }] : []),
       ],
     },

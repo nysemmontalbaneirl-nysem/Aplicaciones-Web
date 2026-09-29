@@ -26,6 +26,7 @@ import { rolesRouter } from "./routes/roles";
 import { dashboardRouter } from "./routes/dashboard";
 import { enviosRouter } from "./routes/envios";
 import { catalogosRouter } from "./routes/catalogos";
+import { planillaMensualRouter } from "./routes/planillaMensual";
 
 // Construccion de la app Express, separada de server.ts (que la arranca
 // escuchando en un puerto real). Separarlas permite que las pruebas
@@ -98,6 +99,10 @@ app.use("/api/roles", rolesRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/periodos", enviosRouter);
 app.use("/api/catalogos", catalogosRouter);
+// Planilla Mensual Consolidada (Ronda E): no esta anidada bajo /api/periodos
+// porque no corresponde a UN periodo de pago, sino a un {proyecto, anio, mes}
+// que puede juntar 2 o mas periodos QUINCENAL/SEMANAL (ver planillaMensual.ts).
+app.use("/api/planilla-mensual", planillaMensualRouter);
 
 // Manejador de errores centralizado
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

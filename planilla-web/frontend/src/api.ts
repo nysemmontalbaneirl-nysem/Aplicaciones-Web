@@ -103,3 +103,38 @@ export async function apiPostArchivo<T>(ruta: string, formData: FormData): Promi
   });
   return manejarRespuesta<T>(res);
 }
+
+// NOTA (recon 19/46): a diferencia de los enlaces <a href={conToken(...)}>
+// que ya usa Periodos.tsx para REM/AFPnet, este helper hace la descarga con
+// fetch (mismo patron de encabezadosAuth que el resto de api.ts) y dispara
+// el guardado del archivo manualmente. Se prefiere aqui (Planilla Mensual)
+// porque permite leer el cuerpo JSON de una respuesta de error 400 (ej. "faltan
+// cuentas contables por configurar") antes de decidir si hay que descargar o
+// mostrar un error - un <a href> normal no puede inspeccionar la respuesta.
+export async function apiDescargarArchivo(ruta: string, nombreArchivo: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}${ruta}`, { headers: encabezadosAuth() });
+  if (res.status === 401) {
+    borrarToken();
+    window.dispatchEvent(new Event("sesion-expirada"));
+  }
+  if (!res.ok) {
+    let mensaje = `Error ${res.status}`;
+    let cuerpo: unknown;
+    try {
+      cuerpo = await res.json();
+      if ((cuerpo as { error?: string })?.error) mensaje = (cuerpo as { error: string }).error;
+    } catch {
+      // sin cuerpo JSON, se deja el mensaje generico
+    }
+    throw new ErrorApi(mensaje, res.status, cuerpo);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const enlace = document.createElement("a");
+  enlace.href = url;
+  enlace.download = nombreArchivo;
+  document.body.appendChild(enlace);
+  enlace.click();
+  enlace.remove();
+  URL.revokeObjectURL(url);
+}

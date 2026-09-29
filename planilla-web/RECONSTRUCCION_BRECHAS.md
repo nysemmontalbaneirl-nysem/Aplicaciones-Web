@@ -106,12 +106,50 @@ Por eso `VARIABLES_FORMULA` (formulas.ts) excluye explícitamente
 `dias_dominical_no_laborado` y `dias_feriado_trabajado` aunque la lista
 original (producción) sí los tenía.
 
+**Resurgió en el patch 19/46** ("Ronda E"): `afpnet.ts`/`plame.ts` ahora
+tienen estos campos como OPCIONALES en `FilaAFPnet`/`FilaExportacion`
+(con `num()` tratando `undefined` como 0) para poder compartir la lógica
+de formato entre la exportación por periodo de pago (que no los tiene) y
+la mensual consolidada (que sí, ver abajo). La tabla nueva
+`detalle_planilla_mensual` (migración 034) SÍ nace con columnas propias
+`dias_dominical_no_laborado`/`remuneracion_dominical_proporcional`/
+`sobretasa_dominical`/`sobretasa_feriado` — pero como el motor de cálculo
+(`motorCalculo.ts`/`ResultadoCalculoLinea`) tampoco las produce todavía,
+`planillaMensual.ts` las deja en su `DEFAULT 0` de tabla (no las lee de
+`d`, que no las tiene) y `CAMPOS_ASISTENCIA_SUMABLES` tampoco suma
+`dias_feriado_trabajado`/`dias_dominical_no_laborado`. Es decir: la
+"tubería" (columnas, tipos) para esta brecha ya está más completa que
+antes, pero el cálculo real sigue pendiente de las migraciones 022/023/026.
+
+### 4.1. Catálogo de códigos PLAME para descuentos/aportes (`obtenerAportes`)
+
+Descubierto en el patch 19/46: `resolverCodigosPlame()` (plame.ts)
+originalmente resolvía códigos PLAME editables tanto para conceptos de
+INGRESO (`obtenerConceptos()`, migración 019, SÍ existe) como para
+DESCUENTOS/APORTES (`obtenerAportes()`: cuota sindical, CONAFOVICER,
+renta 5ta, ONP) vía una función que no existe en este árbol — no hay
+catálogo ni pantalla de Configuración para hacer editable el código PLAME
+de esos 4 conceptos. Se mantienen con su código fijo de `CONCEPTO.*`,
+igual que antes de este parche (sin regresión, pero sin la mejora que
+traía). Reconstruir si aparece el parche que agrega ese catálogo.
+
 ## 5. `src/asientoContable.ts` (Asiento Contable / exportación contable)
 
 Módulo completo ausente. Confirmado por segunda vez en el patch 15/46:
 un test que lo importaba y usaba tablas `plan_cuentas` /
 `mapeo_cuentas_contables` (tampoco existentes en `schema.sql`) fue
 removido de `tests/conceptos_formula_libre.test.ts`.
+
+**Confirmado por TERCERA vez en el patch 19/46** ("Ronda E", Planilla
+Mensual Consolidada): el parche traía `generarAsientoContableMensual`
+(refactor de `asientoContable.ts` para leer de `detalle_planilla_mensual`),
+la ruta `GET /api/planilla-mensual/:id/exportar/asiento-contable` y el
+botón "Descargar Asiento Contable (Excel)" en la pantalla `PlanillaMensual.tsx`
+— los 3 fueron omitidos (ruta y botón eliminados por completo, no solo
+comentados) porque dependen enteramente de ese módulo. Cuando
+`asientoContable.ts` se reconstruya, agregar de nuevo esa ruta y ese botón
+siguiendo el mismo patrón que las descargas de REM/AFPnet ya presentes en
+`routes/planillaMensual.ts` / `PlanillaMensual.tsx`.
 
 ## 6. Ronda B, Parte 2 (logo de la empresa fijo + encabezado de boleta centrado)
 

@@ -38,6 +38,7 @@
 // =========================================================================
 
 import { pool } from "./db";
+import { obtenerConceptos } from "./routes/conceptos";
 
 export const CONCEPTO = {
   REMUNERACION_BASICA: "0121",
@@ -77,6 +78,16 @@ interface FilaExportacion {
   numero_documento: string;
   sueldo_basico: string;
   remuneracion_dominical: string;
+  // NOTA (recon 19/46): igual criterio que en afpnet.ts - estos 3 campos son
+  // de la infraestructura de "dominical proporcional/sobretasa" (migraciones
+  // 022/023/026), que NO existe en detalle_planilla (boleta por periodo de
+  // pago) en este arbol - ver RECONSTRUCCION_BRECHAS.md punto 4. Opcionales:
+  // generarLineasREM (por periodo) no los selecciona (num() los trata como
+  // 0); generarLineasREMMensual (Ronda E) si, porque detalle_planilla_mensual
+  // nace ya con esas columnas.
+  remuneracion_dominical_proporcional?: string;
+  sobretasa_dominical?: string;
+  sobretasa_feriado?: string;
   remuneracion_feriado: string;
   importe_horas_extra: string;
   asignacion_familiar: string;
@@ -97,7 +108,7 @@ interface FilaExportacion {
   detalle_json: { aporte_pension_detalle?: { aporteObligatorio: number; comisionFlujo: number; primaSeguro: number } };
 }
 
-function num(valor: string | number): number {
+function num(valor: string | number | undefined): number {
   return Number(valor) || 0;
 }
 
@@ -117,27 +128,83 @@ function lineaRem(dni: string, codigo: string, devengado: number, percibido: num
   return `${TIPO_PLANILLA}|${dni.padStart(8, "0")}|${codigo}|${formateaMonto(devengado)}|${formateaMonto(percibido)}|`;
 }
 
+interface CodigosPlame {
+  CODIGO_SUELDO_BASICO: string;
+  CODIGO_DESCANSO_FERIADO: string;
+  CODIGO_SOBRETASA_FERIADO_DESCANSO: string;
+  CODIGO_ASIGNACION_FAMILIAR: string;
+  CODIGO_BUC: string;
+  CODIGO_GRATIFICACION: string;
+  CODIGO_CTS: string;
+  CODIGO_SUBSIDIO_ENFERMEDAD: string;
+  CODIGO_LICENCIA_PATERNIDAD: string;
+}
+
 /**
- * Genera las lineas del archivo .rem para un periodo ya calculado.
- * Excluye EVENTUAL: no esta en planilla (ver motorCalculo.ts), asi que no
- * corresponde declararlo en el T-Registro/PDT.
+ * Resuelve los codigos PLAME editables desde Configuracion (migracion 019)
+ * para los conceptos de INGRESO. Se usa el valor de CONCEPTO como respaldo
+ * si la fila no trajera un codigo_plame. Compartido entre la exportacion por
+ * periodo de pago y la exportacion mensual consolidada (Ronda E): el
+ * catalogo de codigos PLAME es el mismo, sin importar de que tabla salga
+ * cada monto.
+ *
+ * NOTA (recon 19/46): el parche original tambien resolvia codigos PLAME
+ * configurables para los DESCUENTOS/APORTES (CUOTA_SINDICAL, CONAFOVICER,
+ * RENTA_5TA, ONP) via un "obtenerAportes()" - un catalogo/pantalla de
+ * Configuracion paralelo al de "Conceptos de ingreso" que no existe en este
+ * arbol (no llego como parte de ningun parche recuperado). Esos 4 codigos se
+ * mantienen con su valor fijo de CONCEPTO.*, igual que antes de este parche.
  */
-export async function generarLineasREM(periodoId: number): Promise<string[]> {
-  const resultado = await pool.query<FilaExportacion>(
-    `SELECT e.numero_documento, c.sistema_pension,
-            d.sueldo_basico, d.remuneracion_dominical, d.remuneracion_feriado,
-            d.importe_horas_extra, d.asignacion_familiar, d.bonificacion_buc,
-            d.subsidio_enfermedad, d.licencia_paternidad,
-            d.gratificacion, d.cts, d.aporte_pension, d.descuento_sindicato,
-            d.conafovicer, d.renta_5ta, d.seguro_vida, d.essalud, d.sctr, d.senati,
-            d.detalle_json
-     FROM detalle_planilla d
-     JOIN contratos c ON c.id = d.contrato_id
-     JOIN empleados e ON e.id = c.empleado_id
-     WHERE d.periodo_id = $1 AND c.categoria_ocupacional <> 'EVENTUAL'
-     ORDER BY e.numero_documento`,
-    [periodoId]
-  );
+async function resolverCodigosPlame(): Promise<CodigosPlame> {
+  const conceptos = await obtenerConceptos();
+  const codigoConcepto = (codigo: string, respaldo: string): string => conceptos[codigo]?.codigo_plame ?? respaldo;
+
+  return {
+    CODIGO_SUELDO_BASICO: codigoConcepto("SUELDO_BASICO", CONCEPTO.REMUNERACION_BASICA),
+    CODIGO_DESCANSO_FERIADO: codigoConcepto("REM_FERIADO", CONCEPTO.DESCANSO_FERIADO),
+    // NOTA (recon 19/46): CONCEPTO no tiene un codigo propio de "sobretasa
+    // por feriado/dominical no laborado" (esa infraestructura, migraciones
+    // 022/023/026, tampoco existe - ver RECONSTRUCCION_BRECHAS.md punto 4).
+    // Se usa el mismo codigo que DESCANSO_FERIADO como respaldo: en el
+    // periodo de pago el monto de sobretasa siempre es 0 (no se selecciona,
+    // ver FilaExportacion), y en la Planilla Mensual Consolidada, mientras
+    // no exista esa infraestructura, tambien sera 0 - no tiene efecto
+    // practico todavia, pero deja el codigo correcto el dia que se
+    // reconstruya esa brecha.
+    CODIGO_SOBRETASA_FERIADO_DESCANSO: codigoConcepto("SOBRETASA_FERIADO", CONCEPTO.DESCANSO_FERIADO),
+    CODIGO_ASIGNACION_FAMILIAR: codigoConcepto("ASIGNACION_FAMILIAR", CONCEPTO.ASIGNACION_FAMILIAR),
+    CODIGO_BUC: codigoConcepto("BUC", CONCEPTO.BUC_CONSTRUCCION),
+    CODIGO_GRATIFICACION: codigoConcepto("GRATIFICACION", CONCEPTO.GRATIFICACION),
+    CODIGO_CTS: codigoConcepto("CTS", CONCEPTO.CTS),
+    CODIGO_SUBSIDIO_ENFERMEDAD: codigoConcepto("SUBSIDIO_ENFERMEDAD", CONCEPTO.SUBSIDIO_INCAPACIDAD_ENFERMEDAD),
+    CODIGO_LICENCIA_PATERNIDAD: codigoConcepto("LICENCIA_PATERNIDAD", CONCEPTO.LICENCIA_CON_GOCE_DE_HABER),
+  };
+}
+
+/**
+ * Arma las lineas .rem a partir de filas YA obtenidas (de detalle_planilla o
+ * de detalle_planilla_mensual - mismas columnas, ver migracion 034) y de los
+ * montos de conceptos personalizados ya agrupados por DNI+codigo PLAME.
+ * Extraido para que generarLineasREM (por periodo de pago) y
+ * generarLineasREMMensual (Ronda E, por mes calendario consolidado) compartan
+ * exactamente la misma logica de formateo/reglas, sin duplicarla.
+ */
+function construirLineasREM(
+  filas: FilaExportacion[],
+  personalizadosRows: { numero_documento: string; codigo_plame: string; monto: string }[],
+  codigos: CodigosPlame
+): string[] {
+  const {
+    CODIGO_SUELDO_BASICO,
+    CODIGO_DESCANSO_FERIADO,
+    CODIGO_SOBRETASA_FERIADO_DESCANSO,
+    CODIGO_ASIGNACION_FAMILIAR,
+    CODIGO_BUC,
+    CODIGO_GRATIFICACION,
+    CODIGO_CTS,
+    CODIGO_SUBSIDIO_ENFERMEDAD,
+    CODIGO_LICENCIA_PATERNIDAD,
+  } = codigos;
 
   // Conceptos PERSONALIZADOS (migracion 033, Ronda D "formula propia"): sus
   // montos viven en detalle_planilla_conceptos (catalogo abierto), no en
@@ -146,18 +213,8 @@ export async function generarLineasREM(periodoId: number): Promise<string[]> {
   // se entiende que el usuario decidio no declararlo). Se agrupan por DNI y
   // por codigo PLAME (por si 2 conceptos personalizados distintos comparten
   // el mismo codigo, sus montos se suman en una sola linea).
-  const personalizadosResult = await pool.query<{ numero_documento: string; codigo_plame: string; monto: string }>(
-    `SELECT e.numero_documento, cp.codigo_plame, dpc.monto
-     FROM detalle_planilla_conceptos dpc
-     JOIN detalle_planilla d ON d.id = dpc.detalle_id
-     JOIN contratos c ON c.id = d.contrato_id
-     JOIN empleados e ON e.id = c.empleado_id
-     JOIN conceptos_planilla cp ON cp.codigo = dpc.concepto_codigo
-     WHERE d.periodo_id = $1 AND c.categoria_ocupacional <> 'EVENTUAL' AND cp.codigo_plame IS NOT NULL`,
-    [periodoId]
-  );
   const personalizadosPorDni = new Map<string, Map<string, number>>();
-  for (const fila of personalizadosResult.rows) {
+  for (const fila of personalizadosRows) {
     const porCodigo = personalizadosPorDni.get(fila.numero_documento) ?? new Map<string, number>();
     porCodigo.set(fila.codigo_plame, redondear((porCodigo.get(fila.codigo_plame) ?? 0) + num(fila.monto)));
     personalizadosPorDni.set(fila.numero_documento, porCodigo);
@@ -165,19 +222,24 @@ export async function generarLineasREM(periodoId: number): Promise<string[]> {
 
   const lineas: string[] = [];
 
-  for (const fila of resultado.rows) {
+  for (const fila of filas) {
     const dni = fila.numero_documento;
     const aporteDetalle = fila.detalle_json?.aporte_pension_detalle;
+    const sobretasa = num(fila.sobretasa_dominical) + num(fila.sobretasa_feriado);
 
     const candidatas: Array<[string, number]> = [
-      [CONCEPTO.REMUNERACION_BASICA, num(fila.sueldo_basico)],
-      [CONCEPTO.DESCANSO_FERIADO, num(fila.remuneracion_dominical) + num(fila.remuneracion_feriado)],
-      [CONCEPTO.ASIGNACION_FAMILIAR, num(fila.asignacion_familiar)],
-      [CONCEPTO.BUC_CONSTRUCCION, num(fila.bonificacion_buc)],
-      [CONCEPTO.SUBSIDIO_INCAPACIDAD_ENFERMEDAD, num(fila.subsidio_enfermedad)],
-      [CONCEPTO.LICENCIA_CON_GOCE_DE_HABER, num(fila.licencia_paternidad)],
-      [CONCEPTO.GRATIFICACION, num(fila.gratificacion)],
-      [CONCEPTO.CTS, num(fila.cts)],
+      [CODIGO_SUELDO_BASICO, num(fila.sueldo_basico)],
+      [
+        CODIGO_DESCANSO_FERIADO,
+        num(fila.remuneracion_dominical) + num(fila.remuneracion_dominical_proporcional) + num(fila.remuneracion_feriado),
+      ],
+      [CODIGO_SOBRETASA_FERIADO_DESCANSO, sobretasa],
+      [CODIGO_ASIGNACION_FAMILIAR, num(fila.asignacion_familiar)],
+      [CODIGO_BUC, num(fila.bonificacion_buc)],
+      [CODIGO_SUBSIDIO_ENFERMEDAD, num(fila.subsidio_enfermedad)],
+      [CODIGO_LICENCIA_PATERNIDAD, num(fila.licencia_paternidad)],
+      [CODIGO_GRATIFICACION, num(fila.gratificacion)],
+      [CODIGO_CTS, num(fila.cts)],
 
       [CONCEPTO.CUOTA_SINDICAL, num(fila.descuento_sindicato)],
       [CONCEPTO.CONAFOVICER, num(fila.conafovicer)],
@@ -217,4 +279,93 @@ export async function generarLineasREM(periodoId: number): Promise<string[]> {
   }
 
   return lineas;
+}
+
+// Columnas comunes a ambas variantes (periodo de pago y mensual consolidada).
+const COLUMNAS_FILA_EXPORTACION = `sueldo_basico, remuneracion_dominical, remuneracion_feriado,
+            importe_horas_extra, asignacion_familiar, bonificacion_buc,
+            subsidio_enfermedad, licencia_paternidad,
+            gratificacion, cts, aporte_pension, descuento_sindicato,
+            conafovicer, renta_5ta, seguro_vida, essalud, sctr, senati,
+            detalle_json`;
+
+// Solo para la variante MENSUAL (Ronda E): detalle_planilla_mensual nace ya
+// con las columnas de "dominical proporcional/sobretasa" (ver schema.sql),
+// a diferencia de detalle_planilla (ver NOTA en FilaExportacion arriba).
+const COLUMNAS_FILA_EXPORTACION_MENSUAL = `${COLUMNAS_FILA_EXPORTACION},
+            remuneracion_dominical_proporcional, sobretasa_dominical, sobretasa_feriado`;
+
+/**
+ * Genera las lineas del archivo .rem para un periodo de pago ya calculado.
+ * Excluye EVENTUAL: no esta en planilla (ver motorCalculo.ts), asi que no
+ * corresponde declararlo en el T-Registro/PDT.
+ */
+export async function generarLineasREM(periodoId: number): Promise<string[]> {
+  const codigos = await resolverCodigosPlame();
+
+  const resultado = await pool.query<FilaExportacion>(
+    `SELECT e.numero_documento, c.sistema_pension, d.${COLUMNAS_FILA_EXPORTACION}
+     FROM detalle_planilla d
+     JOIN contratos c ON c.id = d.contrato_id
+     JOIN empleados e ON e.id = c.empleado_id
+     WHERE d.periodo_id = $1 AND c.categoria_ocupacional <> 'EVENTUAL'
+     ORDER BY e.numero_documento`,
+    [periodoId]
+  );
+
+  // Conceptos PERSONALIZADOS (migracion 033, Ronda D "formula propia"): sus
+  // montos viven en detalle_planilla_conceptos (catalogo abierto), no en
+  // columnas fijas. Solo se declaran los que tengan codigo_plame configurado
+  // (igual criterio que CONDICION_TRABAJO arriba: si no tiene codigo_plame,
+  // se entiende que el usuario decidio no declararlo). Se agrupan por DNI y
+  // por codigo PLAME (por si 2 conceptos personalizados distintos comparten
+  // el mismo codigo, sus montos se suman en una sola linea).
+  const personalizadosResult = await pool.query<{ numero_documento: string; codigo_plame: string; monto: string }>(
+    `SELECT e.numero_documento, cp.codigo_plame, dpc.monto
+     FROM detalle_planilla_conceptos dpc
+     JOIN detalle_planilla d ON d.id = dpc.detalle_id
+     JOIN contratos c ON c.id = d.contrato_id
+     JOIN empleados e ON e.id = c.empleado_id
+     JOIN conceptos_planilla cp ON cp.codigo = dpc.concepto_codigo
+     WHERE d.periodo_id = $1 AND c.categoria_ocupacional <> 'EVENTUAL' AND cp.codigo_plame IS NOT NULL`,
+    [periodoId]
+  );
+
+  return construirLineasREM(resultado.rows, personalizadosResult.rows, codigos);
+}
+
+/**
+ * Genera las lineas del archivo .rem para una Planilla Mensual Consolidada ya
+ * calculada (Ronda E, migracion 034) - equivalente a generarLineasREM pero
+ * leyendo de detalle_planilla_mensual/detalle_planilla_conceptos_mensual en
+ * vez de detalle_planilla/detalle_planilla_conceptos. Aplica solo a obreros
+ * (construccion civil): esta tabla nunca tiene EVENTUAL ni EMPLEADO (ver
+ * consolidarPlanillaMensual en planillaMensual.ts), asi que no hace falta
+ * repetir aqui el filtro por categoria_ocupacional.
+ */
+export async function generarLineasREMMensual(planillaMensualId: number): Promise<string[]> {
+  const codigos = await resolverCodigosPlame();
+
+  const resultado = await pool.query<FilaExportacion>(
+    `SELECT e.numero_documento, c.sistema_pension, d.${COLUMNAS_FILA_EXPORTACION_MENSUAL}
+     FROM detalle_planilla_mensual d
+     JOIN contratos c ON c.id = d.contrato_id
+     JOIN empleados e ON e.id = c.empleado_id
+     WHERE d.planilla_mensual_id = $1
+     ORDER BY e.numero_documento`,
+    [planillaMensualId]
+  );
+
+  const personalizadosResult = await pool.query<{ numero_documento: string; codigo_plame: string; monto: string }>(
+    `SELECT e.numero_documento, cp.codigo_plame, dpc.monto
+     FROM detalle_planilla_conceptos_mensual dpc
+     JOIN detalle_planilla_mensual d ON d.id = dpc.detalle_id
+     JOIN contratos c ON c.id = d.contrato_id
+     JOIN empleados e ON e.id = c.empleado_id
+     JOIN conceptos_planilla cp ON cp.codigo = dpc.concepto_codigo
+     WHERE d.planilla_mensual_id = $1 AND cp.codigo_plame IS NOT NULL`,
+    [planillaMensualId]
+  );
+
+  return construirLineasREM(resultado.rows, personalizadosResult.rows, codigos);
 }
