@@ -21,8 +21,8 @@ export const contratosRouter = Router();
 // descargas de Excel/PDF, para que "lo que ves es lo que exportas": mismo
 // filtro de estado, mismo texto de busqueda (DNI/nombre/proyecto) y mismo
 // recorte de proyectos segun el rol del usuario.
-function condicionesContratos(req: Request): { where: string; valores: unknown[] } {
-  const { empleado_id, estado, q } = req.query;
+async function condicionesContratos(req: Request): Promise<{ where: string; valores: unknown[] }> {
+  const { empleado_id, estado, q, periodo_id } = req.query;
   const condiciones: string[] = [];
   const valores: unknown[] = [];
 
@@ -44,12 +44,43 @@ function condicionesContratos(req: Request): { where: string; valores: unknown[]
     valores.push(req.usuario!.proyectos);
     condiciones.push(`c.proyecto = ANY($${valores.length}::text[])`);
   }
+  if (periodo_id) {
+    const periodoResult = await pool.query(
+      "SELECT fecha_inicio, fecha_fin, proyecto FROM periodos_planilla WHERE id = $1",
+      [periodo_id]
+    );
+    if (periodoResult.rowCount) {
+      const { fecha_inicio, fecha_fin, proyecto: proyectoPeriodo } = periodoResult.rows[0];
+      valores.push(fecha_fin, fecha_inicio);
+      // c.fecha_ingreso <= fecha_fin AND (c.fecha_cese IS NULL OR c.fecha_cese >= fecha_inicio)
+      condiciones.push(`c.fecha_ingreso <= $${valores.length - 1}`);
+      condiciones.push(`(c.fecha_cese IS NULL OR c.fecha_cese >= $${valores.length})`);
+      // Ronda C (migracion_028): un periodo especifico de un proyecto solo
+      // debe ofrecer contratos de ESE proyecto. Antes este filtro de
+      // periodo_id solo miraba la vigencia por fechas, sin importar el
+      // proyecto - eso permitia que Tareo Diario/Tareo masivo mostraran (y
+      // dejaran seleccionar) contratos de OTRO proyecto cuyo periodo
+      // simplemente se traslapaba en fechas con este (ej. dos quincenas de
+      // proyectos distintos con el mismo rango 31/08-13/09). El guardado ya
+      // rechazaba esos casos con un 400 ("Este periodo es especifico del
+      // proyecto..."), pero el selector seguia ofreciendolos - reportado
+      // por el usuario, sept. 2026. Un periodo legado (proyecto NULL) sigue
+      // sin esta restriccion, igual que siempre.
+      if (proyectoPeriodo) {
+        valores.push(proyectoPeriodo);
+        condiciones.push(`c.proyecto = $${valores.length}`);
+      }
+    }
+    // Si el periodo no existe, no se agrega condicion - el listado sigue
+    // funcionando igual que sin periodo_id (mismo criterio de "no romper
+    // nada" que el resto de esta funcion).
+  }
   const where = condiciones.length ? `WHERE ${condiciones.join(" AND ")}` : "";
   return { where, valores };
 }
 
 contratosRouter.get("/", asyncHandler(async (req: Request, res: Response) => {
-  const { where, valores } = condicionesContratos(req);
+  const { where, valores } = await condicionesContratos(req);
   const resultado = await pool.query(
     `SELECT c.*, e.apellidos_nombres, e.numero_documento
      FROM contratos c JOIN empleados e ON e.id = c.empleado_id
@@ -66,7 +97,7 @@ function fechaCortaOTexto(v: unknown): string {
 }
 
 async function obtenerFilasExportacion(req: Request) {
-  const { where, valores } = condicionesContratos(req);
+  const { where, valores } = await condicionesContratos(req);
   const resultado = await pool.query(
     `SELECT c.*, e.apellidos_nombres, e.numero_documento
      FROM contratos c JOIN empleados e ON e.id = c.empleado_id

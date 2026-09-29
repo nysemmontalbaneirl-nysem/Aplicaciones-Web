@@ -1077,3 +1077,56 @@ como bloqueados por esta causa: parche #18 (`Tareo.tsx`), parche #37
 
 No requirió verificación (`tsc`/`jest`) porque no se tocó ningún código
 funcional, solo se agregó un comentario.
+
+---
+
+## 23. Parche #39/46 (`0c19aeeb`, "Contratos: el selector de Tareo respeta el proyecto del periodo (Ronda C)") — la base `periodo_id` de `condicionesContratos` tampoco existía; se reconstruyó completa porque el propio diff la traía entera como contexto
+
+**Estado: aplicado completo y verificado.**
+
+100% backend (`src/routes/contratos.ts` + `tests/periodos_por_proyecto.test.ts`),
+sin migración. El parche agrega un filtro de proyecto a
+`condicionesContratos()` (la función compartida que arma el `WHERE` de
+`GET /contratos`, usada por el selector de trabajadores de Tareo Diario y
+Tareo): cuando se filtra por `periodo_id`, además de la vigencia por
+fechas ya existente, ahora también exige que el contrato sea del mismo
+proyecto del periodo (si el periodo no es "legado", es decir si tiene
+proyecto asignado).
+
+**Descubrimiento**: el bloque COMPLETO de `periodo_id` (la parte que
+consulta `fecha_inicio`/`fecha_fin` en `periodos_planilla` y filtra por
+vigencia) no existía en este árbol en absoluto — confirmado por grep, y
+por que `condicionesContratos` aquí era una función SÍNCRONA (sin
+`Promise`, sin `await pool.query`), mientras que el encabezado del hunk
+del parche (`@@ ... async function condicionesContratos(...): Promise<...>`)
+muestra que en la versión que este parche asume ya era asíncrona. Se
+confirmó con grep en los 46 parches que `condicionesContratos` solo
+aparece mencionada en ESTE parche — el que originalmente introdujo el
+filtro por `periodo_id` no llegó como ninguno de los 46 recuperados.
+
+**Por qué SÍ se reconstruyó (a diferencia de la brecha de "vigencia" de
+la sección 20)**: a diferencia de `fueraDeVigencia`/`formatearFechaVisible`
+en `TareoDiario.tsx` (que ningún parche mostraba nunca cómo se calculan,
+solo los usaban como caja negra), aquí el propio diff de este parche
+incluye, como contexto SIN CAMBIOS (líneas de diff sin `+`/`-`), el
+bloque `periodo_id` completo tal cual existía antes de este parche: la
+consulta SQL exacta, el manejo de `rowCount`, y los dos `condiciones.push(...)`
+de vigencia por fechas. No hubo que inventar ninguna lógica de negocio —
+solo transcribir lo que el propio parche ya mostraba entero, igual
+criterio que `obtenerDiagnosticoAfpnetMensual` en la sección 17. Se
+convirtió `condicionesContratos` a `async`/`Promise` (como el propio
+encabezado del hunk ya lo daba por hecho) y se agregó `await` en sus 2
+puntos de llamada (`GET /` y `obtenerFilasExportacion`, usada por las
+descargas de Excel/PDF).
+
+**Dato adicional confirmado**: ni `TareoDiario.tsx` ni `Tareo.tsx` envían
+hoy `periodo_id` al pedir la lista de contratos (`GET /contratos?estado=HABIL`,
+sin `periodo_id`) — o sea que, aunque el backend ya queda correcto y
+probado, el selector del frontend todavía no aprovecha este filtro (eso
+requeriría que algún parche posterior conecte `periodo_id` desde el
+frontend; no se vio ninguno de los 46 que lo haga). No es una brecha —
+simplemente el frontend nunca mandó ese parámetro en ningún parche
+recuperado, así que no hay nada pendiente de aplicar de ese lado.
+
+Verificado: `tsc --noEmit` limpio (backend y frontend). 367/367 tests
+(365 previos + 2 nuevos de `tests/periodos_por_proyecto.test.ts`).

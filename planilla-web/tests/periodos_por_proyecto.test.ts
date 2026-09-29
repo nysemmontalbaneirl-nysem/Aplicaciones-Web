@@ -395,3 +395,62 @@ describe("Carga de tareo respeta el proyecto del periodo (Ronda C)", () => {
     expect(r.body.errores[0].motivo).toMatch(/especifico del proyecto 'Proyecto A'/);
   });
 });
+
+// Reportado por el usuario (sept. 2026): al elegir un contrato en Tareo
+// Diario/Tareo para un periodo especifico de un proyecto, el selector
+// ofrecia (y dejaba cargar en el formulario, aunque el backend rechazara
+// GUARDAR) contratos de OTRO proyecto cuya vigencia por fechas simplemente
+// se traslapaba con las del periodo - por ejemplo, dos quincenas de
+// proyectos distintos con el mismo rango de fechas (31/08 al 13/09). La
+// causa: GET /api/contratos?periodo_id=X (condicionesContratos en
+// contratos.ts) solo filtraba por vigencia de fechas, nunca por el
+// proyecto propio del periodo.
+describe("GET /contratos?periodo_id=X respeta el proyecto del periodo (Ronda C)", () => {
+  let periodoProyectoAId: number;
+  let contratoProyectoAId: number;
+  let contratoProyectoBId: number;
+
+  beforeAll(async () => {
+    const crear = await request(app)
+      .post("/api/periodos")
+      .set(authAdmin())
+      .send({ anio: 2028, mes: 11, tipo: "MENSUAL", fecha_inicio: "2028-11-01", fecha_fin: "2028-11-30", proyecto: "Proyecto A" });
+    periodoProyectoAId = crear.body.id;
+    periodosCreados.push(periodoProyectoAId);
+
+    contratoProyectoAId = await crearContrato("77791201", "PRUEBA SELECTOR PROYECTO A", "Proyecto A", "2028-01-01");
+    // Mismo rango de vigencia que el contrato de Proyecto A, pero de
+    // Proyecto B - antes de esta correccion, este SI aparecia en el
+    // selector del periodo de Proyecto A.
+    contratoProyectoBId = await crearContrato("77791202", "PRUEBA SELECTOR PROYECTO B", "Proyecto B", "2028-01-01");
+  });
+
+  it("excluye un contrato de OTRO proyecto aunque su vigencia se traslape con las fechas del periodo", async () => {
+    const r = await request(app)
+      .get(`/api/contratos?estado=HABIL&periodo_id=${periodoProyectoAId}`)
+      .set(authAdmin());
+    expect(r.status).toBe(200);
+    const ids = r.body.map((c: { id: number }) => c.id);
+    expect(ids).toContain(contratoProyectoAId);
+    expect(ids).not.toContain(contratoProyectoBId);
+  });
+
+  it("un periodo legado (proyecto NULL) sigue ofreciendo contratos de cualquier proyecto (regresion)", async () => {
+    const crearLegado = await request(app)
+      .post("/api/periodos")
+      .set(authAdmin())
+      .send({ anio: 2028, mes: 11, tipo: "SEMANAL", fecha_inicio: "2028-11-01", fecha_fin: "2028-11-07" });
+    // proyecto omitido a proposito -> queda como periodo legado (NULL)
+    expect(crearLegado.status).toBe(201);
+    expect(crearLegado.body.proyecto).toBeNull();
+    periodosCreados.push(crearLegado.body.id);
+
+    const r = await request(app)
+      .get(`/api/contratos?estado=HABIL&periodo_id=${crearLegado.body.id}`)
+      .set(authAdmin());
+    expect(r.status).toBe(200);
+    const ids = r.body.map((c: { id: number }) => c.id);
+    expect(ids).toContain(contratoProyectoAId);
+    expect(ids).toContain(contratoProyectoBId);
+  });
+});
