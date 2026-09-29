@@ -135,6 +135,22 @@ describe("Logo de la empresa (GET/POST/DELETE /api/empresa/logo)", () => {
   });
 });
 
+describe("GET /api/publico/logo-empresa - usado por la pantalla de Login (sin sesion)", () => {
+  it("sirve el logo SIN token cuando esta configurado, y responde 404 sin token cuando no lo esta", async () => {
+    const sinLogo = await request(app).get("/api/publico/logo-empresa");
+    expect(sinLogo.status).toBe(404);
+
+    await request(app).post("/api/empresa/logo").set(authAdmin()).attach("archivo", PNG_1X1, "logo.png");
+
+    const conLogo = await request(app).get("/api/publico/logo-empresa");
+    expect(conLogo.status).toBe(200);
+    expect(conLogo.headers["content-type"]).toBe("image/png");
+    expect((conLogo.body as Buffer).equals(PNG_1X1)).toBe(true);
+
+    await request(app).delete("/api/empresa/logo").set(authAdmin());
+  });
+});
+
 describe("Firma del EMPLEADOR (GET/POST/DELETE /api/empresa/firma-empleador) - pedido adicional del usuario", () => {
   it("GET /api/empresa no incluye firma_empleador_archivo (bytea) en el JSON, solo metadata + tiene_firma_empleador", async () => {
     const r = await request(app).get("/api/empresa").set(authAdmin());

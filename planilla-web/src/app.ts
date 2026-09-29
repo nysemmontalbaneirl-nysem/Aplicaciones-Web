@@ -7,6 +7,7 @@ dotenv.config();
 
 import { requiereLogin } from "./authMiddleware";
 import { authRouter } from "./routes/auth";
+import { publicoRouter } from "./routes/publico";
 import { usuariosRouter } from "./routes/usuarios";
 import { proyectosRouter } from "./routes/proyectos";
 import { empresaRouter } from "./routes/empresa";
@@ -70,6 +71,10 @@ app.get(/^(?!\/api\/).*/, (_req: Request, res: Response, next: NextFunction) => 
 // demas rutas de este mismo router (me, cambiar-password) se protegen a si
 // mismas con requiereLogin.
 app.use("/api/auth", authRouter);
+
+// /api/publico tambien es publico (hoy solo el logo de la empresa, para la
+// pantalla de Login - ver routes/publico.ts) - mismo criterio que /api/auth.
+app.use("/api/publico", publicoRouter);
 
 // A partir de aca, toda ruta requiere sesion activa.
 app.use(requiereLogin);

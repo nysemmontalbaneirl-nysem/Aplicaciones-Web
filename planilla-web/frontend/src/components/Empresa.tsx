@@ -173,8 +173,9 @@ export default function Empresa() {
       <div className="card">
         <h2>Logo de la empresa</h2>
         <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
-          Aparece en la Boleta de pago, en el resumen de planilla (Excel) y en el asiento contable (Excel). Formatos
-          admitidos: JPG, PNG o WEBP (máx. 5 MB) — para los reportes Excel solo JPG/PNG se pueden incrustar.
+          Aparece en la Boleta de pago, en el resumen de planilla (Excel), en el asiento contable (Excel) y en la
+          pantalla de inicio de sesión. Formatos admitidos: JPG, PNG o WEBP (máx. 5 MB) — para los reportes Excel
+          solo JPG/PNG se pueden incrustar.
         </p>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {tieneLogo ? (
