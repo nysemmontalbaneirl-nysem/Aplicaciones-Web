@@ -18,9 +18,16 @@ import {
   sumarResultadosLinea,
 } from "../motorCalculo";
 import { PoolClient } from "pg";
-import { obtenerConceptos } from "./conceptos";
+import { obtenerConceptos, filaAHorarioProyecto } from "./conceptos";
 import { tieneAccesoProyecto } from "../permisos";
-import { AsistenciaEntrada, Contrato, ParametrosNormativos, TablaSalarialMensual, TasasAFPMensuales } from "../tipos";
+import {
+  AsistenciaEntrada,
+  Contrato,
+  HorarioProyecto,
+  ParametrosNormativos,
+  TablaSalarialMensual,
+  TasasAFPMensuales,
+} from "../tipos";
 import { ErrorValidacion } from "../validaciones";
 import { registrarBitacora } from "../bitacora";
 import { generarPdfTabla } from "../pdfTabla";
@@ -851,6 +858,26 @@ const CONCEPTOS_LIMITE_TAREO: {
   { clave: "tramo3", campoHoras: "horas_extra_tramo3", campoMinutos: "minutos_extra_tramo3", etiqueta: "Horas extra tramo 3 (100%)" },
 ];
 
+// NOTA (recon 44/46): fechaFueraDeVigencia/diaTieneDatos son 2 utilidades
+// que ningun parche de los 46 recuperados llega a DEFINIR (grep confirma
+// que solo se usan, nunca se declaran) - deben venir de un parche anterior
+// a este que no llego a reconstruirse, mismo patron ya visto en otras
+// brechas de este documento. A diferencia de esos casos (donde la logica
+// real era una caja negra), aqui la semantica queda inequivoca por el
+// nombre y los comentarios que las rodean en el propio parche: se
+// reconstruyen con esa semantica.
+function fechaFueraDeVigencia(fecha: string, fechaIngreso: unknown, fechaCese: unknown): boolean {
+  const f = fecha.slice(0, 10);
+  if (f < fechaISO(fechaIngreso)) return true;
+  if (fechaCese && f > fechaISO(fechaCese)) return true;
+  return false;
+}
+
+function diaTieneDatos(d: FilaTareoDiario): boolean {
+  if (d.tipo_dia_especial) return true;
+  return [...CAMPOS_HORAS, ...CAMPOS_MINUTOS].some((campo) => Number(d[campo] ?? 0) > 0);
+}
+
 function redondear2(valor: number): number {
   return Math.round(valor * 100) / 100;
 }
@@ -1049,6 +1076,179 @@ planillaRouter.get(
   })
 );
 
+/**
+ * Valida y guarda de una vez un arreglo de dias de tareo diario para UN
+ * contrato en UN periodo - extraido de PUT /:id/tareo-diario/:contratoId
+ * (Ronda 2, importacion de marcaciones biometricas) para poder reutilizar
+ * EXACTAMENTE la misma validacion (formato, limites de tareo, vigencia del
+ * contrato) desde la ruta que aplica una importacion ya revisada, sin
+ * duplicar esta logica ni arriesgar que las dos vias diverjan con el
+ * tiempo. Lanza ErrorValidacion (mensaje ya listo para mostrar al usuario)
+ * si algo no pasa la validacion; no hace nada mas (no recalcula
+ * asistencia_periodo ni registra bitacora - eso queda a cargo de quien
+ * llama, que sabe si es una edicion manual o una importacion aplicada).
+ */
+async function validarYGuardarDiasTareoDiario(
+  periodoId: string | number,
+  contratoId: string | number,
+  dias: FilaTareoDiario[]
+): Promise<void> {
+  // Error real visto en produccion: un valor decimal (ej. "1.13", probablemente
+  // alguien escribiendo "1 hora 13 minutos" en el campo de horas) llegaba
+  // hasta el INSERT y Postgres lo rechazaba con un mensaje crudo ("la sintaxis
+  // de entrada no es valida para integer") porque las columnas horas_*/minutos_*
+  // de tareo_diario son INT. Se valida aqui antes de tocar la base de datos,
+  // para devolver un error claro en vez de ese 500 crudo.
+  for (const d of dias) {
+    if (!d.fecha || Number.isNaN(Date.parse(d.fecha))) {
+      throw new ErrorValidacion(`Fecha invalida: ${d.fecha}`);
+    }
+    if (d.tipo_dia_especial && !TIPOS_DIA_ESPECIAL.includes(d.tipo_dia_especial)) {
+      throw new ErrorValidacion(`tipo_dia_especial invalido: ${d.tipo_dia_especial}`);
+    }
+    for (const campo of CAMPOS_HORAS) {
+      const v = d[campo];
+      if (v === undefined || v === null) continue;
+      if (!Number.isInteger(v) || v < 0) {
+        throw new ErrorValidacion(
+          `El campo "${campo}" debe ser un numero entero de horas (valor recibido: ${v}) en la fecha ${d.fecha.slice(0, 10)}`
+        );
+      }
+    }
+    for (const campo of CAMPOS_MINUTOS) {
+      const v = d[campo];
+      if (v === undefined || v === null) continue;
+      if (!Number.isInteger(v) || v < 0 || v > 59) {
+        throw new ErrorValidacion(
+          `El campo "${campo}" debe ser un numero entero de minutos entre 0 y 59 (valor recibido: ${v}) en la fecha ${d.fecha.slice(0, 10)}`
+        );
+      }
+    }
+  }
+
+  // Migracion 040 (ampliada en migracion 043): limites configurables de
+  // horas/minutos por dia (Configuracion -> Limites de tareo), a pedido
+  // explicito del usuario. Cada CONCEPTO tiene su propio limite
+  // independiente (antes todos compartian un solo tope combinado - la
+  // suma de TODAS las columnas de horas del dia -, lo que bloqueaba
+  // registrar horas extra en cuanto el jornal normal ya llegaba al
+  // limite). Domingo (por dia de la semana) y las columnas de Feriado
+  // trabajado quedan SIN limite (se pagan aparte).
+  const limitesResult = await pool.query("SELECT * FROM limites_tareo WHERE id = 1");
+  const limites = limitesResult.rows[0] as Record<string, unknown>;
+  for (const d of dias) {
+    const diaSemana = new Date(d.fecha.slice(0, 10) + "T00:00:00Z").getUTCDay(); // 0=domingo .. 6=sabado
+    if (diaSemana === 0) continue;
+    const esSabado = diaSemana === 6;
+    const tipoDia = esSabado ? "sabado" : "lun_vie";
+    const etiquetaDia = esSabado ? "sabado" : "dia (lunes a viernes)";
+    for (const c of CONCEPTOS_LIMITE_TAREO) {
+      const horas = Number(d[c.campoHoras] ?? 0);
+      const minutos = Number(d[c.campoMinutos] ?? 0);
+      const horasMax = Number(limites[`horas_max_${c.clave}_${tipoDia}`]);
+      const minutosMax = Number(limites[`minutos_max_${c.clave}_${tipoDia}`]);
+      if (horas > horasMax) {
+        throw new ErrorValidacion(
+          `El ${etiquetaDia} ${d.fecha.slice(0, 10)}: "${c.etiqueta}" tiene ${horas} horas, ` +
+            `y el limite configurado para ese concepto es ${horasMax} horas (Configuracion -> Limites de tareo).`
+        );
+      }
+      if (minutos > minutosMax) {
+        throw new ErrorValidacion(
+          `El ${etiquetaDia} ${d.fecha.slice(0, 10)}: "${c.etiqueta}" tiene ${minutos} minutos, ` +
+            `y el limite configurado para ese concepto es ${minutosMax} minutos (Configuracion -> Limites de tareo).`
+        );
+      }
+    }
+  }
+
+  // Corrige un error real reportado en produccion: el sistema permitia
+  // registrar tareo (dias laborados) fuera de la vigencia real del
+  // contrato (antes de su fecha_ingreso, o despues de su fecha_cese). Se
+  // rechaza el request completo (nada se guarda) si algun dia fuera de
+  // vigencia trae datos reales - los dias fuera de vigencia en 0/vacios
+  // (ej. la grilla del frontend, que siempre cubre todo el periodo) no
+  // se rechazan, para no romper el guardado normal de los dias que si
+  // son validos.
+  const contratoVigenciaResult = await pool.query(
+    "SELECT fecha_ingreso, fecha_cese FROM contratos WHERE id = $1",
+    [contratoId]
+  );
+  const { fecha_ingreso, fecha_cese } = contratoVigenciaResult.rows[0];
+  const diasFueraDeVigenciaConDatos = dias.filter(
+    (d) => fechaFueraDeVigencia(d.fecha, fecha_ingreso, fecha_cese) && diaTieneDatos(d)
+  );
+  if (diasFueraDeVigenciaConDatos.length > 0) {
+    const fechasTexto = diasFueraDeVigenciaConDatos.map((d) => d.fecha.slice(0, 10)).join(", ");
+    throw new ErrorValidacion(
+      `No se puede registrar tareo fuera de la vigencia del contrato ` +
+        `(ingreso: ${fechaISO(fecha_ingreso)}` +
+        `${fecha_cese ? `, cese: ${fechaISO(fecha_cese)}` : ""}). ` +
+        `Dias en conflicto: ${fechasTexto}`
+    );
+  }
+
+  // Migracion 038: el dia 21 en adelante de "DESCANSO_MEDICO" SI se puede
+  // registrar aqui (ver el comentario completo, antes ubicado en este mismo
+  // punto, ahora en el bloque equivalente de tests/tareo_diario.test.ts) -
+  // es agregarTareoDiario quien divide automaticamente, al calcular la
+  // planilla, cuantos de esos dias se pagan como "Descanso Medico" (<=20)
+  // y cuantos como "Incapacidad por Enfermedad" (21+). Nada que bloquear aqui.
+  const cliente = await pool.connect();
+  try {
+    await cliente.query("BEGIN");
+    for (const d of dias) {
+      await cliente.query(
+        `INSERT INTO tareo_diario (
+           periodo_id, contrato_id, fecha, horas_normales, minutos_normales,
+           horas_dominical, minutos_dominical, horas_feriado, minutos_feriado,
+           horas_extra_tramo1, minutos_extra_tramo1, horas_extra_tramo2, minutos_extra_tramo2,
+           horas_extra_tramo3, minutos_extra_tramo3, tipo_dia_especial
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+         ON CONFLICT (periodo_id, contrato_id, fecha) DO UPDATE SET
+           horas_normales = EXCLUDED.horas_normales,
+           minutos_normales = EXCLUDED.minutos_normales,
+           horas_dominical = EXCLUDED.horas_dominical,
+           minutos_dominical = EXCLUDED.minutos_dominical,
+           horas_feriado = EXCLUDED.horas_feriado,
+           minutos_feriado = EXCLUDED.minutos_feriado,
+           horas_extra_tramo1 = EXCLUDED.horas_extra_tramo1,
+           minutos_extra_tramo1 = EXCLUDED.minutos_extra_tramo1,
+           horas_extra_tramo2 = EXCLUDED.horas_extra_tramo2,
+           minutos_extra_tramo2 = EXCLUDED.minutos_extra_tramo2,
+           horas_extra_tramo3 = EXCLUDED.horas_extra_tramo3,
+           minutos_extra_tramo3 = EXCLUDED.minutos_extra_tramo3,
+           tipo_dia_especial = EXCLUDED.tipo_dia_especial,
+           actualizado_en = now()`,
+        [
+          periodoId,
+          contratoId,
+          d.fecha,
+          d.horas_normales ?? 0,
+          d.minutos_normales ?? 0,
+          d.horas_dominical ?? 0,
+          d.minutos_dominical ?? 0,
+          d.horas_feriado ?? 0,
+          d.minutos_feriado ?? 0,
+          d.horas_extra_tramo1 ?? 0,
+          d.minutos_extra_tramo1 ?? 0,
+          d.horas_extra_tramo2 ?? 0,
+          d.minutos_extra_tramo2 ?? 0,
+          d.horas_extra_tramo3 ?? 0,
+          d.minutos_extra_tramo3 ?? 0,
+          d.tipo_dia_especial ?? null,
+        ]
+      );
+    }
+    await cliente.query("COMMIT");
+  } catch (err) {
+    await cliente.query("ROLLBACK");
+    throw err;
+  } finally {
+    cliente.release();
+  }
+}
+
 // PUT /api/periodos/:id/tareo-diario/:contratoId  body: { dias: FilaTareoDiario[] }
 // Guarda de una vez todos los dias editados de la grilla (evita 30+ llamadas
 // de red) y recalcula los totales de asistencia_periodo para ese trabajador.
@@ -1077,144 +1277,19 @@ planillaRouter.put(
     if (!Array.isArray(dias)) {
       return res.status(400).json({ error: "El campo 'dias' debe ser un arreglo" });
     }
-    // Error real visto en produccion: un valor decimal (ej. "1.13", probablemente
-    // alguien escribiendo "1 hora 13 minutos" en el campo de horas) llegaba
-    // hasta el INSERT y Postgres lo rechazaba con un mensaje crudo ("la sintaxis
-    // de entrada no es valida para integer") porque las columnas horas_*/minutos_*
-    // de tareo_diario son INT. Se valida aqui antes de tocar la base de datos,
-    // para devolver un error claro en vez de ese 500 crudo.
-    for (const d of dias) {
-      if (!d.fecha || Number.isNaN(Date.parse(d.fecha))) {
-        return res.status(400).json({ error: `Fecha invalida: ${d.fecha}` });
-      }
-      if (d.tipo_dia_especial && !TIPOS_DIA_ESPECIAL.includes(d.tipo_dia_especial)) {
-        return res.status(400).json({ error: `tipo_dia_especial invalido: ${d.tipo_dia_especial}` });
-      }
-      for (const campo of CAMPOS_HORAS) {
-        const v = d[campo];
-        if (v === undefined || v === null) continue;
-        if (!Number.isInteger(v) || v < 0) {
-          return res.status(400).json({
-            error: `El campo "${campo}" debe ser un numero entero de horas (valor recibido: ${v}) en la fecha ${d.fecha.slice(0, 10)}`,
-          });
-        }
-      }
-      for (const campo of CAMPOS_MINUTOS) {
-        const v = d[campo];
-        if (v === undefined || v === null) continue;
-        if (!Number.isInteger(v) || v < 0 || v > 59) {
-          return res.status(400).json({
-            error: `El campo "${campo}" debe ser un numero entero de minutos entre 0 y 59 (valor recibido: ${v}) en la fecha ${d.fecha.slice(0, 10)}`,
-          });
-        }
-      }
-    }
 
-    // Migracion 040 (ampliada en migracion 043): limites configurables de
-    // horas/minutos por dia (Configuracion -> Limites de tareo), a pedido
-    // explicito del usuario. Cada CONCEPTO tiene su propio limite
-    // independiente (antes todos compartian un solo tope combinado - la
-    // suma de TODAS las columnas de horas del dia -, lo que bloqueaba
-    // registrar horas extra en cuanto el jornal normal ya llegaba al
-    // limite). Domingo (por dia de la semana) y las columnas de Feriado
-    // trabajado quedan SIN limite (se pagan aparte).
-    const limitesResult = await pool.query("SELECT * FROM limites_tareo WHERE id = 1");
-    const limites = limitesResult.rows[0] as Record<string, unknown>;
-    for (const d of dias) {
-      const diaSemana = new Date(d.fecha.slice(0, 10) + "T00:00:00Z").getUTCDay(); // 0=domingo .. 6=sabado
-      if (diaSemana === 0) continue;
-      const esSabado = diaSemana === 6;
-      const tipoDia = esSabado ? "sabado" : "lun_vie";
-      const etiquetaDia = esSabado ? "sabado" : "dia (lunes a viernes)";
-      for (const c of CONCEPTOS_LIMITE_TAREO) {
-        const horas = Number(d[c.campoHoras] ?? 0);
-        const minutos = Number(d[c.campoMinutos] ?? 0);
-        const horasMax = Number(limites[`horas_max_${c.clave}_${tipoDia}`]);
-        const minutosMax = Number(limites[`minutos_max_${c.clave}_${tipoDia}`]);
-        if (horas > horasMax) {
-          return res.status(400).json({
-            error:
-              `El ${etiquetaDia} ${d.fecha.slice(0, 10)}: "${c.etiqueta}" tiene ${horas} horas, ` +
-              `y el limite configurado para ese concepto es ${horasMax} horas (Configuracion -> Limites de tareo).`,
-          });
-        }
-        if (minutos > minutosMax) {
-          return res.status(400).json({
-            error:
-              `El ${etiquetaDia} ${d.fecha.slice(0, 10)}: "${c.etiqueta}" tiene ${minutos} minutos, ` +
-              `y el limite configurado para ese concepto es ${minutosMax} minutos (Configuracion -> Limites de tareo).`,
-          });
-        }
-      }
-    }
-
-    // Migracion 038: ANTES de esta migracion, aqui se BLOQUEABA el registro
-    // completo si el contrato superaba 20 dias/año de "SUBSIDIO_ENFERMEDAD"
-    // marcados (D.S. 009-97-SA) - por un error de diseño de la migracion 030
-    // original, ese bloqueo ademas escondia un bug real: los dias 1-20
-    // (pagados por el EMPLEADOR, como un dia normal de trabajo) se
-    // calculaban con el tratamiento tributario del dia 21+ (subsidiado por
-    // EsSalud, fuera de planilla), reportado por el usuario en produccion.
-    // Ahora el dia 21 en adelante SI se puede registrar: se guarda con el
-    // mismo tipo de dia especial ("DESCANSO_MEDICO", ver TIPOS_DIA_ESPECIAL),
-    // y es agregarTareoDiario (mas abajo, al calcular la planilla) quien
-    // divide automaticamente, por contrato y por año calendario, cuantos de
-    // esos dias se pagan como "Dias de Descanso Medico" (primeros 20,
-    // casilla PLAME 0121) y cuantos como "Dias por Incapacidad por
-    // Enfermedad" (del 21 en adelante, casilla PLAME 0916) - ver el
-    // comentario completo alli. Ya no hace falta bloquear nada aqui.
-    const cliente = await pool.connect();
+    // Ronda 2 (importacion de marcaciones biometricas): la validacion
+    // (formato, limites de tareo, vigencia del contrato) y el guardado en si
+    // se extrajeron a validarYGuardarDiasTareoDiario (mas arriba) para poder
+    // reutilizarlos EXACTAMENTE igual desde la ruta que aplica una
+    // importacion ya revisada, sin duplicar esta logica.
     try {
-      await cliente.query("BEGIN");
-      for (const d of dias) {
-        await cliente.query(
-          `INSERT INTO tareo_diario (
-             periodo_id, contrato_id, fecha, horas_normales, minutos_normales,
-             horas_dominical, minutos_dominical, horas_feriado, minutos_feriado,
-             horas_extra_tramo1, minutos_extra_tramo1, horas_extra_tramo2, minutos_extra_tramo2,
-             horas_extra_tramo3, minutos_extra_tramo3, tipo_dia_especial
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-           ON CONFLICT (periodo_id, contrato_id, fecha) DO UPDATE SET
-             horas_normales = EXCLUDED.horas_normales,
-             minutos_normales = EXCLUDED.minutos_normales,
-             horas_dominical = EXCLUDED.horas_dominical,
-             minutos_dominical = EXCLUDED.minutos_dominical,
-             horas_feriado = EXCLUDED.horas_feriado,
-             minutos_feriado = EXCLUDED.minutos_feriado,
-             horas_extra_tramo1 = EXCLUDED.horas_extra_tramo1,
-             minutos_extra_tramo1 = EXCLUDED.minutos_extra_tramo1,
-             horas_extra_tramo2 = EXCLUDED.horas_extra_tramo2,
-             minutos_extra_tramo2 = EXCLUDED.minutos_extra_tramo2,
-             horas_extra_tramo3 = EXCLUDED.horas_extra_tramo3,
-             minutos_extra_tramo3 = EXCLUDED.minutos_extra_tramo3,
-             tipo_dia_especial = EXCLUDED.tipo_dia_especial,
-             actualizado_en = now()`,
-          [
-            req.params.id,
-            req.params.contratoId,
-            d.fecha,
-            d.horas_normales ?? 0,
-            d.minutos_normales ?? 0,
-            d.horas_dominical ?? 0,
-            d.minutos_dominical ?? 0,
-            d.horas_feriado ?? 0,
-            d.minutos_feriado ?? 0,
-            d.horas_extra_tramo1 ?? 0,
-            d.minutos_extra_tramo1 ?? 0,
-            d.horas_extra_tramo2 ?? 0,
-            d.minutos_extra_tramo2 ?? 0,
-            d.horas_extra_tramo3 ?? 0,
-            d.minutos_extra_tramo3 ?? 0,
-            d.tipo_dia_especial ?? null,
-          ]
-        );
-      }
-      await cliente.query("COMMIT");
+      await validarYGuardarDiasTareoDiario(req.params.id, req.params.contratoId, dias);
     } catch (err) {
-      await cliente.query("ROLLBACK");
+      if (err instanceof ErrorValidacion) {
+        return res.status(400).json({ error: err.message });
+      }
       throw err;
-    } finally {
-      cliente.release();
     }
 
     await recalcularAsistenciaDesdeTareoDiario(req.params.id, Number(req.params.contratoId));
@@ -1414,6 +1489,707 @@ planillaRouter.post(
     }
 
     res.json({ guardados, errores });
+  })
+);
+
+// ===========================================================================
+// Importacion de marcaciones biometricas (migracion_046, "Control de
+// Asistencia Diaria" - Ronda 2, puente practico). Mientras el usuario
+// compra/verifica su propio equipo biometrico, llena a mano una plantilla
+// Excel/CSV con 1 fila por cada marcacion individual (DNI, nombre, fecha,
+// hora, tipo ENTRADA/SALIDA - el mismo formato crudo que exporta un lector
+// de huella real). El sistema:
+//   1) agrupa las marcas por contrato+dia y toma la primera y la ultima
+//      marca del dia (hora_ingreso_real/hora_salida_real) - el refrigerio
+//      es un descuento fijo automatico (no hace falta marcar la salida a
+//      almorzar, regla de negocio ya confirmada);
+//   2) compara ese rango contra el horario configurado del proyecto
+//      (horarios_proyecto, migracion 045: lunes-viernes o sabado) para
+//      calcular horas normales y horas extra tramo1 (primeras 2h)/tramo2
+//      (siguientes 4h)/tramo3 (resto, sin limite) - un domingo o un
+//      feriado (catalogo dias_feriados) trabajado se acredita completo a
+//      "Domingo trabajado"/"Feriado trabajado" sin dividir en tramos,
+//      igual que ya funciona hoy la carga manual de esos conceptos;
+//   3) deja todo en importaciones_marcaciones(_detalle) para una pantalla
+//      de revision manual - NADA se aplica al Tareo Diario todavia;
+//   4) solo al aprobar (POST .../aplicar) se escribe en tareo_diario,
+//      reusando la MISMA validacion que la edicion manual (limites de
+//      tareo, vigencia del contrato) via validarYGuardarDiasTareoDiario.
+//
+// Supuesto documentado (a confirmar con el usuario en la practica, con
+// datos reales del equipo cuando llegue): el tiempo trabajado se calcula
+// como (ultima marca - primera marca - minutos_refrigerio), sin distinguir
+// si la persona llego mas temprano de lo programado o se quedo mas tarde -
+// ambos casos hoy se tratan igual (todo lo que exceda la jornada
+// programada neta se acredita como hora extra). Si en la practica el
+// usuario no quiere pagar como extra una llegada anticipada no autorizada,
+// esto se ajusta en la pantalla de revision antes de aplicar (o se afina
+// el calculo en una ronda futura).
+// ===========================================================================
+
+const uploadMarcaciones = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+type ClaveColumnaMarcacion = "dni" | "fecha" | "hora" | "nombre" | "tipo" | "proyecto";
+
+// Alias de encabezado aceptados (en mayusculas) para el mapeo AUTOMATICO de
+// columnas - el formato exacto que exportara el equipo biometrico real
+// todavia no se conoce, asi que se acepta un rango razonable de nombres en
+// vez de exigir uno solo (principio de diseño ya acordado para esta
+// ronda). Si el archivo no trae ninguno de estos para una columna
+// obligatoria (DNI/FECHA/HORA), se puede indicar el mapeo exacto a mano
+// con el campo de formulario "mapeo" (JSON con el nombre de columna TAL
+// CUAL aparece en el archivo, ej. {"dni":"NUM_DOC","fecha":"DIA","hora":"HORA_MARCA"}).
+const ALIAS_COLUMNA_MARCACION: Record<ClaveColumnaMarcacion, string[]> = {
+  dni: ["DNI", "DOCUMENTO", "NUMERO_DOCUMENTO", "NRO_DOCUMENTO", "N_DOCUMENTO", "CEDULA"],
+  fecha: ["FECHA", "DATE", "DIA"],
+  hora: ["HORA", "HORA_MARCACION", "HORA_MARCA", "TIME", "MARCACION"],
+  nombre: ["NOMBRE", "NOMBRES", "APELLIDOS_NOMBRES", "TRABAJADOR", "APELLIDOS Y NOMBRES"],
+  tipo: ["TIPO", "TIPO_MARCACION", "E/S", "ENTRADA/SALIDA", "EVENTO"],
+  proyecto: ["PROYECTO", "OBRA"],
+};
+
+function detectarColumna(encabezados: string[], alias: string[]): string | null {
+  return alias.find((a) => encabezados.includes(a)) ?? null;
+}
+
+interface MapeoColumnasMarcacion {
+  dni: string;
+  fecha: string;
+  hora: string;
+  nombre: string | null;
+  tipo: string | null;
+  proyecto: string | null;
+}
+
+function resolverMapeoColumnas(
+  encabezados: string[],
+  mapeoManual: Partial<Record<ClaveColumnaMarcacion, string>> | null
+): MapeoColumnasMarcacion {
+  const col = (clave: ClaveColumnaMarcacion): string | null => {
+    const manual = mapeoManual?.[clave]?.trim().toUpperCase();
+    if (manual && encabezados.includes(manual)) return manual;
+    return detectarColumna(encabezados, ALIAS_COLUMNA_MARCACION[clave]);
+  };
+  const dni = col("dni");
+  const fecha = col("fecha");
+  const hora = col("hora");
+  if (!dni || !fecha || !hora) {
+    throw new ErrorValidacion(
+      `No se pudieron identificar las columnas obligatorias (DNI, FECHA, HORA) en el archivo. ` +
+        `Columnas encontradas: ${encabezados.join(", ") || "(ninguna)"}. ` +
+        `Si el archivo usa otros nombres de columna, reenvia indicando el campo "mapeo" (JSON) con el nombre exacto de cada una.`
+    );
+  }
+  return { dni, fecha, hora, nombre: col("nombre"), tipo: col("tipo"), proyecto: col("proyecto") };
+}
+
+// Interpreta una fecha ya convertida a texto (ver celdaATexto) en varios
+// formatos razonables - devuelve "YYYY-MM-DD" o null si no se pudo leer.
+function parsearFechaMarcacion(texto: string): string | null {
+  const t = (texto ?? "").trim();
+  if (!t) return null;
+  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  const d = new Date(t);
+  if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  return null;
+}
+
+// Interpreta una hora ya convertida a texto en varios formatos razonables
+// (HH:MM, HH:MM:SS, o una fecha/hora completa - asi puede llegar si Excel
+// termino guardando la celda como un valor de hora real en vez de texto).
+// Devuelve minutos totales desde medianoche, o null si no se pudo leer.
+function parsearHoraMarcacion(texto: string): number | null {
+  const t = (texto ?? "").trim();
+  if (!t) return null;
+  const m = t.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (m) {
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    if (h <= 23 && min <= 59) return h * 60 + min;
+    return null;
+  }
+  const d = new Date(t);
+  if (!Number.isNaN(d.getTime())) return d.getUTCHours() * 60 + d.getUTCMinutes();
+  return null;
+}
+
+function minutosATexto(minutos: number): string {
+  const h = Math.floor(minutos / 60);
+  const m = minutos % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function textoAMinutos(horaHHMM: string): number {
+  const [h, m] = horaHHMM.split(":").map(Number);
+  return h * 60 + (m || 0);
+}
+
+interface ErrorFilaMarcacion {
+  fila: number;
+  dni: string;
+  motivo: string;
+}
+
+// POST /api/periodos/:id/marcaciones/importar
+// multipart: campo "archivo" (.xlsx o .csv con encabezado, 1 fila por cada
+// marcacion individual) + campo opcional "mapeo" (JSON) para forzar a mano
+// el nombre de columna de dni/fecha/hora/nombre/tipo/proyecto cuando el
+// archivo no usa ninguno de los alias reconocidos automaticamente.
+planillaRouter.post(
+  "/:id/marcaciones/importar",
+  uploadMarcaciones.single("archivo"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const periodo = await obtenerPeriodo(req.params.id);
+    if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
+    if (!req.file) {
+      return res.status(400).json({ error: "Falta el archivo (campo 'archivo')" });
+    }
+
+    let mapeoManual: Partial<Record<ClaveColumnaMarcacion, string>> | null = null;
+    if (req.body?.mapeo) {
+      try {
+        mapeoManual = JSON.parse(req.body.mapeo);
+      } catch {
+        return res.status(400).json({ error: "El campo 'mapeo' debe ser un JSON valido" });
+      }
+    }
+
+    const esExcel = /\.xlsx$/i.test(req.file.originalname);
+    let filas: Record<string, string>[];
+    try {
+      filas = esExcel
+        ? await leerFilasXlsx(req.file.buffer)
+        : (parse(req.file.buffer, { columns: true, skip_empty_lines: true, trim: true, bom: true }) as Record<
+            string,
+            string
+          >[]);
+    } catch (err) {
+      return res.status(400).json({ error: `No se pudo leer el archivo: ${(err as Error).message}` });
+    }
+    // csv-parse no fuerza mayusculas en los encabezados (a diferencia de
+    // leerFilasXlsx) - se normaliza aqui para que el mapeo por alias
+    // funcione igual para ambos formatos.
+    if (!esExcel) {
+      filas = filas.map((fila) => {
+        const normalizada: Record<string, string> = {};
+        for (const [clave, valor] of Object.entries(fila)) {
+          normalizada[clave.trim().toUpperCase()] = String(valor ?? "").trim();
+        }
+        return normalizada;
+      });
+    }
+    if (filas.length === 0) {
+      return res.status(400).json({ error: "El archivo no tiene filas de datos" });
+    }
+
+    const encabezados = Object.keys(filas[0]);
+    let mapeo: MapeoColumnasMarcacion;
+    try {
+      mapeo = resolverMapeoColumnas(encabezados, mapeoManual);
+    } catch (err) {
+      if (err instanceof ErrorValidacion) return res.status(400).json({ error: err.message });
+      throw err;
+    }
+
+    const esAdminImportar = req.usuario!.rol === "ADMIN";
+    const contratosResult = await pool.query(
+      `SELECT c.id, c.proyecto, c.fecha_ingreso, c.fecha_cese, e.numero_documento, e.apellidos_nombres
+       FROM contratos c JOIN empleados e ON e.id = c.empleado_id
+       WHERE c.estado = 'HABIL' ${esAdminImportar ? "" : "AND c.proyecto = ANY($1::text[])"}`,
+      esAdminImportar ? [] : [req.usuario!.proyectos]
+    );
+    const contratosPorDni = new Map<
+      string,
+      { id: number; proyecto: string; fecha_ingreso: string; fecha_cese: string | null; apellidos_nombres: string }[]
+    >();
+    for (const fila of contratosResult.rows) {
+      const lista = contratosPorDni.get(fila.numero_documento) ?? [];
+      lista.push({
+        id: fila.id,
+        proyecto: fila.proyecto,
+        fecha_ingreso: fila.fecha_ingreso,
+        fecha_cese: fila.fecha_cese,
+        apellidos_nombres: fila.apellidos_nombres,
+      });
+      contratosPorDni.set(fila.numero_documento, lista);
+    }
+
+    const errores: ErrorFilaMarcacion[] = [];
+    // Marcas validas agrupadas por "contratoId|fecha".
+    const marcasPorDia = new Map<string, { minutos: number; tipo: "ENTRADA" | "SALIDA" | null }[]>();
+    const infoPorClave = new Map<string, { contratoId: number; fecha: string }>();
+    const contratosVistos = new Map<number, { proyecto: string; apellidos_nombres: string; numero_documento: string }>();
+
+    for (let i = 0; i < filas.length; i++) {
+      const fila = filas[i];
+      const numeroFila = i + 2;
+      const dni = (fila[mapeo.dni] ?? "").trim();
+      if (!dni) {
+        errores.push({ fila: numeroFila, dni, motivo: "DNI vacio" });
+        continue;
+      }
+      const candidatos = contratosPorDni.get(dni);
+      if (!candidatos || candidatos.length === 0) {
+        errores.push({ fila: numeroFila, dni, motivo: "No existe un contrato habil con ese DNI" });
+        continue;
+      }
+      let contrato = candidatos[0];
+      if (candidatos.length > 1) {
+        const proyecto = mapeo.proyecto ? (fila[mapeo.proyecto] ?? "").trim() : "";
+        if (!proyecto) {
+          errores.push({
+            fila: numeroFila,
+            dni,
+            motivo: `DNI con ${candidatos.length} contratos habiles activos: agrega la columna PROYECTO para identificar cual`,
+          });
+          continue;
+        }
+        const encontrado = candidatos.find((c) => c.proyecto.toLowerCase() === proyecto.toLowerCase());
+        if (!encontrado) {
+          errores.push({ fila: numeroFila, dni, motivo: `No se encontro un contrato habil en el proyecto '${proyecto}'` });
+          continue;
+        }
+        contrato = encontrado;
+      }
+
+      if (periodo.proyecto && contrato.proyecto !== periodo.proyecto) {
+        errores.push({
+          fila: numeroFila,
+          dni,
+          motivo: `Este periodo es especifico del proyecto '${periodo.proyecto}' y el contrato pertenece a '${contrato.proyecto}'`,
+        });
+        continue;
+      }
+
+      const fecha = parsearFechaMarcacion(fila[mapeo.fecha] ?? "");
+      if (!fecha) {
+        errores.push({ fila: numeroFila, dni, motivo: `Fecha invalida: '${fila[mapeo.fecha]}'` });
+        continue;
+      }
+      if (fecha < fechaISO(periodo.fecha_inicio) || fecha > fechaISO(periodo.fecha_fin)) {
+        errores.push({
+          fila: numeroFila,
+          dni,
+          motivo: `La fecha ${fecha} no cae dentro del periodo (${fechaISO(periodo.fecha_inicio)} al ${fechaISO(periodo.fecha_fin)})`,
+        });
+        continue;
+      }
+      if (fechaFueraDeVigencia(fecha, contrato.fecha_ingreso, contrato.fecha_cese)) {
+        errores.push({
+          fila: numeroFila,
+          dni,
+          motivo: `El ${fecha} esta fuera de la vigencia del contrato (ingreso: ${fechaISO(contrato.fecha_ingreso)}${
+            contrato.fecha_cese ? `, cese: ${fechaISO(contrato.fecha_cese)}` : ""
+          })`,
+        });
+        continue;
+      }
+      const minutos = parsearHoraMarcacion(fila[mapeo.hora] ?? "");
+      if (minutos === null) {
+        errores.push({ fila: numeroFila, dni, motivo: `Hora invalida: '${fila[mapeo.hora]}'` });
+        continue;
+      }
+      const tipoTexto = mapeo.tipo ? (fila[mapeo.tipo] ?? "").trim().toUpperCase() : "";
+      const tipo: "ENTRADA" | "SALIDA" | null = tipoTexto.startsWith("E") ? "ENTRADA" : tipoTexto.startsWith("S") ? "SALIDA" : null;
+
+      const clave = `${contrato.id}|${fecha}`;
+      const lista = marcasPorDia.get(clave) ?? [];
+      lista.push({ minutos, tipo });
+      marcasPorDia.set(clave, lista);
+      infoPorClave.set(clave, { contratoId: contrato.id, fecha });
+      contratosVistos.set(contrato.id, {
+        proyecto: contrato.proyecto,
+        apellidos_nombres: contrato.apellidos_nombres,
+        numero_documento: dni,
+      });
+    }
+
+    if (marcasPorDia.size === 0) {
+      return res.status(400).json({ error: "Ninguna fila del archivo se pudo procesar", errores });
+    }
+
+    // Horario efectivo (con los mismos defaults que Configuracion ->
+    // "Horario / Tramo 3 por proyecto") de cada proyecto involucrado.
+    const proyectosInvolucrados = [...new Set([...contratosVistos.values()].map((c) => c.proyecto))];
+    const horariosResult = await pool.query(
+      `SELECT p.id AS proyecto_id, p.nombre AS proyecto_nombre, h.hora_ingreso, h.hora_salida, h.minutos_refrigerio,
+              h.hora_ingreso_sabado, h.hora_salida_sabado, h.tasa_tramo3
+       FROM proyectos p
+       LEFT JOIN horarios_proyecto h ON h.proyecto_id = p.id
+       WHERE p.nombre = ANY($1::text[])`,
+      [proyectosInvolucrados]
+    );
+    const horarioPorProyecto = new Map<string, HorarioProyecto>(
+      horariosResult.rows.map((fila) => [fila.proyecto_nombre as string, filaAHorarioProyecto(fila)])
+    );
+
+    // NOTA (recon 44/46): el parche original clasificaba aqui cada dia
+    // contra un catalogo de feriados vigentes (obtenerFeriadosVigentes,
+    // consultando la tabla "dias_feriados") para marcar "Feriado trabajado"
+    // automaticamente. La tabla "dias_feriados" NUNCA existio en este arbol
+    // (ver RECONSTRUCCION_BRECHAS.md punto 15 - el feriado se registra hoy
+    // 100% a mano, por dia y por trabajador, en el Tareo Diario) - se omite
+    // esta clasificacion automatica; feriadosPorContrato queda vacio, asi
+    // que ningun dia importado se marca como feriado (cae en la rama
+    // normal/dominical/extra de mas abajo). El usuario puede corregir a
+    // mano un dia puntual como "Feriado trabajado" desde Registrar Tareo
+    // Diario despues de aplicar la importacion, igual que ya hace hoy.
+    const feriadosPorContrato = new Map<number, Set<string>>();
+
+    interface DiaCalculado {
+      contratoId: number;
+      fecha: string;
+      horaIngresoReal: string;
+      horaSalidaReal: string;
+      marcas: { hora: string; tipo: "ENTRADA" | "SALIDA" | null }[];
+      dia: FilaTareoDiario;
+    }
+    const diasCalculados: DiaCalculado[] = [];
+
+    for (const [clave, marcas] of marcasPorDia) {
+      const { contratoId, fecha } = infoPorClave.get(clave)!;
+      const minutosOrdenados = marcas.map((m) => m.minutos).sort((a, b) => a - b);
+      const minIngreso = minutosOrdenados[0];
+      const maxSalida = minutosOrdenados[minutosOrdenados.length - 1];
+      const contratoInfo = contratosVistos.get(contratoId)!;
+      const horario: HorarioProyecto =
+        horarioPorProyecto.get(contratoInfo.proyecto) ??
+        filaAHorarioProyecto({ proyecto_id: 0, hora_ingreso: null, hora_salida: null, minutos_refrigerio: null, tasa_tramo3: null });
+
+      const diaSemana = new Date(fecha + "T00:00:00Z").getUTCDay(); // 0=domingo .. 6=sabado
+      const esFeriado = feriadosPorContrato.get(contratoId)?.has(fecha) ?? false;
+      const trabajadoBruto = Math.max(0, maxSalida - minIngreso);
+      const dia: FilaTareoDiario = { fecha };
+
+      if (esFeriado) {
+        // Feriado trabajado: se acredita completo, sin dividir en tramos -
+        // mismo criterio que ya usa hoy la carga manual de "Feriado trabajado".
+        const netos = Math.max(0, trabajadoBruto - horario.minutos_refrigerio);
+        dia.horas_feriado = Math.floor(netos / 60);
+        dia.minutos_feriado = netos % 60;
+      } else if (diaSemana === 0) {
+        // Domingo trabajado: igual, se acredita completo sin tramos (el
+        // domingo es el dia de descanso; el trabajo excepcional se paga
+        // aparte via REM_DOMINICAL/sobretasa, no como "hora extra").
+        const netos = Math.max(0, trabajadoBruto - horario.minutos_refrigerio);
+        dia.horas_dominical = Math.floor(netos / 60);
+        dia.minutos_dominical = netos % 60;
+      } else {
+        const esSabado = diaSemana === 6;
+        const usaHorarioSabado = esSabado && horario.hora_ingreso_sabado && horario.hora_salida_sabado;
+        const horaIngresoProg = usaHorarioSabado ? horario.hora_ingreso_sabado! : horario.hora_ingreso;
+        const horaSalidaProg = usaHorarioSabado ? horario.hora_salida_sabado! : horario.hora_salida;
+        const jornadaProgramadaBruta = Math.max(0, textoAMinutos(horaSalidaProg) - textoAMinutos(horaIngresoProg));
+        const jornadaProgramadaNeta = Math.max(0, jornadaProgramadaBruta - horario.minutos_refrigerio);
+        const trabajadoNeto = Math.max(0, trabajadoBruto - horario.minutos_refrigerio);
+        const normalMin = Math.min(trabajadoNeto, jornadaProgramadaNeta);
+        const extraMin = Math.max(0, trabajadoNeto - jornadaProgramadaNeta);
+        const tramo1 = Math.min(extraMin, 120);
+        const restoTrasTramo1 = extraMin - tramo1;
+        const tramo2 = Math.min(restoTrasTramo1, 240);
+        const tramo3 = restoTrasTramo1 - tramo2;
+        dia.horas_normales = Math.floor(normalMin / 60);
+        dia.minutos_normales = normalMin % 60;
+        dia.horas_extra_tramo1 = Math.floor(tramo1 / 60);
+        dia.minutos_extra_tramo1 = tramo1 % 60;
+        dia.horas_extra_tramo2 = Math.floor(tramo2 / 60);
+        dia.minutos_extra_tramo2 = tramo2 % 60;
+        dia.horas_extra_tramo3 = Math.floor(tramo3 / 60);
+        dia.minutos_extra_tramo3 = tramo3 % 60;
+      }
+
+      diasCalculados.push({
+        contratoId,
+        fecha,
+        horaIngresoReal: minutosATexto(minIngreso),
+        horaSalidaReal: minutosATexto(maxSalida),
+        marcas: marcas
+          .slice()
+          .sort((a, b) => a.minutos - b.minutos)
+          .map((m) => ({ hora: minutosATexto(m.minutos), tipo: m.tipo })),
+        dia,
+      });
+    }
+
+    const cliente = await pool.connect();
+    let importacionId: number;
+    try {
+      await cliente.query("BEGIN");
+      const cabecera = await cliente.query(
+        `INSERT INTO importaciones_marcaciones
+           (periodo_id, nombre_archivo, importado_por, total_marcaciones, total_dias, total_errores, errores_json)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+        [
+          req.params.id,
+          req.file.originalname,
+          req.usuario!.id,
+          filas.length,
+          diasCalculados.length,
+          errores.length,
+          JSON.stringify(errores),
+        ]
+      );
+      importacionId = cabecera.rows[0].id;
+      for (const d of diasCalculados) {
+        await cliente.query(
+          `INSERT INTO importaciones_marcaciones_detalle (
+             importacion_id, contrato_id, fecha, hora_ingreso_real, hora_salida_real,
+             horas_normales, minutos_normales, horas_dominical, minutos_dominical,
+             horas_feriado, minutos_feriado, horas_extra_tramo1, minutos_extra_tramo1,
+             horas_extra_tramo2, minutos_extra_tramo2, horas_extra_tramo3, minutos_extra_tramo3,
+             marcas_json
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+          [
+            importacionId,
+            d.contratoId,
+            d.fecha,
+            d.horaIngresoReal,
+            d.horaSalidaReal,
+            d.dia.horas_normales ?? 0,
+            d.dia.minutos_normales ?? 0,
+            d.dia.horas_dominical ?? 0,
+            d.dia.minutos_dominical ?? 0,
+            d.dia.horas_feriado ?? 0,
+            d.dia.minutos_feriado ?? 0,
+            d.dia.horas_extra_tramo1 ?? 0,
+            d.dia.minutos_extra_tramo1 ?? 0,
+            d.dia.horas_extra_tramo2 ?? 0,
+            d.dia.minutos_extra_tramo2 ?? 0,
+            d.dia.horas_extra_tramo3 ?? 0,
+            d.dia.minutos_extra_tramo3 ?? 0,
+            JSON.stringify(d.marcas),
+          ]
+        );
+      }
+      await cliente.query("COMMIT");
+    } catch (err) {
+      await cliente.query("ROLLBACK");
+      throw err;
+    } finally {
+      cliente.release();
+    }
+
+    await registrarBitacora(req.usuario!.id, "IMPORTACION_MARCACIONES", "importaciones_marcaciones", importacionId, {
+      periodo_id: req.params.id,
+      nombre_archivo: req.file.originalname,
+      total_marcaciones: filas.length,
+      total_dias: diasCalculados.length,
+      total_errores: errores.length,
+    });
+
+    res.status(201).json({
+      importacion_id: importacionId,
+      total_marcaciones: filas.length,
+      total_dias: diasCalculados.length,
+      total_errores: errores.length,
+      errores,
+    });
+  })
+);
+
+// GET /api/periodos/:id/marcaciones -> lista (cabeceras) de las
+// importaciones ya hechas en este periodo, mas recientes primero - para que
+// el usuario pueda volver a revisar/aplicar una importacion anterior sin
+// tener que volver a subir el archivo.
+planillaRouter.get(
+  "/:id/marcaciones",
+  asyncHandler(async (req: Request, res: Response) => {
+    const r = await pool.query(
+      `SELECT * FROM importaciones_marcaciones WHERE periodo_id = $1 ORDER BY importado_en DESC`,
+      [req.params.id]
+    );
+    res.json(
+      r.rows.map((f) => ({
+        id: f.id,
+        periodo_id: f.periodo_id,
+        nombre_archivo: f.nombre_archivo,
+        importado_en: f.importado_en,
+        total_marcaciones: f.total_marcaciones,
+        total_dias: f.total_dias,
+        total_errores: f.total_errores,
+        errores: f.errores_json,
+        aplicado_en: f.aplicado_en,
+      }))
+    );
+  })
+);
+
+// GET /api/periodos/:id/marcaciones/:importacionId -> el detalle ya
+// calculado de una importacion, para la pantalla de revision manual.
+planillaRouter.get(
+  "/:id/marcaciones/:importacionId",
+  asyncHandler(async (req: Request, res: Response) => {
+    const cabeceraResult = await pool.query(
+      `SELECT * FROM importaciones_marcaciones WHERE id = $1 AND periodo_id = $2`,
+      [req.params.importacionId, req.params.id]
+    );
+    if (cabeceraResult.rowCount === 0) {
+      return res.status(404).json({ error: "Importacion no encontrada" });
+    }
+    const cabecera = cabeceraResult.rows[0];
+
+    const esAdmin = req.usuario!.rol === "ADMIN";
+    const detalleResult = await pool.query(
+      `SELECT d.*, c.proyecto, e.numero_documento, e.apellidos_nombres
+       FROM importaciones_marcaciones_detalle d
+       JOIN contratos c ON c.id = d.contrato_id
+       JOIN empleados e ON e.id = c.empleado_id
+       WHERE d.importacion_id = $1 ${esAdmin ? "" : "AND c.proyecto = ANY($2::text[])"}
+       ORDER BY e.apellidos_nombres, d.fecha`,
+      esAdmin ? [req.params.importacionId] : [req.params.importacionId, req.usuario!.proyectos]
+    );
+
+    res.json({
+      importacion: {
+        id: cabecera.id,
+        periodo_id: cabecera.periodo_id,
+        nombre_archivo: cabecera.nombre_archivo,
+        importado_en: cabecera.importado_en,
+        total_marcaciones: cabecera.total_marcaciones,
+        total_dias: cabecera.total_dias,
+        total_errores: cabecera.total_errores,
+        errores: cabecera.errores_json,
+        aplicado_en: cabecera.aplicado_en,
+      },
+      detalle: detalleResult.rows.map((f) => ({
+        id: f.id,
+        contrato_id: f.contrato_id,
+        numero_documento: f.numero_documento,
+        apellidos_nombres: f.apellidos_nombres,
+        fecha: fechaISO(f.fecha),
+        hora_ingreso_real: f.hora_ingreso_real,
+        hora_salida_real: f.hora_salida_real,
+        horas_normales: f.horas_normales,
+        minutos_normales: f.minutos_normales,
+        horas_dominical: f.horas_dominical,
+        minutos_dominical: f.minutos_dominical,
+        horas_feriado: f.horas_feriado,
+        minutos_feriado: f.minutos_feriado,
+        horas_extra_tramo1: f.horas_extra_tramo1,
+        minutos_extra_tramo1: f.minutos_extra_tramo1,
+        horas_extra_tramo2: f.horas_extra_tramo2,
+        minutos_extra_tramo2: f.minutos_extra_tramo2,
+        horas_extra_tramo3: f.horas_extra_tramo3,
+        minutos_extra_tramo3: f.minutos_extra_tramo3,
+        marcas: f.marcas_json,
+        aplicado: f.aplicado,
+      })),
+    });
+  })
+);
+
+// POST /api/periodos/:id/marcaciones/:importacionId/aplicar
+// body opcional: { contrato_ids?: number[] } (por defecto, todos los dias
+// todavia no aplicados de esta importacion). Escribe cada contrato en
+// tareo_diario reusando la MISMA validacion que la edicion manual del
+// Tareo Diario (validarYGuardarDiasTareoDiario) - si un contrato falla la
+// validacion (ej. un dia excede el limite configurado), se reporta su
+// error y se sigue con los demas, sin perder lo que si se pudo aplicar.
+planillaRouter.post(
+  "/:id/marcaciones/:importacionId/aplicar",
+  asyncHandler(async (req: Request, res: Response) => {
+    const periodo = await obtenerPeriodo(req.params.id);
+    if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
+
+    const cabeceraResult = await pool.query(
+      `SELECT * FROM importaciones_marcaciones WHERE id = $1 AND periodo_id = $2`,
+      [req.params.importacionId, req.params.id]
+    );
+    if (cabeceraResult.rowCount === 0) {
+      return res.status(404).json({ error: "Importacion no encontrada" });
+    }
+
+    const contratoIdsFiltro = Array.isArray(req.body?.contrato_ids)
+      ? (req.body.contrato_ids as number[])
+      : null;
+
+    const detalleResult = await pool.query(
+      `SELECT * FROM importaciones_marcaciones_detalle
+       WHERE importacion_id = $1 AND aplicado = false
+       ORDER BY contrato_id, fecha`,
+      [req.params.importacionId]
+    );
+    const filasPorContrato = new Map<number, typeof detalleResult.rows>();
+    for (const fila of detalleResult.rows) {
+      if (contratoIdsFiltro && !contratoIdsFiltro.includes(fila.contrato_id)) continue;
+      const lista = filasPorContrato.get(fila.contrato_id) ?? [];
+      lista.push(fila);
+      filasPorContrato.set(fila.contrato_id, lista);
+    }
+
+    const aplicados: number[] = [];
+    const errores: { contrato_id: number; motivo: string }[] = [];
+
+    for (const [contratoId, filas] of filasPorContrato) {
+      const proyecto = await verificarAccesoContrato(req, String(contratoId));
+      if (proyecto === null) {
+        errores.push({ contrato_id: contratoId, motivo: "El contrato ya no existe" });
+        continue;
+      }
+      if (!tieneAccesoProyecto(req.usuario!, proyecto)) {
+        errores.push({ contrato_id: contratoId, motivo: "No tienes acceso a ese proyecto" });
+        continue;
+      }
+      if (periodo.proyecto && proyecto !== periodo.proyecto) {
+        errores.push({
+          contrato_id: contratoId,
+          motivo: `Este periodo es especifico del proyecto '${periodo.proyecto}' y el contrato pertenece a '${proyecto}'`,
+        });
+        continue;
+      }
+
+      const dias: FilaTareoDiario[] = filas.map((f) => ({
+        fecha: fechaISO(f.fecha),
+        horas_normales: f.horas_normales,
+        minutos_normales: f.minutos_normales,
+        horas_dominical: f.horas_dominical,
+        minutos_dominical: f.minutos_dominical,
+        horas_feriado: f.horas_feriado,
+        minutos_feriado: f.minutos_feriado,
+        horas_extra_tramo1: f.horas_extra_tramo1,
+        minutos_extra_tramo1: f.minutos_extra_tramo1,
+        horas_extra_tramo2: f.horas_extra_tramo2,
+        minutos_extra_tramo2: f.minutos_extra_tramo2,
+        horas_extra_tramo3: f.horas_extra_tramo3,
+        minutos_extra_tramo3: f.minutos_extra_tramo3,
+      }));
+
+      try {
+        await validarYGuardarDiasTareoDiario(req.params.id, contratoId, dias);
+      } catch (err) {
+        if (err instanceof ErrorValidacion) {
+          errores.push({ contrato_id: contratoId, motivo: err.message });
+          continue;
+        }
+        throw err;
+      }
+
+      await recalcularAsistenciaDesdeTareoDiario(req.params.id, contratoId);
+      await pool.query(
+        `UPDATE importaciones_marcaciones_detalle SET aplicado = true
+         WHERE importacion_id = $1 AND contrato_id = $2`,
+        [req.params.importacionId, contratoId]
+      );
+      aplicados.push(contratoId);
+    }
+
+    if (aplicados.length > 0) {
+      await pool.query(
+        `UPDATE importaciones_marcaciones SET aplicado_en = now(), aplicado_por = $2
+         WHERE id = $1 AND aplicado_en IS NULL`,
+        [req.params.importacionId, req.usuario!.id]
+      );
+      await registrarBitacora(req.usuario!.id, "IMPORTACION_MARCACIONES_APLICADA", "tareo_diario", null, {
+        periodo_id: req.params.id,
+        importacion_id: req.params.importacionId,
+        contratos_aplicados: aplicados,
+      });
+    }
+
+    res.json({ aplicados, errores });
   })
 );
 

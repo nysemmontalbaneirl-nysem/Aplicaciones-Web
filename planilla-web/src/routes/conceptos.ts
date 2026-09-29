@@ -311,7 +311,10 @@ conceptosRouter.put(
 // Configuracion muestre algo editable de entrada - no implica que exista una
 // fila guardada hasta que el usuario presione guardar. Las columnas TIME de
 // Postgres llegan como "HH:MM:SS" - se recortan a "HH:MM".
-function filaAHorarioProyecto(fila: Record<string, unknown>): HorarioProyecto {
+// Exportado para reutilizar el mismo defaulting (08:00/17:00/60 min) desde
+// la importacion de marcaciones biometricas (Ronda 2, routes/planilla.ts) -
+// asi ningun proyecto sin horario configurado queda sin poder calcular.
+export function filaAHorarioProyecto(fila: Record<string, unknown>): HorarioProyecto {
   const hora = (v: unknown): string | null => (v == null ? null : (v as string).slice(0, 5));
   return {
     proyecto_id: fila.proyecto_id as number,

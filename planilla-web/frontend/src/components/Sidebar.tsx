@@ -7,6 +7,7 @@ export type Pestana =
   | "periodos"
   | "tareo"
   | "tareoDiario"
+  | "marcaciones"
   | "calculo"
   | "boletas"
   | "reportes"
@@ -109,6 +110,18 @@ export default function Sidebar({
         { id: "periodos", etiqueta: "Periodos" },
         { id: "tareo", etiqueta: "Tareo", disabled: !periodoSeleccionado },
         { id: "tareoDiario", etiqueta: "Registrar Tareo Diario", disabled: !periodoSeleccionado },
+        // Ronda 2 ("Control de Asistencia Diaria" - puente practico): importar
+        // marcaciones biometricas desde un Excel/CSV mientras se compra/
+        // verifica el equipo real. Escribe en el Tareo Diario recien al
+        // aprobar la revision.
+        // NOTA (recon 44/46): el parche original agrega esta pestana DENTRO
+        // de un componente "TareoUnificado" (un sub-menu que junta Tareo +
+        // TareoDiario + esto en una sola pestana del Sidebar) que ningun
+        // parche de los 46 construye - grep confirma que "TareoUnificado"
+        // solo aparece mencionado en este parche. Se agrega aqui como una
+        // pestana plana mas del Sidebar, igual patron que "tareo"/
+        // "tareoDiario" ya existentes, en vez de fabricar ese sub-menu.
+        { id: "marcaciones", etiqueta: "Importar marcaciones", disabled: !periodoSeleccionado },
         ...(puedeCalcular ? [{ id: "calculo" as const, etiqueta: "Calcular", disabled: !periodoSeleccionado }] : []),
         ...(puedeVerBoletas ? [{ id: "boletas" as const, etiqueta: "Boletas" }] : []),
         ...(puedeVerReportes ? [{ id: "reportes" as const, etiqueta: "Reportes" }] : []),

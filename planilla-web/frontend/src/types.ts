@@ -646,6 +646,49 @@ export interface HorarioProyecto {
   tasa_tramo3: number | null;
 }
 
+// Importacion de marcaciones biometricas (migracion_046, Ronda 2 - puente
+// practico). Ver el comentario equivalente en el backend (src/tipos.ts).
+export interface ImportacionMarcaciones {
+  id: number;
+  periodo_id: number;
+  nombre_archivo: string | null;
+  importado_en: string;
+  total_marcaciones: number;
+  total_dias: number;
+  total_errores: number;
+  errores: { fila: number; dni: string; motivo: string }[];
+  aplicado_en: string | null;
+}
+
+export interface MarcacionCruda {
+  hora: string;
+  tipo: "ENTRADA" | "SALIDA" | null;
+}
+
+export interface ImportacionMarcacionesDetalle {
+  id: number;
+  contrato_id: number;
+  numero_documento: string;
+  apellidos_nombres: string;
+  fecha: string;
+  hora_ingreso_real: string | null;
+  hora_salida_real: string | null;
+  horas_normales: number;
+  minutos_normales: number;
+  horas_dominical: number;
+  minutos_dominical: number;
+  horas_feriado: number;
+  minutos_feriado: number;
+  horas_extra_tramo1: number;
+  minutos_extra_tramo1: number;
+  horas_extra_tramo2: number;
+  minutos_extra_tramo2: number;
+  horas_extra_tramo3: number;
+  minutos_extra_tramo3: number;
+  marcas: MarcacionCruda[];
+  aplicado: boolean;
+}
+
 export interface EntradaBitacora {
   id: number;
   accion: string;

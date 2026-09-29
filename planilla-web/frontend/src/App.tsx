@@ -8,6 +8,7 @@ import Trabajadores from "./components/Trabajadores";
 import Periodos from "./components/Periodos";
 import Tareo from "./components/Tareo";
 import TareoDiario from "./components/TareoDiario";
+import ImportarMarcaciones from "./components/ImportarMarcaciones";
 import Calculo from "./components/Calculo";
 import Boletas from "./components/Boletas";
 import Reportes from "./components/Reportes";
@@ -137,6 +138,7 @@ export default function App() {
             <Tareo periodo={periodoSeleccionado} onIrACalcular={() => setPestana("calculo")} />
           )}
           {pestana === "tareoDiario" && periodoSeleccionado && <TareoDiario periodo={periodoSeleccionado} />}
+          {pestana === "marcaciones" && periodoSeleccionado && <ImportarMarcaciones periodo={periodoSeleccionado} />}
           {pestana === "calculo" && periodoSeleccionado && puedeCalcular && (
             <Calculo periodo={periodoSeleccionado} onVerBoletas={() => setPestana("boletas")} />
           )}

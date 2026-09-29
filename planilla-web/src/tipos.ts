@@ -534,6 +534,54 @@ export interface HorarioProyecto {
   tasa_tramo3: number | null;
 }
 
+// Importacion de marcaciones biometricas (migracion_046, "Control de
+// Asistencia Diaria" - Ronda 2, puente practico mientras se compra/verifica
+// el equipo biometrico real). Una "importacion" es un archivo Excel/CSV (1
+// fila por marcacion individual) ya procesado: el sistema calculo, por cada
+// combinacion contrato+fecha, las horas normales/extra comparando la
+// primera y ultima marca del dia contra horarios_proyecto - queda pendiente
+// de revision manual antes de aplicarse al Tareo Diario real.
+export interface ImportacionMarcaciones {
+  id: number;
+  periodo_id: number;
+  nombre_archivo: string | null;
+  importado_en: string;
+  total_marcaciones: number;
+  total_dias: number;
+  total_errores: number;
+  errores: { fila: number; dni: string; motivo: string }[];
+  aplicado_en: string | null;
+}
+
+export interface MarcacionCruda {
+  hora: string;
+  tipo: "ENTRADA" | "SALIDA" | null;
+}
+
+export interface ImportacionMarcacionesDetalle {
+  id: number;
+  contrato_id: number;
+  numero_documento: string;
+  apellidos_nombres: string;
+  fecha: string;
+  hora_ingreso_real: string | null;
+  hora_salida_real: string | null;
+  horas_normales: number;
+  minutos_normales: number;
+  horas_dominical: number;
+  minutos_dominical: number;
+  horas_feriado: number;
+  minutos_feriado: number;
+  horas_extra_tramo1: number;
+  minutos_extra_tramo1: number;
+  horas_extra_tramo2: number;
+  minutos_extra_tramo2: number;
+  horas_extra_tramo3: number;
+  minutos_extra_tramo3: number;
+  marcas: MarcacionCruda[];
+  aplicado: boolean;
+}
+
 export interface DatosEmpresa {
   id: number;
   ruc: string;

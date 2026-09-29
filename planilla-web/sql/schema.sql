@@ -511,6 +511,56 @@ CREATE TABLE tareo_diario (
 );
 
 -- -------------------------------------------------------------------------
+-- importaciones_marcaciones / importaciones_marcaciones_detalle
+-- (migracion 046, Ronda 2 "puente practico" del Control de Asistencia
+-- Diaria): bandeja de importacion de marcaciones biometricas desde un
+-- Excel/CSV (1 fila por cada marcacion individual: DNI, fecha, hora, tipo)
+-- mientras se compra/verifica el equipo biometrico real. El sistema calcula
+-- horas_normales/horas_extra_tramo1-2-3 por dia (comparando ingreso/salida
+-- real contra horarios_proyecto) y las deja aqui para revision manual antes
+-- de aplicarlas a tareo_diario (misma validacion que la edicion manual).
+-- -------------------------------------------------------------------------
+CREATE TABLE importaciones_marcaciones (
+    id                  SERIAL PRIMARY KEY,
+    periodo_id          INT NOT NULL REFERENCES periodos_planilla(id) ON DELETE CASCADE,
+    nombre_archivo      VARCHAR(255),
+    importado_por       INT REFERENCES usuarios(id),
+    importado_en        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    total_marcaciones   INT NOT NULL DEFAULT 0,
+    total_dias          INT NOT NULL DEFAULT 0,
+    total_errores       INT NOT NULL DEFAULT 0,
+    errores_json        JSONB NOT NULL DEFAULT '[]',
+    aplicado_en         TIMESTAMPTZ,
+    aplicado_por        INT REFERENCES usuarios(id)
+);
+
+CREATE TABLE importaciones_marcaciones_detalle (
+    id                  SERIAL PRIMARY KEY,
+    importacion_id      INT NOT NULL REFERENCES importaciones_marcaciones(id) ON DELETE CASCADE,
+    contrato_id         INT NOT NULL REFERENCES contratos(id),
+    fecha               DATE NOT NULL,
+    hora_ingreso_real   TIME,
+    hora_salida_real    TIME,
+    horas_normales          INT NOT NULL DEFAULT 0,
+    minutos_normales        INT NOT NULL DEFAULT 0,
+    horas_dominical         INT NOT NULL DEFAULT 0,
+    minutos_dominical       INT NOT NULL DEFAULT 0,
+    horas_feriado           INT NOT NULL DEFAULT 0,
+    minutos_feriado         INT NOT NULL DEFAULT 0,
+    horas_extra_tramo1      INT NOT NULL DEFAULT 0,
+    minutos_extra_tramo1    INT NOT NULL DEFAULT 0,
+    horas_extra_tramo2      INT NOT NULL DEFAULT 0,
+    minutos_extra_tramo2    INT NOT NULL DEFAULT 0,
+    horas_extra_tramo3      INT NOT NULL DEFAULT 0,
+    minutos_extra_tramo3    INT NOT NULL DEFAULT 0,
+    marcas_json         JSONB NOT NULL DEFAULT '[]',
+    aplicado            BOOLEAN NOT NULL DEFAULT false,
+    UNIQUE (importacion_id, contrato_id, fecha)
+);
+CREATE INDEX idx_importaciones_marcaciones_detalle_importacion
+    ON importaciones_marcaciones_detalle (importacion_id);
+
+-- -------------------------------------------------------------------------
 -- detalle_planilla: línea calculada por trabajador y periodo (el "resultado")
 -- -------------------------------------------------------------------------
 CREATE TABLE detalle_planilla (

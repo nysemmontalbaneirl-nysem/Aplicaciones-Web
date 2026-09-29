@@ -1354,3 +1354,78 @@ ahí: `style={{ width: 90 }}` → `{{ width: 120 }}` y se agregó
 sin pruebas nuevas.
 
 Verificado: `tsc --noEmit` limpio (frontend). Sin cambios de backend.
+
+## 28. Parche #44/46 (`28f33a6f`, "Control de Asistencia Diaria (Ronda 2): importador de marcaciones") — migración 046 (bandeja de importación de marcaciones biométricas); `TareoUnificado.tsx` es una brecha nueva (componente que ningún parche construye); 2 utilidades (`fechaFueraDeVigencia`/`diaTieneDatos`) nunca definidas por ningún parche, reconstruidas por semántica inequívoca; la nueva importación hereda la brecha #15 (sin catálogo de feriados)
+
+**Estado: aplicado completo y verificado.**
+
+Ronda 2 del "puente práctico" de Control de Asistencia Diaria: mientras
+se compra/verifica el equipo biométrico real, el usuario llena a mano
+una plantilla Excel/CSV (1 fila por cada marcación individual: DNI,
+fecha, hora, tipo ENTRADA/SALIDA) y el sistema la importa, calcula
+automáticamente horas normales/extra tramo1-2-3 por día (comparando la
+primera y última marca contra `horarios_proyecto`, migración 045) y las
+deja en una bandeja de revisión (`importaciones_marcaciones`/
+`_detalle`, migración 046, con sus `GRANT`) antes de aplicarlas al
+Tareo Diario real reutilizando la MISMA validación que la edición
+manual. `frontend/src/components/ImportarMarcaciones.tsx` (archivo
+nuevo, 270 líneas) aplicó 100% limpio.
+
+**Brecha nueva: `frontend/src/components/TareoUnificado.tsx` no existe
+en este árbol — "can't find file to patch".** El parche asume que
+`Tareo.tsx` y `TareoDiario.tsx` ya fueron unificados detrás de un
+componente `TareoUnificado` con su propio sub-menu interno ("Tareo
+(totales)" / "Registrar Tareo Diario" / ahora "Importar marcaciones"),
+del mismo tipo que las brechas de sub-menu ya vistas (#12 en
+Configuración, sección 24 en Parámetros) — confirmado por grep que
+`TareoUnificado` solo aparece mencionado en este parche entre los 46.
+En este árbol, `App.tsx` sigue renderizando `Tareo`/`TareoDiario` como
+2 pestañas PLANAS separadas del `Sidebar` (`"tareo"`/`"tareoDiario"`),
+sin ningún wrapper. Aunque el propio diff mostraba el archivo completo
+de `TareoUnificado.tsx` como contexto (55 líneas, perfectamente
+reconstruible), se optó por el mismo criterio ya aplicado a Parámetros/
+Configuración: no fabricar el wrapper que ningún parche construye ni
+reestructurar la navegación existente de `App.tsx`. Se agregó
+"Importar marcaciones" como una tercera pestaña plana más en
+`Sidebar.tsx`/`App.tsx` (`id: "marcaciones"`), junto a `"tareo"`/
+`"tareoDiario"`, con el mismo patrón `disabled: !periodoSeleccionado`.
+
+**Bug nuevo detectado (no de este parche en sí, sino de infraestructura
+que nunca llegó): `fechaFueraDeVigencia`/`diaTieneDatos` nunca fueron
+definidas por ningún parche de los 46, solo usadas.** El hunk que
+extrae `validarYGuardarDiasTareoDiario` (para reutilizar la validación
+del Tareo Diario manual desde "aplicar importación") introduce, POR
+PRIMERA VEZ en este árbol, un bloque que llama a estas 2 funciones - un
+`grep` confirmado en los 46 parches muestra que solo se usan, nunca se
+declaran (deben venir de un parche anterior, no recuperado, que ya las
+tenía definidas — mismo patrón que otras brechas de este documento).
+A diferencia de los casos "caja negra" (`fueraDeVigencia`/
+`formatearFechaVisible` en `TareoDiario.tsx`, sección 20), aquí la
+semántica queda inequívoca por el nombre y los comentarios que las
+rodean (comparar una fecha contra la vigencia del contrato; detectar si
+una fila de tareo trae algún dato real, para no rechazar los días en
+0/vacíos que la grilla del frontend siempre manda) — se reconstruyeron
+ambas como funciones puras y pequeñas, sin inventar ninguna regla de
+negocio nueva. Detectado porque `tsc` fallaba con "Cannot find name" en
+2 puntos del archivo (el hunk había aplicado con éxito automático, sin
+generar `.rej`, así que el error solo se vio corriendo `tsc` después).
+
+**La importación hereda la brecha #15 (`dias_feriados` nunca existió,
+sección 15): no hay forma de clasificar automáticamente un día
+importado como "Feriado trabajado".** Se dejó `feriadosPorContrato`
+siempre vacío (documentado con una `NOTA (recon 44/46)` en el punto
+exacto donde el parche original consultaba `obtenerFeriadosVigentes`) -
+ningún día se clasifica como feriado; el usuario puede corregirlo a
+mano desde Registrar Tareo Diario después de aplicar la importación,
+igual que ya hace hoy con cualquier feriado. Se omitió por completo la
+función `obtenerFeriadosVigentes` (que el parche extraía de
+`agregarTareoDiario`) porque su única razón de ser es consultar
+`dias_feriados` - no tiene sentido reconstruirla para que siempre
+devuelva un `Set` vacío. `tests/importacion_marcaciones.test.ts`: se
+quitó la siembra/limpieza de `dias_feriados` en `beforeAll`/`afterAll`
+y el único caso que dependía de esa clasificación ("un feriado ...
+trabajado se acredita completo a 'Feriado trabajado'").
+
+Verificado: `tsc --noEmit` limpio (backend y frontend). 400/400 tests
+(392 previos + 8 nuevos de `tests/importacion_marcaciones.test.ts`, de
+los 9 originales del parche - 1 descartado por la brecha #15).
