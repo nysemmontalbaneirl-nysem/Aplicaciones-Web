@@ -101,6 +101,10 @@ function num(valor: string | number): number {
   return Number(valor) || 0;
 }
 
+function redondear(valor: number): number {
+  return Math.round(valor * 100) / 100;
+}
+
 function formateaMonto(valor: number): string {
   return valor.toFixed(2);
 }
@@ -134,6 +138,30 @@ export async function generarLineasREM(periodoId: number): Promise<string[]> {
      ORDER BY e.numero_documento`,
     [periodoId]
   );
+
+  // Conceptos PERSONALIZADOS (migracion 033, Ronda D "formula propia"): sus
+  // montos viven en detalle_planilla_conceptos (catalogo abierto), no en
+  // columnas fijas. Solo se declaran los que tengan codigo_plame configurado
+  // (igual criterio que CONDICION_TRABAJO arriba: si no tiene codigo_plame,
+  // se entiende que el usuario decidio no declararlo). Se agrupan por DNI y
+  // por codigo PLAME (por si 2 conceptos personalizados distintos comparten
+  // el mismo codigo, sus montos se suman en una sola linea).
+  const personalizadosResult = await pool.query<{ numero_documento: string; codigo_plame: string; monto: string }>(
+    `SELECT e.numero_documento, cp.codigo_plame, dpc.monto
+     FROM detalle_planilla_conceptos dpc
+     JOIN detalle_planilla d ON d.id = dpc.detalle_id
+     JOIN contratos c ON c.id = d.contrato_id
+     JOIN empleados e ON e.id = c.empleado_id
+     JOIN conceptos_planilla cp ON cp.codigo = dpc.concepto_codigo
+     WHERE d.periodo_id = $1 AND c.categoria_ocupacional <> 'EVENTUAL' AND cp.codigo_plame IS NOT NULL`,
+    [periodoId]
+  );
+  const personalizadosPorDni = new Map<string, Map<string, number>>();
+  for (const fila of personalizadosResult.rows) {
+    const porCodigo = personalizadosPorDni.get(fila.numero_documento) ?? new Map<string, number>();
+    porCodigo.set(fila.codigo_plame, redondear((porCodigo.get(fila.codigo_plame) ?? 0) + num(fila.monto)));
+    personalizadosPorDni.set(fila.numero_documento, porCodigo);
+  }
 
   const lineas: string[] = [];
 
@@ -174,6 +202,13 @@ export async function generarLineasREM(periodoId: number): Promise<string[]> {
     //   [CONCEPTO.POLIZA_SEGURO_688, num(fila.seguro_vida)],
     //   [CONCEPTO.ESSALUD, num(fila.essalud)],
     //   [CONCEPTO.SENATI, num(fila.senati)],
+
+    const personalizados = personalizadosPorDni.get(dni);
+    if (personalizados) {
+      for (const [codigoPlame, monto] of personalizados) {
+        candidatas.push([codigoPlame, monto]);
+      }
+    }
 
     for (const [codigo, monto] of candidatas) {
       const linea = lineaRem(dni, codigo, monto, monto);

@@ -23,6 +23,7 @@ import {
   TasasAFPMensuales,
   TipoPeriodo,
 } from "./tipos";
+import { evaluarFormula, VariablesFormula } from "./formulas";
 
 const CATEGORIAS_CONSTRUCCION_CIVIL: CategoriaOcupacional[] = [
   "OPERARIO",
@@ -235,11 +236,41 @@ export function sumarResultadosLinea(resultados: ResultadoCalculoLinea[]): Resul
       detalle.cts +
       detalle.vacaciones
   );
-  const totalDescuentos = redondear(
+  const totalDescuentosFijos = redondear(
     detalle.aporte_pension + detalle.descuento_sindicato + detalle.conafovicer + detalle.renta_5ta + detalle.otros_descuentos
   );
-  const netoPagar = redondear(totalIngresos - totalDescuentos);
-  const totalAportesEmpleador = redondear(detalle.essalud + detalle.sctr + detalle.senati + detalle.seguro_vida);
+  const totalAportesFijos = redondear(detalle.essalud + detalle.sctr + detalle.senati + detalle.seguro_vida);
+
+  // Conceptos personalizados (migracion 033, "Ronda D"): cada tramo ya trae
+  // su propio monto evaluado con SU jornal/dias de ese tramo (calculado por
+  // calcularLineaPlanilla por separado, arriba en la ruta que llama a esta
+  // funcion) - aqui solo se suman por codigo entre tramos, igual criterio
+  // que el resto de los montos proporcionales a dias/horas de esta funcion.
+  const conceptosPersonalizadosSumados = new Map<string, ConceptoPersonalizadoCalculado>();
+  for (const r of resultados) {
+    for (const cp of r.conceptosPersonalizados ?? []) {
+      const previo = conceptosPersonalizadosSumados.get(cp.codigo);
+      conceptosPersonalizadosSumados.set(cp.codigo, {
+        codigo: cp.codigo,
+        tipo: cp.tipo,
+        monto: redondear((previo?.monto ?? 0) + cp.monto),
+      });
+    }
+  }
+  const conceptosPersonalizados = [...conceptosPersonalizadosSumados.values()];
+  let totalIngresosPersonalizados = 0;
+  let totalDescuentosPersonalizados = 0;
+  let totalAportesPersonalizados = 0;
+  for (const cp of conceptosPersonalizados) {
+    if (cp.tipo === "INGRESO") totalIngresosPersonalizados = redondear(totalIngresosPersonalizados + cp.monto);
+    else if (cp.tipo === "DESCUENTO") totalDescuentosPersonalizados = redondear(totalDescuentosPersonalizados + cp.monto);
+    else totalAportesPersonalizados = redondear(totalAportesPersonalizados + cp.monto);
+  }
+
+  const totalIngresosConPersonalizados = redondear(totalIngresos + totalIngresosPersonalizados);
+  const totalDescuentos = redondear(totalDescuentosFijos + totalDescuentosPersonalizados);
+  const netoPagar = redondear(totalIngresosConPersonalizados - totalDescuentos);
+  const totalAportesEmpleador = redondear(totalAportesFijos + totalAportesPersonalizados);
 
   const bases = detalles.reduce(
     (acc, d) => {
@@ -268,7 +299,7 @@ export function sumarResultadosLinea(resultados: ResultadoCalculoLinea[]): Resul
   return {
     detalle: {
       ...detalle,
-      total_ingresos: totalIngresos,
+      total_ingresos: totalIngresosConPersonalizados,
       total_descuentos: totalDescuentos,
       neto_pagar: netoPagar,
       detalle_json: {
@@ -287,6 +318,7 @@ export function sumarResultadosLinea(resultados: ResultadoCalculoLinea[]): Resul
         })),
       },
     },
+    conceptosPersonalizados,
   };
 }
 
@@ -979,10 +1011,27 @@ export function calcularBoletaVacaciones(
   return { remuneracionVacacional, aportePension, essalud, sctr, netoPagar };
 }
 
+// Monto de un concepto PERSONALIZADO (migracion 033, "Ronda D") ya
+// evaluado para un trabajador/periodo - se persiste en
+// detalle_planilla_conceptos (ver routes/planilla.ts), NO en columnas de
+// detalle_planilla (catalogo abierto, no viable como columna por concepto).
+// "tipo" viaja junto al monto (en vez de tener que volver a consultar el
+// catalogo) para que sumarResultadosLinea pueda recalcular
+// total_ingresos/total_descuentos al combinar tramos de mes (Ronda 3) sin
+// necesitar el catalogo de conceptos en esa funcion.
+export interface ConceptoPersonalizadoCalculado {
+  codigo: string;
+  monto: number;
+  tipo: "INGRESO" | "APORTE" | "DESCUENTO";
+}
+
 export interface ResultadoCalculoLinea {
   detalle: Omit<DetallePlanilla, "id" | "periodo_id" | "detalle_json"> & {
     detalle_json: Record<string, unknown>;
   };
+  // Ausente/vacio para EVENTUAL (calcularLineaEventual) y para periodos sin
+  // ningun concepto personalizado activo y vigente.
+  conceptosPersonalizados?: ConceptoPersonalizadoCalculado[];
 }
 
 /**
@@ -1048,6 +1097,27 @@ function calcularLineaEventual(contrato: Contrato, asistencia: AsistenciaEntrada
       },
     },
   };
+}
+
+/**
+ * Un concepto PERSONALIZADO (migracion 033) es "vigente" para un
+ * mes/año de calculo si: esta activo (interruptor administrativo), y su
+ * ventana vigente_desde/vigente_hasta (si tiene) se solapa con ese mes
+ * calendario. Se compara contra el MES/AÑO del tramo que se esta
+ * calculando (no contra "hoy") para que recalcular un periodo antiguo ya
+ * reabierto siga aplicando las reglas vigentes EN ESE MOMENTO, aunque hoy
+ * ya exista una fecha de derogacion posterior - simplificacion a nivel de
+ * mes calendario (no de dia exacto), documentada en PLAN_PENDIENTE.md.
+ */
+function vigenteEnMes(concepto: ConceptoPlanilla, mes: number, anio: number): boolean {
+  if (!concepto.activo) return false;
+  const mm = String(mes).padStart(2, "0");
+  const inicioMes = `${anio}-${mm}-01`;
+  const ultimoDia = new Date(Date.UTC(anio, mes, 0)).getUTCDate();
+  const finMes = `${anio}-${mm}-${String(ultimoDia).padStart(2, "0")}`;
+  if (concepto.vigente_desde && concepto.vigente_desde > finMes) return false;
+  if (concepto.vigente_hasta && concepto.vigente_hasta < inicioMes) return false;
+  return true;
 }
 
 /**
@@ -1229,6 +1299,80 @@ export function calcularLineaPlanilla(
     VACACIONES: vacaciones,
   };
 
+  // Conceptos con formula propia (migracion 033, "Ronda D"): se evaluan
+  // DESPUES de todos los conceptos fijos de arriba (para poder usar
+  // remuneracion_computable/sueldo_basico ya calculados) y ANTES de
+  // sumarBase (para que un concepto personalizado de tipo INGRESO marcado
+  // afecto_essalud/sctr/etc SI entre a esa base, igual que cualquier
+  // concepto fijo). No aplica a EVENTUAL (esa categoria ya retorna antes,
+  // ver calcularLineaEventual).
+  //
+  // Solo los de tipo INGRESO entran a montosPorConcepto: los flags afecto_*
+  // representan "esto cuenta para la base de tal aporte", que solo tiene
+  // sentido para un ingreso remunerativo - un DESCUENTO o un APORTE
+  // patronal personalizado no debe inflar la base de otro aporte.
+  // NOTA (recon 15/46): "dias_dominical_no_laborado" y
+  // "dias_feriado_trabajado" no existen todavia en AsistenciaEntrada (ver
+  // nota de VARIABLES_FORMULA en formulas.ts) - se omiten aqui tambien.
+  const variablesFormula: VariablesFormula = {
+    jornal_diario: jornalDiario,
+    dias_trabajados: asistencia.dias_trabajados,
+    dias_dominical: asistencia.dias_dominical,
+    dias_feriado: asistencia.dias_feriado,
+    dias_falta: asistencia.dias_falta,
+    dias_subsidio_enfermedad: asistencia.dias_subsidio_enfermedad,
+    dias_subsidio_enfermedad_computable: asistencia.dias_subsidio_enfermedad_computable,
+    dias_subsidio_maternidad: asistencia.dias_subsidio_maternidad,
+    dias_licencia_paternidad: asistencia.dias_licencia_paternidad,
+    horas_extra_25: asistencia.horas_extra_25,
+    horas_extra_35: asistencia.horas_extra_35,
+    horas_extra_100: asistencia.horas_extra_100,
+    sueldo_basico: sueldoBasico,
+    remuneracion_computable: remuneracionComputable,
+    numero_hijos: numeroHijos,
+    uit: Number(parametros.uit),
+    remuneracion_minima_vital: Number(parametros.remuneracion_minima_vital),
+    factor1: 0,
+    factor2: 0,
+    factor3: 0,
+  };
+
+  const conceptosPersonalizados: ConceptoPersonalizadoCalculado[] = [];
+  let totalIngresosPersonalizados = 0;
+  let totalDescuentosPersonalizados = 0;
+  let totalAportesPersonalizados = 0;
+  for (const concepto of Object.values(conceptos)) {
+    if (!concepto.es_personalizado || !concepto.formula || !concepto.activo) continue;
+    if (!vigenteEnMes(concepto, mes, anio)) continue;
+    let monto: number;
+    try {
+      monto = evaluarFormula(concepto.formula, {
+        ...variablesFormula,
+        factor1: concepto.factor1 ?? 0,
+        factor2: concepto.factor2 ?? 0,
+        factor3: concepto.factor3 ?? 0,
+      });
+    } catch {
+      // Una formula que deja de poder evaluarse (variable rara en runtime,
+      // division por cero, etc.) no debe tumbar el calculo de TODA la
+      // planilla - se omite ese concepto puntual (monto 0) para este
+      // trabajador, mismo criterio de "aislar errores" ya usado en el
+      // resto del sistema (ver POST /:id/calcular en routes/planilla.ts).
+      continue;
+    }
+    if (monto === 0) continue;
+    conceptosPersonalizados.push({ codigo: concepto.codigo, monto, tipo: concepto.tipo });
+    if (concepto.tipo === "INGRESO") {
+      montosPorConcepto[concepto.codigo] = monto;
+      totalIngresosPersonalizados = redondear(totalIngresosPersonalizados + monto);
+    } else if (concepto.tipo === "DESCUENTO") {
+      totalDescuentosPersonalizados = redondear(totalDescuentosPersonalizados + monto);
+    } else {
+      totalAportesPersonalizados = redondear(totalAportesPersonalizados + monto);
+    }
+  }
+  const totalIngresosConPersonalizados = redondear(totalIngresos + totalIngresosPersonalizados);
+
   const baseEssalud = sumarBase(montosPorConcepto, conceptos, "afecto_essalud");
   const baseSctr = sumarBase(montosPorConcepto, conceptos, "afecto_sctr");
   const baseSenati = sumarBase(montosPorConcepto, conceptos, "afecto_senati");
@@ -1245,7 +1389,7 @@ export function calcularLineaPlanilla(
   const otrosDescuentos = 0;
 
   const totalDescuentos = redondear(
-    aportePension.total + descuentoSindicato + conafovicer + renta5ta + otrosDescuentos
+    aportePension.total + descuentoSindicato + conafovicer + renta5ta + otrosDescuentos + totalDescuentosPersonalizados
   );
 
   const essalud = calcularEssalud(baseEssalud, parametros);
@@ -1272,7 +1416,7 @@ export function calcularLineaPlanilla(
     ? redondear(Number(parametros.seguro_vida_ley) / obtenerDivisorEssaludVida(tipoPeriodo))
     : 0;
 
-  const netoPagar = redondear(totalIngresos - totalDescuentos);
+  const netoPagar = redondear(totalIngresosConPersonalizados - totalDescuentos);
 
   return {
     detalle: {
@@ -1308,7 +1452,7 @@ export function calcularLineaPlanilla(
       bonificacion_extraordinaria: bonificacionExtraordinaria,
       cts,
       vacaciones,
-      total_ingresos: totalIngresos,
+      total_ingresos: totalIngresosConPersonalizados,
       aporte_pension: aportePension.total,
       descuento_sindicato: descuentoSindicato,
       seguro_vida: seguroVida,
@@ -1332,8 +1476,9 @@ export function calcularLineaPlanilla(
           conafovicer: baseConafovicer,
         },
         aporte_pension_detalle: aportePension,
-        total_aportes_empleador: redondear(essalud + sctr + senati + seguroVida),
+        total_aportes_empleador: redondear(essalud + sctr + senati + seguroVida + totalAportesPersonalizados),
       },
     },
+    conceptosPersonalizados,
   };
 }

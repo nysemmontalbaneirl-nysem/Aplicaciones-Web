@@ -1513,6 +1513,21 @@ planillaRouter.post(
           ]
         );
         lineasCalculadas.push(r.rows[0]);
+
+        // Migracion 033 (Ronda D - "Conceptos con formula propia"): los
+        // montos de conceptos PERSONALIZADOS no viven en columnas propias
+        // de detalle_planilla (catalogo abierto), sino en la tabla generica
+        // detalle_planilla_conceptos. Recalcular reemplaza por completo las
+        // filas anteriores de este detalle (borra + reinserta), mismo
+        // criterio que el resto del recalculo de este sistema.
+        const detalleIdPersonalizados = r.rows[0].id;
+        await cliente.query(`DELETE FROM detalle_planilla_conceptos WHERE detalle_id = $1`, [detalleIdPersonalizados]);
+        for (const cp of resultado.conceptosPersonalizados ?? []) {
+          await cliente.query(
+            `INSERT INTO detalle_planilla_conceptos (detalle_id, concepto_codigo, monto) VALUES ($1, $2, $3)`,
+            [detalleIdPersonalizados, cp.codigo, cp.monto]
+          );
+        }
       } catch (errFila) {
         if (errFila instanceof ErrorValidacion) throw errFila;
         await cliente.query(`ROLLBACK TO SAVEPOINT trabajador_${i}`);

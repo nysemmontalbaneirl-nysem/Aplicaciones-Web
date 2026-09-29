@@ -153,6 +153,10 @@ export interface ConceptoPlanilla {
   nombre: string;
   descripcion: string | null;
   orden: number;
+  // Backfill de migracion 019 (no se reconstruyo como parche independiente
+  // - gap conocido): codigo PLAME editable por concepto desde Configuracion.
+  // NULL = ese concepto no se declara aparte en el PLAME/REM.
+  codigo_plame: string | null;
   factor1: number | null;
   factor1_etiqueta: string | null;
   factor2: number | null;
@@ -166,9 +170,30 @@ export interface ConceptoPlanilla {
   afecto_afp: boolean;
   afecto_renta5ta: boolean | null;
   afecto_conafovicer: boolean;
+
+  // migracion 033 ("Ronda D"): conceptos NUEVOS con formula propia. En los
+  // 14+ conceptos originales, es_personalizado es false y formula/vigente_*
+  // son null - su calculo sigue fijo en motorCalculo.ts, sin cambios.
+  tipo: "INGRESO" | "APORTE" | "DESCUENTO";
+  formula: string | null;
+  es_personalizado: boolean;
+  estado: "ACTIVO" | "PENDIENTE_DESARROLLO";
+  activo: boolean;
+  creado_en: string;
+  vigente_desde: string | null;
+  vigente_hasta: string | null;
 }
 
 export type ConceptosPlanilla = Record<string, ConceptoPlanilla>;
+
+// Fila de detalle_planilla_conceptos (migracion 033): monto de un concepto
+// PERSONALIZADO en una boleta ya calculada. Ver src/formulas.ts.
+export interface DetallePlanillaConcepto {
+  id: number;
+  detalle_id: number;
+  concepto_codigo: string;
+  monto: number;
+}
 
 // Entrada de asistencia que llega desde el frontend (tareo del mes) para un contrato
 export interface AsistenciaEntrada {

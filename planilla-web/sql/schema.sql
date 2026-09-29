@@ -577,6 +577,13 @@ CREATE TABLE conceptos_planilla (
     nombre              VARCHAR(120) NOT NULL,
     descripcion         TEXT,
     orden               INT NOT NULL DEFAULT 0,
+    -- Backfill de migracion 019 (no se reconstruyo como parche independiente
+    -- - gap conocido, ver notas del proyecto): codigo PLAME editable por
+    -- concepto desde Configuracion. NULL = ese concepto no se declara aparte
+    -- en el PLAME/REM (mismo criterio que CONDICION_TRABAJO en plame.ts).
+    -- Se agrega aqui minimamente porque la migracion 033 (Ronda D, mas
+    -- abajo) ya lo usa para los conceptos personalizados nuevos.
+    codigo_plame        VARCHAR(10),
 
     factor1             NUMERIC(12,6),
     factor1_etiqueta    VARCHAR(120),
@@ -593,8 +600,54 @@ CREATE TABLE conceptos_planilla (
     afecto_renta5ta     BOOLEAN,
     afecto_conafovicer  BOOLEAN NOT NULL DEFAULT false,
 
+    -- migracion 033 ("Ronda D"): conceptos NUEVOS con formula propia,
+    -- creados desde Configuracion. Los 14+ conceptos de arriba (sembrados
+    -- por esta misma migracion) quedan con es_personalizado=false y
+    -- formula=NULL: su formula sigue fija en motorCalculo.ts, sin cambios.
+    tipo                VARCHAR(20) NOT NULL DEFAULT 'INGRESO'
+                            CHECK (tipo IN ('INGRESO', 'APORTE', 'DESCUENTO')),
+    formula             TEXT,
+    es_personalizado    BOOLEAN NOT NULL DEFAULT false,
+    estado              VARCHAR(30) NOT NULL DEFAULT 'ACTIVO'
+                            CHECK (estado IN ('ACTIVO', 'PENDIENTE_DESARROLLO')),
+    activo              BOOLEAN NOT NULL DEFAULT true,
+    creado_en           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    vigente_desde       DATE,
+    vigente_hasta       DATE,
+
     actualizado_en      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- -------------------------------------------------------------------------
+-- detalle_planilla_conceptos (migracion 033, "Ronda D"): monto de cada
+-- concepto PERSONALIZADO (conceptos_planilla.es_personalizado=true, creado
+-- desde Configuracion con formula propia) calculado en cada boleta. Los
+-- 14+ conceptos originales siguen usando sus columnas propias de arriba,
+-- sin cambios - esta tabla es solo para los que el usuario cree de ahora
+-- en adelante (catalogo abierto, no viable como columna nueva por cada
+-- concepto). Ver PLAN_PENDIENTE.md / src/formulas.ts. OJO: debe ir DESPUES
+-- de conceptos_planilla (arriba), no antes - tiene una FK a esa tabla.
+-- -------------------------------------------------------------------------
+CREATE TABLE detalle_planilla_conceptos (
+    id              SERIAL PRIMARY KEY,
+    detalle_id      INT NOT NULL REFERENCES detalle_planilla(id) ON DELETE CASCADE,
+    concepto_codigo VARCHAR(60) NOT NULL REFERENCES conceptos_planilla(codigo),
+    monto           NUMERIC(10,2) NOT NULL DEFAULT 0,
+    UNIQUE(detalle_id, concepto_codigo)
+);
+CREATE INDEX idx_detalle_planilla_conceptos_detalle ON detalle_planilla_conceptos(detalle_id);
+CREATE INDEX idx_detalle_planilla_conceptos_concepto ON detalle_planilla_conceptos(concepto_codigo);
+
+-- configuracion_seguridad (migracion 033): fila unica con el hash (bcrypt)
+-- de la "clave secundaria de formulas", independiente del usuario/rol de
+-- sesion (incluso ADMIN la necesita) - ver PLAN_PENDIENTE.md. NULL = aun
+-- no configurada.
+CREATE TABLE configuracion_seguridad (
+    id                  SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    clave_formulas_hash TEXT,
+    actualizado_en      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO configuracion_seguridad (id, clave_formulas_hash) VALUES (1, NULL);
 
 INSERT INTO conceptos_planilla
     (codigo, nombre, descripcion, orden,
