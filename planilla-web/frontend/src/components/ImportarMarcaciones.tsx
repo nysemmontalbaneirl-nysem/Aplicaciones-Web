@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from "react";
-import { apiGet, apiPost, apiPostArchivo } from "../api";
+import { apiGet, apiPost, apiPostArchivo, apiPut, BASE_URL, conToken } from "../api";
 import { ImportacionMarcaciones, ImportacionMarcacionesDetalle, PeriodoPlanilla } from "../types";
 
 interface Props {
@@ -28,6 +28,7 @@ export default function ImportarMarcaciones({ periodo }: Props) {
   const [detalle, setDetalle] = useState<ImportacionMarcacionesDetalle[]>([]);
   const [resultadoAplicar, setResultadoAplicar] = useState<ResultadoAplicar | null>(null);
   const [marcasAbiertas, setMarcasAbiertas] = useState<number | null>(null);
+  const [actualizandoAnticipacion, setActualizandoAnticipacion] = useState<number | null>(null);
 
   async function cargarLista() {
     const lista = await apiGet<ImportacionMarcaciones[]>(`/periodos/${periodo.id}/marcaciones`);
@@ -46,6 +47,27 @@ export default function ImportarMarcaciones({ periodo }: Props) {
       setDetalle(datos.detalle);
     } catch (e) {
       setError((e as Error).message);
+    }
+  }
+
+  // Confirma o retira el pago de la "llegada anticipada" de un dia como
+  // hora extra (el importador nunca la paga automatico - ver nota en el
+  // backend, calcularJornadaDesdeMarcas). Recalcula solo esa fila; el
+  // resto del detalle ya visible no cambia.
+  async function alternarAnticipacion(d: ImportacionMarcacionesDetalle) {
+    if (!importacionActual) return;
+    setError(null);
+    setActualizandoAnticipacion(d.id);
+    try {
+      const actualizado = await apiPut<Partial<ImportacionMarcacionesDetalle>>(
+        `/periodos/${periodo.id}/marcaciones/${importacionActual.id}/detalle/${d.id}`,
+        { anticipacion_pagada: !d.anticipacion_pagada }
+      );
+      setDetalle((lista) => lista.map((fila) => (fila.id === d.id ? { ...fila, ...actualizado } : fila)));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setActualizandoAnticipacion(null);
     }
   }
 
@@ -118,10 +140,26 @@ export default function ImportarMarcaciones({ periodo }: Props) {
           el horario configurado del proyecto, y las deja abajo para tu revision — nada se aplica
           al Tareo Diario hasta que apruebes con el boton "Aplicar al Tareo Diario".
         </p>
+        <p style={{ color: "#5a6172", fontSize: "0.88rem" }}>
+          Si alguien marca su ingreso antes de la hora programada, ese tiempo NO se paga como
+          hora extra en forma automatica — la fila queda resaltada con ⚠ "Llegada anticipada" y
+          tu decides, con la casilla de esa columna, si confirmas pagarlo como extra o no. Una
+          salida despues de la hora programada si se sigue acreditando como extra automaticamente
+          (eso no cambia).
+        </p>
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <a href={conToken(`${BASE_URL}/periodos/${periodo.id}/marcaciones/plantilla`)}>
+            <button type="button">Descargar plantilla Excel</button>
+          </a>
           <input type="file" accept=".xlsx,.csv" onChange={cargarArchivo} disabled={subiendo} />
           {subiendo && <span>Cargando...</span>}
         </div>
+        <p style={{ color: "#5a6172", fontSize: "0.82rem" }}>
+          La plantilla ya trae el DNI, el proyecto y el nombre de cada trabajador (la columna
+          PROYECTO solo hace falta cuando un DNI tiene mas de un contrato activo) - completa la
+          FECHA y la HORA de cada marcacion, y duplica el par de filas ENTRADA/SALIDA por cada
+          dia adicional.
+        </p>
 
         {importaciones.length > 1 && (
           <div style={{ marginTop: 12 }}>
@@ -188,6 +226,7 @@ export default function ImportarMarcaciones({ periodo }: Props) {
                   <th>Extra T3</th>
                   <th>Dominical</th>
                   <th>Feriado</th>
+                  <th>Llegada anticipada</th>
                   <th>Estado</th>
                   <th></th>
                 </tr>
@@ -195,7 +234,7 @@ export default function ImportarMarcaciones({ periodo }: Props) {
               <tbody>
                 {detalle.map((d) => (
                   <Fragment key={d.id}>
-                    <tr>
+                    <tr style={d.minutos_llegada_anticipada > 0 ? { background: "#fff8e1" } : undefined}>
                       <td>
                         {d.numero_documento} — {d.apellidos_nombres}
                       </td>
@@ -208,6 +247,25 @@ export default function ImportarMarcaciones({ periodo }: Props) {
                       <td>{horasMinutos(d.horas_extra_tramo3, d.minutos_extra_tramo3)}</td>
                       <td>{horasMinutos(d.horas_dominical, d.minutos_dominical)}</td>
                       <td>{horasMinutos(d.horas_feriado, d.minutos_feriado)}</td>
+                      <td>
+                        {d.minutos_llegada_anticipada > 0 ? (
+                          <label style={{ display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
+                            <input
+                              type="checkbox"
+                              checked={d.anticipacion_pagada}
+                              disabled={d.aplicado || actualizandoAnticipacion === d.id}
+                              onChange={() => alternarAnticipacion(d)}
+                            />
+                            <span title="Llego antes de la hora de ingreso programada. Marca la casilla para pagar ese tiempo como hora extra.">
+                              ⚠ {Math.floor(d.minutos_llegada_anticipada / 60)}h{" "}
+                              {String(d.minutos_llegada_anticipada % 60).padStart(2, "0")}m
+                              {d.anticipacion_pagada ? " (se paga)" : " (no se paga)"}
+                            </span>
+                          </label>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
                       <td>{d.aplicado ? "Aplicado" : "Pendiente"}</td>
                       <td>
                         <button
@@ -220,7 +278,7 @@ export default function ImportarMarcaciones({ periodo }: Props) {
                     </tr>
                     {marcasAbiertas === d.id && (
                       <tr>
-                        <td colSpan={12} style={{ background: "#f7f8fa" }}>
+                        <td colSpan={13} style={{ background: "#f7f8fa" }}>
                           Marcas registradas ese dia:{" "}
                           {d.marcas.map((m) => `${m.hora}${m.tipo ? ` (${m.tipo})` : ""}`).join(", ")}
                         </td>

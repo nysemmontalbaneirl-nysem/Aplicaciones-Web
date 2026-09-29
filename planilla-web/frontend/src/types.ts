@@ -687,6 +687,10 @@ export interface ImportacionMarcacionesDetalle {
   minutos_extra_tramo3: number;
   marcas: MarcacionCruda[];
   aplicado: boolean;
+  // Migracion 047: minutos de "llegada anticipada" (marca de ingreso antes
+  // de la hora programada) y si ya se confirmo pagarlos como hora extra.
+  minutos_llegada_anticipada: number;
+  anticipacion_pagada: boolean;
 }
 
 export interface EntradaBitacora {

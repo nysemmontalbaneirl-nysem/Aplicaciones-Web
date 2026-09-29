@@ -103,9 +103,9 @@ afterAll(async () => {
   await pool.end();
 });
 
-describe("POST /api/periodos/:id/marcaciones/importar", () => {
-  const ENCABEZADO = ["DNI", "NOMBRE", "FECHA", "HORA", "TIPO"];
+const ENCABEZADO = ["DNI", "NOMBRE", "FECHA", "HORA", "TIPO"];
 
+describe("POST /api/periodos/:id/marcaciones/importar", () => {
   it("calcula jornal normal + horas extra tramo1/tramo2 en un dia de semana con marcas de entrada/salida", async () => {
     const xlsx = await armarXlsx(ENCABEZADO, [
       // 2026-08-04 (martes): 08:00 a 20:00 -> bruto 720min - 60 refrigerio = 660min
@@ -242,6 +242,159 @@ describe("POST /api/periodos/:id/marcaciones/importar", () => {
       .attach("archivo", xlsx, "marcaciones.xlsx");
     expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/columnas obligatorias/);
+  });
+
+  it("una llegada ANTES de la hora programada NO se acredita como hora extra automaticamente (migracion 047)", async () => {
+    const xlsx = await armarXlsx(ENCABEZADO, [
+      // 2026-08-05 (miercoles): marca real 07:30, 30 min antes de la hora de
+      // ingreso programada (08:00); salida exactamente a la hora programada
+      // (17:00). El tramo "normal" solo cubre la interseccion con la ventana
+      // programada (08:00-17:00), asi que la llegada anticipada queda fuera
+      // tanto del jornal normal como de las horas extra.
+      [DNI_VIGENTE, "PRUEBA MARCACIONES VIGENTE", "2026-08-05", "07:30", "ENTRADA"],
+      [DNI_VIGENTE, "PRUEBA MARCACIONES VIGENTE", "2026-08-05", "17:00", "SALIDA"],
+    ]);
+    const r = await request(app)
+      .post(`/api/periodos/${periodoId}/marcaciones/importar`)
+      .set(auth())
+      .attach("archivo", xlsx, "marcaciones.xlsx");
+    expect(r.status).toBe(201);
+
+    const revision = await request(app)
+      .get(`/api/periodos/${periodoId}/marcaciones/${r.body.importacion_id}`)
+      .set(auth());
+    const fila = revision.body.detalle.find((d: { fecha: string }) => d.fecha === "2026-08-05");
+    expect(fila.hora_ingreso_real.slice(0, 5)).toBe("07:30");
+    expect(fila.minutos_llegada_anticipada).toBe(30);
+    expect(fila.anticipacion_pagada).toBe(false);
+    // 08:00 a 17:00 neto (540 - 60 refrigerio) = 480min = 8h normal exacto;
+    // sin excedente por salida (coincide con la hora programada) -> 0 extra.
+    expect(fila.horas_normales).toBe(8);
+    expect(fila.minutos_normales).toBe(0);
+    expect(fila.horas_extra_tramo1).toBe(0);
+    expect(fila.minutos_extra_tramo1).toBe(0);
+  });
+
+  it("una llegada tarde y/o salida temprana (sin anticipacion) reduce el jornal normal sin marcar nada para confirmar", async () => {
+    const xlsx = await armarXlsx(ENCABEZADO, [
+      // 2026-08-07 (viernes): ingreso 08:30 (tarde) y salida 16:30 (temprano).
+      [DNI_VIGENTE, "PRUEBA MARCACIONES VIGENTE", "2026-08-07", "08:30", "ENTRADA"],
+      [DNI_VIGENTE, "PRUEBA MARCACIONES VIGENTE", "2026-08-07", "16:30", "SALIDA"],
+    ]);
+    const r = await request(app)
+      .post(`/api/periodos/${periodoId}/marcaciones/importar`)
+      .set(auth())
+      .attach("archivo", xlsx, "marcaciones.xlsx");
+    expect(r.status).toBe(201);
+
+    const revision = await request(app)
+      .get(`/api/periodos/${periodoId}/marcaciones/${r.body.importacion_id}`)
+      .set(auth());
+    const fila = revision.body.detalle.find((d: { fecha: string }) => d.fecha === "2026-08-07");
+    expect(fila.minutos_llegada_anticipada).toBe(0);
+    // 08:30 a 16:30 = 480min bruto - 60 refrigerio = 420min = 7h, todo normal.
+    expect(fila.horas_normales).toBe(7);
+    expect(fila.horas_extra_tramo1).toBe(0);
+  });
+});
+
+describe("PUT /api/periodos/:id/marcaciones/:importacionId/detalle/:detalleId", () => {
+  it("confirma pagar la llegada anticipada como hora extra, recalculando el tramo correspondiente", async () => {
+    const xlsx = await armarXlsx(ENCABEZADO, [
+      // 2026-08-13 (jueves): 45 min de llegada anticipada (07:15 vs 08:00
+      // programado), salida exacta a la hora programada.
+      [DNI_VIGENTE, "PRUEBA MARCACIONES VIGENTE", "2026-08-13", "07:15", "ENTRADA"],
+      [DNI_VIGENTE, "PRUEBA MARCACIONES VIGENTE", "2026-08-13", "17:00", "SALIDA"],
+    ]);
+    const importar = await request(app)
+      .post(`/api/periodos/${periodoId}/marcaciones/importar`)
+      .set(auth())
+      .attach("archivo", xlsx, "marcaciones.xlsx");
+    expect(importar.status).toBe(201);
+
+    const revisionAntes = await request(app)
+      .get(`/api/periodos/${periodoId}/marcaciones/${importar.body.importacion_id}`)
+      .set(auth());
+    const filaAntes = revisionAntes.body.detalle.find((d: { fecha: string }) => d.fecha === "2026-08-13");
+    expect(filaAntes.minutos_llegada_anticipada).toBe(45);
+    expect(filaAntes.anticipacion_pagada).toBe(false);
+    expect(filaAntes.horas_extra_tramo1).toBe(0);
+    expect(filaAntes.minutos_extra_tramo1).toBe(0);
+
+    const put = await request(app)
+      .put(`/api/periodos/${periodoId}/marcaciones/${importar.body.importacion_id}/detalle/${filaAntes.id}`)
+      .set(auth())
+      .send({ anticipacion_pagada: true });
+    expect(put.status).toBe(200);
+    expect(put.body.anticipacion_pagada).toBe(true);
+    expect(put.body.horas_extra_tramo1).toBe(0);
+    expect(put.body.minutos_extra_tramo1).toBe(45);
+
+    const revisionDespues = await request(app)
+      .get(`/api/periodos/${periodoId}/marcaciones/${importar.body.importacion_id}`)
+      .set(auth());
+    const filaDespues = revisionDespues.body.detalle.find((d: { fecha: string }) => d.fecha === "2026-08-13");
+    expect(filaDespues.anticipacion_pagada).toBe(true);
+    expect(filaDespues.minutos_extra_tramo1).toBe(45);
+
+    // Se puede revertir la confirmacion igual de facil.
+    const putRevertir = await request(app)
+      .put(`/api/periodos/${periodoId}/marcaciones/${importar.body.importacion_id}/detalle/${filaAntes.id}`)
+      .set(auth())
+      .send({ anticipacion_pagada: false });
+    expect(putRevertir.status).toBe(200);
+    expect(putRevertir.body.horas_extra_tramo1).toBe(0);
+    expect(putRevertir.body.minutos_extra_tramo1).toBe(0);
+  });
+
+  it("rechaza el toggle una vez que la fila ya se aplico al Tareo Diario", async () => {
+    const xlsx = await armarXlsx(ENCABEZADO, [
+      [DNI_VIGENTE, "PRUEBA MARCACIONES VIGENTE", "2026-08-14", "07:45", "ENTRADA"],
+      [DNI_VIGENTE, "PRUEBA MARCACIONES VIGENTE", "2026-08-14", "17:00", "SALIDA"],
+    ]);
+    const importar = await request(app)
+      .post(`/api/periodos/${periodoId}/marcaciones/importar`)
+      .set(auth())
+      .attach("archivo", xlsx, "marcaciones.xlsx");
+    const importacionId = importar.body.importacion_id;
+    const revision = await request(app).get(`/api/periodos/${periodoId}/marcaciones/${importacionId}`).set(auth());
+    const fila = revision.body.detalle.find((d: { fecha: string }) => d.fecha === "2026-08-14");
+    expect(fila.minutos_llegada_anticipada).toBe(15);
+
+    const aplicar = await request(app)
+      .post(`/api/periodos/${periodoId}/marcaciones/${importacionId}/aplicar`)
+      .set(auth())
+      .send({ contrato_ids: [contratoId] });
+    expect(aplicar.status).toBe(200);
+    expect(aplicar.body.aplicados).toContain(contratoId);
+
+    const put = await request(app)
+      .put(`/api/periodos/${periodoId}/marcaciones/${importacionId}/detalle/${fila.id}`)
+      .set(auth())
+      .send({ anticipacion_pagada: true });
+    expect(put.status).toBe(400);
+    expect(put.body.error).toMatch(/ya se aplico/);
+  });
+
+  it("devuelve 400 si falta 'anticipacion_pagada' en el body", async () => {
+    const xlsx = await armarXlsx(ENCABEZADO, [
+      [DNI_VIGENTE, "PRUEBA MARCACIONES VIGENTE", "2026-08-15", "08:00", "ENTRADA"],
+      [DNI_VIGENTE, "PRUEBA MARCACIONES VIGENTE", "2026-08-15", "17:00", "SALIDA"],
+    ]);
+    const importar = await request(app)
+      .post(`/api/periodos/${periodoId}/marcaciones/importar`)
+      .set(auth())
+      .attach("archivo", xlsx, "marcaciones.xlsx");
+    const revision = await request(app)
+      .get(`/api/periodos/${periodoId}/marcaciones/${importar.body.importacion_id}`)
+      .set(auth());
+    const fila = revision.body.detalle[0];
+
+    const put = await request(app)
+      .put(`/api/periodos/${periodoId}/marcaciones/${importar.body.importacion_id}/detalle/${fila.id}`)
+      .set(auth())
+      .send({});
+    expect(put.status).toBe(400);
   });
 });
 

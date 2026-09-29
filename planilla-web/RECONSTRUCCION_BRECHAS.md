@@ -1429,3 +1429,109 @@ trabajado se acredita completo a 'Feriado trabajado'").
 Verificado: `tsc --noEmit` limpio (backend y frontend). 400/400 tests
 (392 previos + 8 nuevos de `tests/importacion_marcaciones.test.ts`, de
 los 9 originales del parche - 1 descartado por la brecha #15).
+
+## 29. Parche #45/46 (`8728fd58`, "Control de Asistencia Diaria: plantilla con PROYECTO + llegada anticipada") — última entrada del manifiesto; migración 047 (2 columnas nuevas); "llegada anticipada" queda excluida de horas extra hasta confirmación manual; plantilla Excel de marcaciones con DNI/PROYECTO/NOMBRE resueltos; aplicó 100% limpio en los 7 archivos, un solo `Cannot find name` a corregir a mano
+
+Este es el ÚLTIMO parche de `manifest_final.tsv` (línea 46 de 46). A
+diferencia de casi todos los parches grandes de este documento, los 7
+archivos tocados (`ImportarMarcaciones.tsx`, `frontend/src/types.ts`,
+`sql/schema.sql`, `sql/migracion_047_llegada_anticipada.sql` (nuevo),
+`src/routes/planilla.ts`, `src/tipos.ts`,
+`tests/importacion_marcaciones.test.ts`) aplicaron con **cero
+`.rej`** — todos los hunks tuvieron éxito automático (con offsets de
+hasta -361 líneas, por todo lo que este árbol acumuló manualmente en
+los parches 40-44).
+
+**Contenido funcional del parche:**
+- Migración 047: agrega `minutos_llegada_anticipada` (INT) y
+  `anticipacion_pagada` (BOOLEAN) a `importaciones_marcaciones_detalle`
+  (tabla ya existente desde la migración 046) — sin `GRANT` nuevo,
+  porque son columnas en una tabla que `grupojhc_boletas` ya tiene
+  permiso completo (revisado y confirmado correcto).
+- Nueva regla de negocio (pedida por el usuario el 26/09, documentada
+  en el propio comentario del parche): si alguien marca su ingreso
+  ANTES de la hora programada del proyecto, ese tiempo NO se acredita
+  como hora extra automáticamente — queda separado en
+  `minutos_llegada_anticipada` y excluido tanto del jornal normal como
+  de las horas extra, hasta que la persona que revisa lo confirme
+  explícitamente. Una salida DESPUÉS de la hora programada se sigue
+  acreditando como extra automático, sin cambios (ese es el caso
+  normal de sobretiempo). El cálculo de un día completo (antes en
+  línea, repetido inline en `agregarTareoDiario`) se extrajo a una
+  función compartida `calcularJornadaDesdeMarcas(...)`, reutilizada
+  tanto por la importación masiva (`incluirAnticipacionComoExtra:
+  false` siempre) como por el nuevo endpoint de confirmación puntual.
+- Nuevo `PUT /api/periodos/:id/marcaciones/:importacionId/detalle/:detalleId`
+  (body `{ anticipacion_pagada: boolean }`) — recalcula el desglose
+  completo de ese día (no solo el campo de anticipación, porque el
+  tramo1/2/3 depende de si esos minutos entran o no al total de
+  extra), bloqueado si la fila ya se aplicó al Tareo Diario.
+- Nuevo `GET /api/periodos/:id/marcaciones/plantilla` — genera un
+  `.xlsx` de plantilla con DNI/PROYECTO/NOMBRE ya resueltos por
+  contrato hábil vigente (mismo patrón que la plantilla de
+  `/tareo/plantilla`), para que el usuario no tenga que escribir a
+  mano la columna PROYECTO (que solo hace falta para desambiguar un
+  DNI con más de un contrato hábil activo).
+- Frontend (`ImportarMarcaciones.tsx`): fila resaltada (fondo amarillo
+  claro) cuando `minutos_llegada_anticipada > 0`, con una casilla para
+  confirmar/revertir el pago como extra, botón "Descargar plantilla
+  Excel", y texto explicativo de la nueva regla.
+
+**Único gap encontrado — nueva variante de la brecha #15, NO una
+brecha nueva:** el hunk de `src/routes/planilla.ts` introduce, en el
+nuevo `PUT .../detalle/:detalleId`, una llamada directa a
+`obtenerFeriadosVigentes(...)` — la misma función que la sección 28 ya
+había decidido omitir por completo (depende de la tabla
+`dias_feriados`, que nunca existió en este árbol). A diferencia del
+caso de la sección 28 (donde el resultado se guarda en un mapa
+`feriadosPorContrato` calculado una sola vez para todo el lote), aquí
+es una llamada puntual por fila — no puede reutilizar ese mapa (que
+solo vive durante la request de importación). Se resolvió igual que
+antes: se reemplazó la llamada por `const esFeriado = false;`, con una
+`NOTA (recon 45/46)` que remite al mismo punto 15 de este documento y
+explica que el usuario puede marcar el día como "Feriado trabajado" a
+mano desde Registrar Tareo Diario después de aplicar/confirmar la
+fila. Este fue el único error de `tsc` (`Cannot find name
+'obtenerFeriadosVigentes'`) tras aplicar el parche.
+
+**Revisión del resto de hunks (todos aplicados automáticamente, sin
+`.rej`, así que se revisaron con cuidado extra por si escondían algún
+problema silencioso):** `sql/migracion_047_llegada_anticipada.sql` y
+el hunk de `sql/schema.sql` son consistentes entre sí (mismas 2
+columnas, mismo comentario). Los hunks de `src/tipos.ts` y
+`frontend/src/types.ts` son idénticos entre sí (mismo campo agregado a
+`ImportacionMarcacionesDetalle` en ambos lados). El resto de
+`routes/planilla.ts` (endpoint de plantilla Excel, función
+`calcularJornadaDesdeMarcas`, el nuevo `PUT`) se leyó completo y es
+autoconsistente — no depende de ninguna infraestructura faltante
+aparte del punto ya corregido arriba. Las 5 pruebas nuevas de
+`tests/importacion_marcaciones.test.ts` no referencian `dias_feriados`
+en ningún punto (ya limpio desde la sección 28), así que no hubo que
+descartar ninguna esta vez.
+
+**Sobre el conteo "548/548" del propio mensaje de commit del parche
+original:** ese número es de la rama upstream/original (con todos los
+46+ parches históricos aplicados sin brechas) y NO aplica a este árbol
+reconstruido — se ignora.
+
+Verificado: `tsc --noEmit` limpio (backend y frontend, después de la
+corrección de `obtenerFeriadosVigentes`). 405/405 tests (400 previos +
+5 nuevos de `tests/importacion_marcaciones.test.ts`: llegada anticipada
+no se acredita como extra al importar, llegada tarde/salida temprana
+sin anticipación reduce el jornal normal sin nada que confirmar,
+confirmar y revertir el pago vía `PUT`, rechazo del `PUT` sobre una
+fila ya aplicada, 400 si falta `anticipacion_pagada` en el body).
+
+**Nota sobre la numeración final:** esta es la ÚLTIMA entrada de
+`manifest_final.tsv` (línea 46 de 46 líneas). Bajo la convención de
+etiquetado ya establecida en este documento (línea de manifiesto L →
+"recon (L-1)/46"), esta entrada queda etiquetada **"recon 45/46"** —
+no hay una línea 47 en el manifiesto para un "46/46" literal. Esto
+significa que, de los "46" parches históricos que dan nombre a esta
+convención, solo se pudieron recuperar y reconstruir 45 en la
+práctica (el desfase es un artefacto histórico de esta reconstrucción,
+probable consecuencia de una deduplicación/"SALTADO" de un parche en
+algún punto anterior del proceso — ver parche #22/46 SALTADO como
+ejemplo de ese mecanismo). Con este parche, el manifiesto queda
+agotado: no quedan más parches `.patch` por aplicar de los que se
+recuperaron del respaldo original.

@@ -1529,6 +1529,70 @@ planillaRouter.post(
 
 const uploadMarcaciones = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
+const COLUMNAS_PLANTILLA_MARCACION = ["DNI", "PROYECTO", "NOMBRE", "FECHA", "HORA", "TIPO"];
+
+// GET /api/periodos/:id/marcaciones/plantilla -> descarga un .xlsx con DNI,
+// PROYECTO y NOMBRE ya resueltos por el sistema para cada trabajador habil
+// en el alcance de este periodo (mismo patron que /tareo/plantilla) - asi
+// la columna PROYECTO (necesaria solo cuando un DNI tiene mas de un
+// contrato habil activo, para desambiguar) queda completada de una vez,
+// sin que el usuario tenga que escribirla ni adivinarla a mano. Dos filas
+// de ejemplo por trabajador (ENTRADA/SALIDA) para completar FECHA/HORA -
+// se duplica ese par de filas por cada dia adicional que se quiera cargar.
+planillaRouter.get(
+  "/:id/marcaciones/plantilla",
+  asyncHandler(async (req: Request, res: Response) => {
+    const periodo = await obtenerPeriodo(req.params.id);
+    if (!periodo) return res.status(404).json({ error: "Periodo no encontrado" });
+
+    const esAdmin = req.usuario!.rol === "ADMIN";
+    const condiciones: string[] = ["c.estado = 'HABIL'"];
+    const params: unknown[] = [];
+    if (!esAdmin) {
+      params.push(req.usuario!.proyectos);
+      condiciones.push(`c.proyecto = ANY($${params.length}::text[])`);
+    }
+    if (periodo.proyecto) {
+      params.push(periodo.proyecto);
+      condiciones.push(`c.proyecto = $${params.length}`);
+    }
+    const contratosResult = await pool.query(
+      `SELECT e.numero_documento, e.apellidos_nombres, c.proyecto
+       FROM contratos c JOIN empleados e ON e.id = c.empleado_id
+       WHERE ${condiciones.join(" AND ")}
+       ORDER BY e.apellidos_nombres ASC`,
+      params
+    );
+
+    const workbook = new ExcelJS.Workbook();
+    const hoja = workbook.addWorksheet("Marcaciones");
+    hoja.columns = COLUMNAS_PLANTILLA_MARCACION.map((nombre) => ({ header: nombre, key: nombre, width: 18 }));
+    hoja.getColumn("DNI").numFmt = "@"; // texto - evita que Excel borre ceros a la izquierda
+    hoja.getColumn("FECHA").numFmt = "@";
+    hoja.getColumn("HORA").numFmt = "@";
+
+    for (const c of contratosResult.rows) {
+      for (const tipo of ["ENTRADA", "SALIDA"] as const) {
+        const fila = hoja.addRow({
+          DNI: c.numero_documento,
+          PROYECTO: c.proyecto,
+          NOMBRE: c.apellidos_nombres,
+          FECHA: "",
+          HORA: "",
+          TIPO: tipo,
+        });
+        fila.getCell("DNI").numFmt = "@";
+        fila.getCell("DNI").value = c.numero_documento;
+      }
+    }
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="marcaciones_plantilla_${periodo.mes}_${periodo.anio}.xlsx"`);
+    await workbook.xlsx.write(res);
+    res.end();
+  })
+);
+
 type ClaveColumnaMarcacion = "dni" | "fecha" | "hora" | "nombre" | "tipo" | "proyecto";
 
 // Alias de encabezado aceptados (en mayusculas) para el mapeo AUTOMATICO de
@@ -1625,6 +1689,92 @@ function minutosATexto(minutos: number): string {
 function textoAMinutos(horaHHMM: string): number {
   const [h, m] = horaHHMM.split(":").map(Number);
   return h * 60 + (m || 0);
+}
+
+interface DiaMarcacionCalculado {
+  dia: FilaTareoDiario;
+  minutosLlegadaAnticipada: number;
+}
+
+// Calcula jornal normal/extra (o feriado/dominical) de UN dia a partir de
+// la marca mas temprana y mas tardia, comparadas contra el horario
+// configurado del proyecto.
+//
+// Pregunta del usuario (26/09): si alguien marca su ingreso ANTES de la
+// hora de ingreso programada, ¿ese tiempo se paga como hora extra
+// automaticamente? Se acordo que NO por defecto - ese tiempo se marca
+// como "llegada anticipada" (minutosLlegadaAnticipada) y queda EXCLUIDO
+// del calculo (ni como jornal normal, ni como hora extra) hasta que la
+// persona que revisa la importacion lo CONFIRME explicitamente como hora
+// extra a pagar (parametro incluirAnticipacionComoExtra, ver el toggle en
+// PUT /:id/marcaciones/:importacionId/detalle/:detalleId). Una llegada
+// TARDE (despues de la hora de ingreso programada) nunca se trata como
+// extra - simplemente reduce el jornal normal de ese dia, igual que una
+// salida temprana; solo la salida DESPUES de la hora programada genera
+// hora extra automatica, sin necesitar confirmacion (ese es el caso
+// esperado/normal de sobretiempo).
+function calcularJornadaDesdeMarcas(
+  minIngresoReal: number,
+  maxSalidaReal: number,
+  diaSemana: number, // 0=domingo .. 6=sabado (getUTCDay())
+  esFeriado: boolean,
+  horario: HorarioProyecto,
+  incluirAnticipacionComoExtra: boolean
+): DiaMarcacionCalculado {
+  const trabajadoBruto = Math.max(0, maxSalidaReal - minIngresoReal);
+  const dia: FilaTareoDiario = { fecha: "" }; // el llamador completa "fecha"
+
+  if (esFeriado) {
+    // Feriado trabajado: se acredita completo, sin dividir en tramos -
+    // mismo criterio que ya usa hoy la carga manual de "Feriado trabajado".
+    const netos = Math.max(0, trabajadoBruto - horario.minutos_refrigerio);
+    dia.horas_feriado = Math.floor(netos / 60);
+    dia.minutos_feriado = netos % 60;
+    return { dia, minutosLlegadaAnticipada: 0 };
+  }
+  if (diaSemana === 0) {
+    // Domingo trabajado: igual, se acredita completo sin tramos (el
+    // domingo es el dia de descanso; el trabajo excepcional se paga
+    // aparte via REM_DOMINICAL/sobretasa, no como "hora extra").
+    const netos = Math.max(0, trabajadoBruto - horario.minutos_refrigerio);
+    dia.horas_dominical = Math.floor(netos / 60);
+    dia.minutos_dominical = netos % 60;
+    return { dia, minutosLlegadaAnticipada: 0 };
+  }
+
+  const esSabado = diaSemana === 6;
+  const usaHorarioSabado = esSabado && horario.hora_ingreso_sabado && horario.hora_salida_sabado;
+  const ingresoProg = textoAMinutos(usaHorarioSabado ? horario.hora_ingreso_sabado! : horario.hora_ingreso);
+  const salidaProg = textoAMinutos(usaHorarioSabado ? horario.hora_salida_sabado! : horario.hora_salida);
+
+  // "Normal" cubre solo la interseccion entre lo realmente marcado y la
+  // ventana programada: una llegada tarde o una salida temprana SI reduce
+  // el jornal normal (nadie discute eso); una llegada anticipada NO se
+  // acredita aqui - queda aparte, pendiente de confirmacion (ver abajo).
+  const ingresoEfectivoNormal = Math.max(minIngresoReal, ingresoProg);
+  const salidaEfectivaNormal = Math.min(maxSalidaReal, salidaProg);
+  const normalBruto = Math.max(0, salidaEfectivaNormal - ingresoEfectivoNormal);
+  const normalNeto = Math.max(0, normalBruto - horario.minutos_refrigerio);
+
+  const minutosLlegadaAnticipada = Math.max(0, ingresoProg - minIngresoReal);
+  const minutosSalidaTardia = Math.max(0, maxSalidaReal - salidaProg);
+  const extraMin = minutosSalidaTardia + (incluirAnticipacionComoExtra ? minutosLlegadaAnticipada : 0);
+
+  const tramo1 = Math.min(extraMin, 120);
+  const restoTrasTramo1 = extraMin - tramo1;
+  const tramo2 = Math.min(restoTrasTramo1, 240);
+  const tramo3 = restoTrasTramo1 - tramo2;
+
+  dia.horas_normales = Math.floor(normalNeto / 60);
+  dia.minutos_normales = normalNeto % 60;
+  dia.horas_extra_tramo1 = Math.floor(tramo1 / 60);
+  dia.minutos_extra_tramo1 = tramo1 % 60;
+  dia.horas_extra_tramo2 = Math.floor(tramo2 / 60);
+  dia.minutos_extra_tramo2 = tramo2 % 60;
+  dia.horas_extra_tramo3 = Math.floor(tramo3 / 60);
+  dia.minutos_extra_tramo3 = tramo3 % 60;
+
+  return { dia, minutosLlegadaAnticipada };
 }
 
 interface ErrorFilaMarcacion {
@@ -1846,6 +1996,7 @@ planillaRouter.post(
       horaSalidaReal: string;
       marcas: { hora: string; tipo: "ENTRADA" | "SALIDA" | null }[];
       dia: FilaTareoDiario;
+      minutosLlegadaAnticipada: number;
     }
     const diasCalculados: DiaCalculado[] = [];
 
@@ -1861,45 +2012,20 @@ planillaRouter.post(
 
       const diaSemana = new Date(fecha + "T00:00:00Z").getUTCDay(); // 0=domingo .. 6=sabado
       const esFeriado = feriadosPorContrato.get(contratoId)?.has(fecha) ?? false;
-      const trabajadoBruto = Math.max(0, maxSalida - minIngreso);
-      const dia: FilaTareoDiario = { fecha };
 
-      if (esFeriado) {
-        // Feriado trabajado: se acredita completo, sin dividir en tramos -
-        // mismo criterio que ya usa hoy la carga manual de "Feriado trabajado".
-        const netos = Math.max(0, trabajadoBruto - horario.minutos_refrigerio);
-        dia.horas_feriado = Math.floor(netos / 60);
-        dia.minutos_feriado = netos % 60;
-      } else if (diaSemana === 0) {
-        // Domingo trabajado: igual, se acredita completo sin tramos (el
-        // domingo es el dia de descanso; el trabajo excepcional se paga
-        // aparte via REM_DOMINICAL/sobretasa, no como "hora extra").
-        const netos = Math.max(0, trabajadoBruto - horario.minutos_refrigerio);
-        dia.horas_dominical = Math.floor(netos / 60);
-        dia.minutos_dominical = netos % 60;
-      } else {
-        const esSabado = diaSemana === 6;
-        const usaHorarioSabado = esSabado && horario.hora_ingreso_sabado && horario.hora_salida_sabado;
-        const horaIngresoProg = usaHorarioSabado ? horario.hora_ingreso_sabado! : horario.hora_ingreso;
-        const horaSalidaProg = usaHorarioSabado ? horario.hora_salida_sabado! : horario.hora_salida;
-        const jornadaProgramadaBruta = Math.max(0, textoAMinutos(horaSalidaProg) - textoAMinutos(horaIngresoProg));
-        const jornadaProgramadaNeta = Math.max(0, jornadaProgramadaBruta - horario.minutos_refrigerio);
-        const trabajadoNeto = Math.max(0, trabajadoBruto - horario.minutos_refrigerio);
-        const normalMin = Math.min(trabajadoNeto, jornadaProgramadaNeta);
-        const extraMin = Math.max(0, trabajadoNeto - jornadaProgramadaNeta);
-        const tramo1 = Math.min(extraMin, 120);
-        const restoTrasTramo1 = extraMin - tramo1;
-        const tramo2 = Math.min(restoTrasTramo1, 240);
-        const tramo3 = restoTrasTramo1 - tramo2;
-        dia.horas_normales = Math.floor(normalMin / 60);
-        dia.minutos_normales = normalMin % 60;
-        dia.horas_extra_tramo1 = Math.floor(tramo1 / 60);
-        dia.minutos_extra_tramo1 = tramo1 % 60;
-        dia.horas_extra_tramo2 = Math.floor(tramo2 / 60);
-        dia.minutos_extra_tramo2 = tramo2 % 60;
-        dia.horas_extra_tramo3 = Math.floor(tramo3 / 60);
-        dia.minutos_extra_tramo3 = tramo3 % 60;
-      }
+      // Al importar, la llegada anticipada (si la hay) NUNCA se acredita
+      // como hora extra todavia (incluirAnticipacionComoExtra=false) - eso
+      // requiere que la persona que revisa la confirme explicitamente
+      // despues, via PUT .../detalle/:id (ver calcularJornadaDesdeMarcas).
+      const { dia, minutosLlegadaAnticipada } = calcularJornadaDesdeMarcas(
+        minIngreso,
+        maxSalida,
+        diaSemana,
+        esFeriado,
+        horario,
+        false
+      );
+      dia.fecha = fecha;
 
       diasCalculados.push({
         contratoId,
@@ -1911,6 +2037,7 @@ planillaRouter.post(
           .sort((a, b) => a.minutos - b.minutos)
           .map((m) => ({ hora: minutosATexto(m.minutos), tipo: m.tipo })),
         dia,
+        minutosLlegadaAnticipada,
       });
     }
 
@@ -1940,8 +2067,8 @@ planillaRouter.post(
              horas_normales, minutos_normales, horas_dominical, minutos_dominical,
              horas_feriado, minutos_feriado, horas_extra_tramo1, minutos_extra_tramo1,
              horas_extra_tramo2, minutos_extra_tramo2, horas_extra_tramo3, minutos_extra_tramo3,
-             marcas_json
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+             marcas_json, minutos_llegada_anticipada, anticipacion_pagada
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
           [
             importacionId,
             d.contratoId,
@@ -1961,6 +2088,8 @@ planillaRouter.post(
             d.dia.horas_extra_tramo3 ?? 0,
             d.dia.minutos_extra_tramo3 ?? 0,
             JSON.stringify(d.marcas),
+            d.minutosLlegadaAnticipada,
+            false,
           ]
         );
       }
@@ -2076,7 +2205,126 @@ planillaRouter.get(
         minutos_extra_tramo3: f.minutos_extra_tramo3,
         marcas: f.marcas_json,
         aplicado: f.aplicado,
+        minutos_llegada_anticipada: f.minutos_llegada_anticipada,
+        anticipacion_pagada: f.anticipacion_pagada,
       })),
+    });
+  })
+);
+
+// PUT /api/periodos/:id/marcaciones/:importacionId/detalle/:detalleId
+// body: { anticipacion_pagada: boolean } - confirma o retira el pago de la
+// "llegada anticipada" de ese dia como hora extra (ver calcularJornadaDesdeMarcas
+// y el comentario del 26/09 sobre esta decision). Recalcula el desglose de
+// horas de ese dia entero (no solo el campo de anticipacion) porque el
+// tramo1/2/3 depende de si esos minutos entran o no al total de extra.
+planillaRouter.put(
+  "/:id/marcaciones/:importacionId/detalle/:detalleId",
+  asyncHandler(async (req: Request, res: Response) => {
+    if (typeof req.body?.anticipacion_pagada !== "boolean") {
+      return res.status(400).json({ error: "Falta 'anticipacion_pagada' (boolean)" });
+    }
+    const anticipacionPagada = req.body.anticipacion_pagada as boolean;
+
+    const filaResult = await pool.query(
+      `SELECT d.*, c.proyecto
+       FROM importaciones_marcaciones_detalle d
+       JOIN importaciones_marcaciones im ON im.id = d.importacion_id
+       JOIN contratos c ON c.id = d.contrato_id
+       WHERE d.id = $1 AND d.importacion_id = $2 AND im.periodo_id = $3`,
+      [req.params.detalleId, req.params.importacionId, req.params.id]
+    );
+    if (filaResult.rowCount === 0) {
+      return res.status(404).json({ error: "No se encontro esa fila de la importacion" });
+    }
+    const fila = filaResult.rows[0];
+    if (fila.aplicado) {
+      return res.status(400).json({
+        error: "Esta fila ya se aplico al Tareo Diario - no se puede modificar. Reabra el periodo si necesita corregirla.",
+      });
+    }
+
+    const minutosIngresoReal = fila.hora_ingreso_real ? textoAMinutos(String(fila.hora_ingreso_real).slice(0, 5)) : null;
+    const minutosSalidaReal = fila.hora_salida_real ? textoAMinutos(String(fila.hora_salida_real).slice(0, 5)) : null;
+    if (minutosIngresoReal === null || minutosSalidaReal === null) {
+      return res.status(400).json({ error: "Esta fila no tiene hora de ingreso/salida registrada" });
+    }
+
+    const fecha = fechaISO(fila.fecha);
+    const diaSemana = new Date(fecha + "T00:00:00Z").getUTCDay();
+    // NOTA (recon 45/46): igual que en la importacion masiva de arriba
+    // (feriadosPorContrato, ver RECONSTRUCCION_BRECHAS.md punto 15), aqui no
+    // existe un catalogo de "dias_feriados" contra el cual clasificar la
+    // fecha automaticamente - la tabla nunca existio en este arbol. Se deja
+    // esFeriado en false; si el dia es realmente un feriado trabajado, el
+    // usuario lo marca a mano desde Registrar Tareo Diario despues de
+    // aplicar/confirmar esta fila, igual que ya hace hoy.
+    const esFeriado = false;
+
+    const horarioResult = await pool.query(
+      `SELECT p.id AS proyecto_id, h.hora_ingreso, h.hora_salida, h.minutos_refrigerio,
+              h.hora_ingreso_sabado, h.hora_salida_sabado, h.tasa_tramo3
+       FROM proyectos p
+       LEFT JOIN horarios_proyecto h ON h.proyecto_id = p.id
+       WHERE p.nombre = $1`,
+      [fila.proyecto]
+    );
+    const horario: HorarioProyecto =
+      (horarioResult.rowCount ?? 0) > 0
+        ? filaAHorarioProyecto(horarioResult.rows[0])
+        : filaAHorarioProyecto({ proyecto_id: 0, hora_ingreso: null, hora_salida: null, minutos_refrigerio: null, tasa_tramo3: null });
+
+    const { dia, minutosLlegadaAnticipada } = calcularJornadaDesdeMarcas(
+      minutosIngresoReal,
+      minutosSalidaReal,
+      diaSemana,
+      esFeriado,
+      horario,
+      anticipacionPagada
+    );
+
+    await pool.query(
+      `UPDATE importaciones_marcaciones_detalle SET
+         horas_normales = $1, minutos_normales = $2, horas_dominical = $3, minutos_dominical = $4,
+         horas_feriado = $5, minutos_feriado = $6, horas_extra_tramo1 = $7, minutos_extra_tramo1 = $8,
+         horas_extra_tramo2 = $9, minutos_extra_tramo2 = $10, horas_extra_tramo3 = $11, minutos_extra_tramo3 = $12,
+         minutos_llegada_anticipada = $13, anticipacion_pagada = $14
+       WHERE id = $15`,
+      [
+        dia.horas_normales ?? 0,
+        dia.minutos_normales ?? 0,
+        dia.horas_dominical ?? 0,
+        dia.minutos_dominical ?? 0,
+        dia.horas_feriado ?? 0,
+        dia.minutos_feriado ?? 0,
+        dia.horas_extra_tramo1 ?? 0,
+        dia.minutos_extra_tramo1 ?? 0,
+        dia.horas_extra_tramo2 ?? 0,
+        dia.minutos_extra_tramo2 ?? 0,
+        dia.horas_extra_tramo3 ?? 0,
+        dia.minutos_extra_tramo3 ?? 0,
+        minutosLlegadaAnticipada,
+        anticipacionPagada,
+        req.params.detalleId,
+      ]
+    );
+
+    res.json({
+      id: Number(req.params.detalleId),
+      horas_normales: dia.horas_normales ?? 0,
+      minutos_normales: dia.minutos_normales ?? 0,
+      horas_dominical: dia.horas_dominical ?? 0,
+      minutos_dominical: dia.minutos_dominical ?? 0,
+      horas_feriado: dia.horas_feriado ?? 0,
+      minutos_feriado: dia.minutos_feriado ?? 0,
+      horas_extra_tramo1: dia.horas_extra_tramo1 ?? 0,
+      minutos_extra_tramo1: dia.minutos_extra_tramo1 ?? 0,
+      horas_extra_tramo2: dia.horas_extra_tramo2 ?? 0,
+      minutos_extra_tramo2: dia.minutos_extra_tramo2 ?? 0,
+      horas_extra_tramo3: dia.horas_extra_tramo3 ?? 0,
+      minutos_extra_tramo3: dia.minutos_extra_tramo3 ?? 0,
+      minutos_llegada_anticipada: minutosLlegadaAnticipada,
+      anticipacion_pagada: anticipacionPagada,
     });
   })
 );

@@ -555,6 +555,11 @@ CREATE TABLE importaciones_marcaciones_detalle (
     minutos_extra_tramo3    INT NOT NULL DEFAULT 0,
     marcas_json         JSONB NOT NULL DEFAULT '[]',
     aplicado            BOOLEAN NOT NULL DEFAULT false,
+    -- Migracion 047: minutos de "llegada anticipada" detectados ese dia
+    -- (marca de ingreso anterior a la hora programada) y si la persona que
+    -- revisa ya confirmo pagarlos como hora extra (ver PUT .../detalle/:id).
+    minutos_llegada_anticipada INT NOT NULL DEFAULT 0,
+    anticipacion_pagada         BOOLEAN NOT NULL DEFAULT false,
     UNIQUE (importacion_id, contrato_id, fecha)
 );
 CREATE INDEX idx_importaciones_marcaciones_detalle_importacion
