@@ -1,6 +1,7 @@
 import { DatosEmpresa, DetallePlanilla, PeriodoPlanilla, esConstruccionCivil } from "../types";
 import { BASE_URL, conToken } from "../api";
 import logoJhcr from "../assets/logo-jhcr.jpg";
+import { estiloTituloSeccionBoleta } from "../estilosCompartidos";
 
 interface Props {
   detalle: DetallePlanilla;
@@ -234,7 +235,7 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles, d
           a un tamaño dificil de leer. */}
       <div style={{ display: "grid", gridTemplateColumns: "1.3fr 0.85fr 0.85fr", gap: 8 }}>
         <div>
-          <h3 style={{ fontSize: "0.95rem", marginBottom: 6 }}>Ingresos</h3>
+          <h3 style={estiloTituloSeccionBoleta}>Ingresos</h3>
           <table>
             <tbody>
               {ingresos.map((l) => (
@@ -252,7 +253,7 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles, d
         </div>
 
         <div>
-          <h3 style={{ fontSize: "0.95rem", marginBottom: 6 }}>Descuentos</h3>
+          <h3 style={estiloTituloSeccionBoleta}>Descuentos</h3>
           <table>
             <tbody>
               {descuentos.map((l) => (
@@ -270,7 +271,7 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles, d
         </div>
 
         <div>
-          <h3 style={{ fontSize: "0.95rem", marginBottom: 6 }}>Aportes del empleador</h3>
+          <h3 style={estiloTituloSeccionBoleta}>Aportes del empleador</h3>
           <table>
             <tbody>
               {aportesEmpleador.map((l) => (

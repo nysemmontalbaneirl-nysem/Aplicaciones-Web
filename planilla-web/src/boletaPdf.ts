@@ -2,6 +2,7 @@ import PDFDocument from "pdfkit";
 import archiver from "archiver";
 import { esConstruccionCivil } from "./motorCalculo";
 import { CategoriaOcupacional } from "./tipos";
+import { obtenerUrlAcceso } from "./config";
 
 // Genera el PDF de una boleta de pago para enviar por correo. El contenido
 // replica la boleta que ya se ve/imprime en pantalla (frontend/Boleta.tsx),
@@ -172,7 +173,8 @@ function dibujarBoleta(
   doc: InstanceType<typeof PDFDocument>,
   detalle: DetalleBoletaPdf,
   periodo: Periodo,
-  datosEmpresa?: DatosEmpresaBoleta
+  datosEmpresa?: DatosEmpresaBoleta,
+  correoEnvio?: string
 ): void {
   const aporte = detalle.detalle_json?.aporte_pension_detalle ?? {};
 
@@ -331,6 +333,27 @@ function dibujarBoleta(
     .text(`Neto a pagar: ${moneda(detalle.neto_pagar)}`, xEtiqueta, doc.y, { width: anchoUtil, align: "right" });
 
   dibujarFirmas(doc, detalle, datosEmpresa, xEtiqueta, anchoUtil);
+
+  // Migracion 040: pie de pagina SOLO en el PDF que se adjunta al correo
+  // (correoEnvio llega desde generarPdfBoleta cuando lo llama
+  // routes/envios.ts; la descarga/impresion masiva desde la pantalla
+  // Boletas -generarPdfBoletas/generarZipBoletas- nunca lo pasa, porque ahi
+  // la boleta todavia no se envio por correo). Se agrega, a pedido del
+  // usuario: (a) la URL de acceso al sistema, y (b) una constancia de que
+  // esta copia especifica fue enviada y recepcionada por ese correo.
+  if (correoEnvio) {
+    doc.moveDown(1.1);
+    doc
+      .font("Helvetica")
+      .fontSize(7.5)
+      .fillColor("#5a6172")
+      .text(`Accede al sistema en: ${obtenerUrlAcceso()}`, xEtiqueta, doc.y, { width: anchoUtil, align: "center" })
+      .text(`Boleta enviada y recepcionada a traves del correo: ${correoEnvio}`, xEtiqueta, doc.y, {
+        width: anchoUtil,
+        align: "center",
+      });
+    doc.fillColor("#000000");
+  }
 }
 
 // Un bloque de firma individual (empleador o trabajador): dibuja la imagen
@@ -367,7 +390,12 @@ function dibujarBloqueFirma(
     .fillColor("#5a6172")
     .text(etiqueta, x, yLinea + 2, { width: ancho, align: "center" });
   let y = yLinea + 11;
-  if (imagen) {
+  // Migracion 040: a pedido del usuario se elimina la nota "(firma
+  // registrada - solo referencial)" debajo de la firma del EMPLEADOR
+  // (notaReferencial llega vacio desde dibujarFirmas para ese bloque). El
+  // bloque del TRABAJADOR la conserva - el usuario solo pidio quitarla de
+  // la firma del empleador.
+  if (imagen && notaReferencial.trim()) {
     doc.text(notaReferencial, x, y, { width: ancho, align: "center" });
     y += 9;
   }
@@ -457,7 +485,7 @@ function dibujarFirmas(
     anchoFirma,
     datosEmpresa?.firmaEmpleador,
     "Firma y sello del empleador",
-    "(firma registrada - solo referencial)",
+    "", // migracion 040: el usuario pidio quitar esta nota SOLO del lado del empleador
     datosEmpresa?.representanteLegal
   );
   dibujarBloqueFirma(
@@ -476,12 +504,17 @@ function dibujarFirmas(
 // lo resuelve una sola vez con obtenerDatosEmpresaBoleta() (routes/empresa.ts)
 // y lo pasa aqui; si se omite, dibujarBoleta cae al logo estatico de
 // siempre y no dibuja firma/nombre del empleador.
-export async function generarPdfBoleta(detalle: DetalleBoletaPdf, periodo: Periodo, datosEmpresa?: DatosEmpresaBoleta): Promise<Buffer> {
+export async function generarPdfBoleta(
+  detalle: DetalleBoletaPdf,
+  periodo: Periodo,
+  datosEmpresa?: DatosEmpresaBoleta,
+  correoEnvio?: string
+): Promise<Buffer> {
   const doc = new PDFDocument({ margin: 45, size: "A4" });
   const trozos: Buffer[] = [];
   doc.on("data", (trozo: Buffer) => trozos.push(trozo));
   const listo = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(trozos))));
-  dibujarBoleta(doc, detalle, periodo, datosEmpresa);
+  dibujarBoleta(doc, detalle, periodo, datosEmpresa, correoEnvio);
   doc.end();
   return listo;
 }

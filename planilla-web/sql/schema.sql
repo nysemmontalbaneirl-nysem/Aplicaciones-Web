@@ -662,6 +662,23 @@ CREATE TABLE configuracion_seguridad (
 );
 INSERT INTO configuracion_seguridad (id, clave_formulas_hash) VALUES (1, NULL);
 
+-- limites_tareo (migracion 040): fila unica con los limites configurables de
+-- horas/minutos por dia para el Tareo Diario (Configuracion -> "Limites de
+-- tareo"), a pedido explicito del usuario. Domingo queda sin limite (se paga
+-- aparte como "domingo trabajado"). Se valida contra la SUMA de todas las
+-- columnas de horas (y, por separado, de minutos) de cada dia - ver
+-- routes/planilla.ts, PUT /:id/tareo-diario/:contratoId.
+CREATE TABLE limites_tareo (
+    id                   SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    horas_max_lun_vie    SMALLINT NOT NULL DEFAULT 8  CHECK (horas_max_lun_vie BETWEEN 0 AND 24),
+    minutos_max_lun_vie  SMALLINT NOT NULL DEFAULT 30 CHECK (minutos_max_lun_vie BETWEEN 0 AND 59),
+    horas_max_sabado     SMALLINT NOT NULL DEFAULT 5  CHECK (horas_max_sabado BETWEEN 0 AND 24),
+    minutos_max_sabado   SMALLINT NOT NULL DEFAULT 30 CHECK (minutos_max_sabado BETWEEN 0 AND 59),
+    actualizado_en       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO limites_tareo (id, horas_max_lun_vie, minutos_max_lun_vie, horas_max_sabado, minutos_max_sabado)
+VALUES (1, 8, 30, 5, 30);
+
 -- -------------------------------------------------------------------------
 -- Planilla Mensual Consolidada (migracion 034, "Ronda E"): junta el Tareo
 -- Diario de todas las quincenas/semanas de un {proyecto, anio, mes} en un

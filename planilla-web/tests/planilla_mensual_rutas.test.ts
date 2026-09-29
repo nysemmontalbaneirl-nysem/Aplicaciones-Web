@@ -72,6 +72,13 @@ beforeAll(async () => {
   );
   const contratoId = c.rows[0].id as number;
 
+  // Migracion 040: los limites configurables de tareo (max 8h/dia lun-vie,
+  // 5h/dia sabado) no son el objeto de esta prueba - se relajan aqui para
+  // no romper este fixture (2026-10-03 es sabado). Se restauran en afterAll.
+  await pool.query(
+    "UPDATE limites_tareo SET horas_max_lun_vie = 24, minutos_max_lun_vie = 59, horas_max_sabado = 24, minutos_max_sabado = 59 WHERE id = 1"
+  );
+
   await request(app)
     .put(`/api/periodos/${periodoId}/tareo-diario/${contratoId}`)
     .set(auth(tokenAdmin))
@@ -82,6 +89,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await pool.query(
+    "UPDATE limites_tareo SET horas_max_lun_vie = 8, minutos_max_lun_vie = 30, horas_max_sabado = 5, minutos_max_sabado = 30 WHERE id = 1"
+  );
   await pool.query(
     "DELETE FROM detalle_planilla_mensual WHERE planilla_mensual_id IN (SELECT id FROM planilla_mensual WHERE proyecto = $1 AND anio = 2026 AND mes = 10)",
     [PROYECTO]

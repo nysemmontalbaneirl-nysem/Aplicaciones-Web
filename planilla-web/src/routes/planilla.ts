@@ -941,6 +941,39 @@ planillaRouter.put(
       }
     }
 
+    // Migracion 040: limites configurables de horas/minutos por dia
+    // (Configuracion -> Limites de tareo), a pedido explicito del usuario -
+    // se valida la SUMA de TODAS las columnas de horas (y, por separado, de
+    // minutos) de cada dia contra el limite del tipo de dia que corresponda.
+    // Domingo queda sin limite (no forma parte de "lunes a viernes"/"sabado"
+    // en el pedido original - ya se paga aparte como "domingo trabajado").
+    const limitesResult = await pool.query("SELECT * FROM limites_tareo WHERE id = 1");
+    const limites = limitesResult.rows[0];
+    for (const d of dias) {
+      const diaSemana = new Date(d.fecha.slice(0, 10) + "T00:00:00Z").getUTCDay(); // 0=domingo .. 6=sabado
+      if (diaSemana === 0) continue;
+      const esSabado = diaSemana === 6;
+      const horasMax = Number(esSabado ? limites.horas_max_sabado : limites.horas_max_lun_vie);
+      const minutosMax = Number(esSabado ? limites.minutos_max_sabado : limites.minutos_max_lun_vie);
+      const sumaHoras = CAMPOS_HORAS.reduce((acc, campo) => acc + Number(d[campo] ?? 0), 0);
+      const sumaMinutos = CAMPOS_MINUTOS.reduce((acc, campo) => acc + Number(d[campo] ?? 0), 0);
+      const etiquetaDia = esSabado ? "sabado" : "dia (lunes a viernes)";
+      if (sumaHoras > horasMax) {
+        return res.status(400).json({
+          error:
+            `El ${etiquetaDia} ${d.fecha.slice(0, 10)} suma ${sumaHoras} horas entre todos los campos de ese dia, ` +
+            `y el limite configurado es ${horasMax} horas (Configuracion -> Limites de tareo).`,
+        });
+      }
+      if (sumaMinutos > minutosMax) {
+        return res.status(400).json({
+          error:
+            `El ${etiquetaDia} ${d.fecha.slice(0, 10)} suma ${sumaMinutos} minutos entre todos los campos de ese dia, ` +
+            `y el limite configurado es ${minutosMax} minutos (Configuracion -> Limites de tareo).`,
+        });
+      }
+    }
+
     // Migracion 038: ANTES de esta migracion, aqui se BLOQUEABA el registro
     // completo si el contrato superaba 20 dias/año de "SUBSIDIO_ENFERMEDAD"
     // marcados (D.S. 009-97-SA) - por un error de diseño de la migracion 030

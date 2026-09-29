@@ -58,10 +58,15 @@ beforeAll(async () => {
   contratoId = c.rows[0].id as number;
   contratosCreados.push(contratoId);
 
-  const dias = Array.from({ length: 15 }, (_, i) => ({
-    fecha: `2026-02-${String(i + 1).padStart(2, "0")}`,
-    horas_normales: 8,
-  }));
+  // Migracion 040: 15 dias LABORABLES (lunes a viernes) elegidos a mano -
+  // un rango calendario naive caeria en sabado, y el limite configurable de
+  // tareo (max 5h/dia sabado) rechazaria un sabado con 8h.
+  const DIAS_HABILES = [
+    "2026-02-02", "2026-02-03", "2026-02-04", "2026-02-05", "2026-02-06",
+    "2026-02-09", "2026-02-10", "2026-02-11", "2026-02-12", "2026-02-13",
+    "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20",
+  ];
+  const dias = DIAS_HABILES.map((fecha) => ({ fecha, horas_normales: 8 }));
   const guardado = await request(app)
     .put(`/api/periodos/${periodoId}/tareo-diario/${contratoId}`)
     .set(auth())

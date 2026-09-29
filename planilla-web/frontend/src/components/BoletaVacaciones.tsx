@@ -1,4 +1,5 @@
 import { BoletaVacacionesRespuesta } from "../types";
+import { estiloTituloSeccionBoleta } from "../estilosCompartidos";
 
 interface Props {
   datos: BoletaVacacionesRespuesta;
@@ -86,7 +87,7 @@ export default function BoletaVacaciones({ datos, onCerrar }: Props) {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
         <div>
-          <h3 style={{ fontSize: "0.95rem", marginBottom: 6 }}>Ingresos</h3>
+          <h3 style={estiloTituloSeccionBoleta}>Ingresos</h3>
           <table>
             <tbody>
               <tr>
@@ -102,7 +103,7 @@ export default function BoletaVacaciones({ datos, onCerrar }: Props) {
         </div>
 
         <div>
-          <h3 style={{ fontSize: "0.95rem", marginBottom: 6 }}>Descuentos</h3>
+          <h3 style={estiloTituloSeccionBoleta}>Descuentos</h3>
           <table>
             <tbody>
               {descuentos.map((l) => (
@@ -120,7 +121,7 @@ export default function BoletaVacaciones({ datos, onCerrar }: Props) {
         </div>
 
         <div>
-          <h3 style={{ fontSize: "0.95rem", marginBottom: 6 }}>Aportes del empleador</h3>
+          <h3 style={estiloTituloSeccionBoleta}>Aportes del empleador</h3>
           <table>
             <tbody>
               {aportesEmpleador.map((l) => (

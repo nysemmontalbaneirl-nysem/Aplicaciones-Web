@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiPost, apiPut } from "../api";
-import { ConceptoPlanilla } from "../types";
+import { ConceptoPlanilla, LimitesTareo } from "../types";
 
 type CampoAfecto = "afecto_essalud" | "afecto_sctr" | "afecto_senati" | "afecto_onp" | "afecto_afp" | "afecto_renta5ta" | "afecto_conafovicer";
 
@@ -25,6 +25,25 @@ export default function Configuracion() {
   const [error, setError] = useState<string | null>(null);
   const [mensaje, setMensaje] = useState<string | null>(null);
 
+  // Limites de tareo (migracion 040): fila unica, se edita completa de una
+  // vez (no celda por celda como los conceptos de arriba).
+  // NOTA (recon 27/46): en produccion esta seccion vive en una pestana
+  // propia dentro de un sub-menu de Configuracion ("Conceptos de ingreso" /
+  // "Aportes y retenciones" / "Plan de cuentas" / "Dias feriados" / "Cuota
+  // sindical" / "Limites de tareo" / "Conceptos con formula propia") que
+  // nunca se reconstruyo en este arbol - las 5 secciones restantes (y sus
+  // rutas backend correspondientes) no existen aqui, asi que se agrega esta
+  // tarjeta como una segunda seccion simple debajo de la tabla de
+  // conceptos, en vez de como una pestana mas de un sub-menu que no existe.
+  const [limitesTareo, setLimitesTareo] = useState<LimitesTareo | null>(null);
+  const [edicionLimites, setEdicionLimites] = useState<Record<keyof LimitesTareo, string>>({
+    horas_max_lun_vie: "",
+    minutos_max_lun_vie: "",
+    horas_max_sabado: "",
+    minutos_max_sabado: "",
+  });
+  const [guardandoLimites, setGuardandoLimites] = useState(false);
+
   useEffect(() => {
     cargar();
   }, []);
@@ -33,9 +52,19 @@ export default function Configuracion() {
     setCargando(true);
     setError(null);
     try {
-      const datos = await apiGet<ConceptoPlanilla[]>("/conceptos");
+      const [datos, datosLimites] = await Promise.all([
+        apiGet<ConceptoPlanilla[]>("/conceptos"),
+        apiGet<LimitesTareo>("/conceptos/limites-tareo"),
+      ]);
       setConceptos(datos);
       setEdiciones({});
+      setLimitesTareo(datosLimites);
+      setEdicionLimites({
+        horas_max_lun_vie: String(datosLimites.horas_max_lun_vie),
+        minutos_max_lun_vie: String(datosLimites.minutos_max_lun_vie),
+        horas_max_sabado: String(datosLimites.horas_max_sabado),
+        minutos_max_sabado: String(datosLimites.minutos_max_sabado),
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al cargar los conceptos");
     } finally {
@@ -155,7 +184,46 @@ export default function Configuracion() {
     return <input type="checkbox" checked={valor} onChange={(e) => editar(c.codigo, "activo", e.target.checked)} />;
   }
 
+  // ------------------------------------------------------------------
+  // Limites de tareo (migracion 040)
+  // ------------------------------------------------------------------
+  function editarLimite(campo: keyof LimitesTareo, valor: string) {
+    setEdicionLimites((prev) => ({ ...prev, [campo]: valor }));
+    setMensaje(null);
+  }
+
+  async function guardarLimitesTareo() {
+    const horasMaxLunVie = Number(edicionLimites.horas_max_lun_vie);
+    const minutosMaxLunVie = Number(edicionLimites.minutos_max_lun_vie);
+    const horasMaxSabado = Number(edicionLimites.horas_max_sabado);
+    const minutosMaxSabado = Number(edicionLimites.minutos_max_sabado);
+    if (
+      [horasMaxLunVie, horasMaxSabado].some((v) => Number.isNaN(v) || v < 0 || v > 24) ||
+      [minutosMaxLunVie, minutosMaxSabado].some((v) => Number.isNaN(v) || v < 0 || v > 59)
+    ) {
+      setError("Revisa los valores: las horas deben estar entre 0 y 24, y los minutos entre 0 y 59.");
+      return;
+    }
+    setGuardandoLimites(true);
+    setError(null);
+    try {
+      const guardado = await apiPut<LimitesTareo>("/conceptos/limites-tareo", {
+        horas_max_lun_vie: horasMaxLunVie,
+        minutos_max_lun_vie: minutosMaxLunVie,
+        horas_max_sabado: horasMaxSabado,
+        minutos_max_sabado: minutosMaxSabado,
+      });
+      setLimitesTareo(guardado);
+      setMensaje("Límites de tareo guardados correctamente.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al guardar los límites de tareo");
+    } finally {
+      setGuardandoLimites(false);
+    }
+  }
+
   return (
+    <>
     <div className="card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
         <div>
@@ -234,5 +302,74 @@ export default function Configuracion() {
         </div>
       )}
     </div>
+
+    {!cargando && limitesTareo && (
+      <div className="card" style={{ marginTop: 18 }}>
+        <h2>Límites de tareo</h2>
+        <p style={{ color: "#5a6172", maxWidth: 800 }}>
+          Límite máximo de horas y minutos que se puede registrar por día en el Tareo Diario, distinto para
+          días de lunes a viernes y para sábados (domingo no tiene límite configurable aquí — se paga aparte
+          como "domingo trabajado"). El límite aplica a la SUMA de todas las columnas de horas de ese día
+          (jornal normal + domingo + feriado + horas extra), y por separado a la suma de todos los minutos. Si
+          se excede, el sistema no deja guardar ese día.
+        </p>
+        <div className="form-grid" style={{ maxWidth: 520 }}>
+          <label>
+            Horas máximas (lunes a viernes)
+            <input
+              type="number"
+              min={0}
+              max={24}
+              step={1}
+              value={edicionLimites.horas_max_lun_vie}
+              onChange={(e) => editarLimite("horas_max_lun_vie", e.target.value)}
+            />
+          </label>
+          <label>
+            Minutos máximos (lunes a viernes)
+            <input
+              type="number"
+              min={0}
+              max={59}
+              step={1}
+              value={edicionLimites.minutos_max_lun_vie}
+              onChange={(e) => editarLimite("minutos_max_lun_vie", e.target.value)}
+            />
+          </label>
+          <label>
+            Horas máximas (sábado)
+            <input
+              type="number"
+              min={0}
+              max={24}
+              step={1}
+              value={edicionLimites.horas_max_sabado}
+              onChange={(e) => editarLimite("horas_max_sabado", e.target.value)}
+            />
+          </label>
+          <label>
+            Minutos máximos (sábado)
+            <input
+              type="number"
+              min={0}
+              max={59}
+              step={1}
+              value={edicionLimites.minutos_max_sabado}
+              onChange={(e) => editarLimite("minutos_max_sabado", e.target.value)}
+            />
+          </label>
+        </div>
+        <button
+          className="primario"
+          type="button"
+          onClick={guardarLimitesTareo}
+          disabled={guardandoLimites}
+          style={{ marginTop: 12 }}
+        >
+          {guardandoLimites ? "Guardando..." : "Guardar límites"}
+        </button>
+      </div>
+    )}
+    </>
   );
 }

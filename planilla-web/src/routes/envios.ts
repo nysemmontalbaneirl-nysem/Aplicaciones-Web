@@ -6,6 +6,7 @@ import { enviarCorreo } from "../correo";
 import { DetalleBoletaPdf, generarPdfBoleta } from "../boletaPdf";
 import { registrarBitacora } from "../bitacora";
 import { obtenerDatosEmpresaBoleta } from "./empresa";
+import { obtenerUrlAcceso } from "../config";
 
 export const enviosRouter = Router();
 
@@ -72,14 +73,21 @@ enviosRouter.post(
         continue;
       }
       try {
-        const pdf = await generarPdfBoleta(fila as DetalleBoletaPdf, periodo, datosEmpresa);
+        const correoTrabajador = fila.correo.trim();
+        // Migracion 040: la constancia de envio/recepcion y el link de acceso
+        // se imprimen tanto en el PDF (pie de pagina, ver boletaPdf.ts) como
+        // en el cuerpo del correo (pedido explicito del usuario: "en ambos
+        // lugares").
+        const pdf = await generarPdfBoleta(fila as DetalleBoletaPdf, periodo, datosEmpresa, correoTrabajador);
         const nombreArchivo = `Boleta_${MESES[periodo.mes - 1]}_${periodo.anio}_${fila.numero_documento}.pdf`;
         await enviarCorreo({
-          para: fila.correo.trim(),
+          para: correoTrabajador,
           asunto: `Boleta de pago - ${MESES[periodo.mes - 1]} ${periodo.anio}`,
           textoPlano:
             `Hola ${fila.apellidos_nombres},\n\n` +
             `Adjunto tu boleta de pago de ${MESES[periodo.mes - 1]} ${periodo.anio}.\n\n` +
+            `Boleta enviada y recepcionada a traves del correo: ${correoTrabajador}\n` +
+            `Accede al sistema en: ${obtenerUrlAcceso()}\n\n` +
             `Este es un correo automatico, no respondas a este mensaje.`,
           adjuntos: [{ nombreArchivo, contenido: pdf }],
         });

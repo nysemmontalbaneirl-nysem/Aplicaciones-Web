@@ -89,10 +89,17 @@ describe("CONAFOVICER excluye los dias de Descanso Medico de su base (migracion 
     contratoSinDescansoId = await crearContratoPeon("77794001", "PRUEBA CONAFOVICER SIN DESCANSO MEDICO");
     contratoConDescansoId = await crearContratoPeon("77794002", "PRUEBA CONAFOVICER CON DESCANSO MEDICO");
 
-    const diasBase = Array.from({ length: 13 }, (_, i) => ({
-      fecha: `2026-02-${String(i + 1).padStart(2, "0")}`,
-      horas_normales: 8,
-    }));
+    // Migracion 040: los limites configurables de tareo (max 8h/dia lun-vie,
+    // 5h/dia sabado) ya no permiten un rango calendario naive que caiga en
+    // sabado con 8h - se usan 15 dias LABORABLES (lunes a viernes) elegidos
+    // a mano dentro de febrero 2026, para no tocar ningun sabado/domingo.
+    const DIAS_HABILES = [
+      "2026-02-02", "2026-02-03", "2026-02-04", "2026-02-05", "2026-02-06",
+      "2026-02-09", "2026-02-10", "2026-02-11", "2026-02-12", "2026-02-13",
+      "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20",
+    ];
+    const diasBase = DIAS_HABILES.slice(0, 13).map((fecha) => ({ fecha, horas_normales: 8 }));
+    const [fechaExtra1, fechaExtra2] = DIAS_HABILES.slice(13);
 
     // Contrato SIN descanso medico: 15 dias, todos trabajados normalmente.
     const guardadoSin = await request(app)
@@ -101,8 +108,8 @@ describe("CONAFOVICER excluye los dias de Descanso Medico de su base (migracion 
       .send({
         dias: [
           ...diasBase,
-          { fecha: "2026-02-14", horas_normales: 8 },
-          { fecha: "2026-02-15", horas_normales: 8 },
+          { fecha: fechaExtra1, horas_normales: 8 },
+          { fecha: fechaExtra2, horas_normales: 8 },
         ],
       });
     expect(guardadoSin.status).toBe(204);
@@ -116,8 +123,8 @@ describe("CONAFOVICER excluye los dias de Descanso Medico de su base (migracion 
       .send({
         dias: [
           ...diasBase,
-          { fecha: "2026-02-14", tipo_dia_especial: "DESCANSO_MEDICO" },
-          { fecha: "2026-02-15", tipo_dia_especial: "DESCANSO_MEDICO" },
+          { fecha: fechaExtra1, tipo_dia_especial: "DESCANSO_MEDICO" },
+          { fecha: fechaExtra2, tipo_dia_especial: "DESCANSO_MEDICO" },
         ],
       });
     expect(guardadoCon.status).toBe(204);

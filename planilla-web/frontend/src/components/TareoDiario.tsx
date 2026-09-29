@@ -54,21 +54,26 @@ function diasDelPeriodo(periodo: PeriodoPlanilla): string[] {
   return fechas;
 }
 
+// Migracion 040: un dia todavia no guardado nace con todos los campos de
+// horas/minutos en null (se muestran vacios en la grilla) en vez de 0 - a
+// pedido explicito del usuario, para poder escribir directo sin borrar un
+// "0" primero. Un dia que YA vino guardado desde el backend siempre trae
+// numeros reales (nunca null), asi que esto solo afecta a dias sin tocar.
 function filaVacia(fecha: string): TareoDiarioFila {
   return {
     fecha,
-    horas_normales: 0,
-    minutos_normales: 0,
-    horas_dominical: 0,
-    minutos_dominical: 0,
-    horas_feriado: 0,
-    minutos_feriado: 0,
-    horas_extra_tramo1: 0,
-    minutos_extra_tramo1: 0,
-    horas_extra_tramo2: 0,
-    minutos_extra_tramo2: 0,
-    horas_extra_tramo3: 0,
-    minutos_extra_tramo3: 0,
+    horas_normales: null,
+    minutos_normales: null,
+    horas_dominical: null,
+    minutos_dominical: null,
+    horas_feriado: null,
+    minutos_feriado: null,
+    horas_extra_tramo1: null,
+    minutos_extra_tramo1: null,
+    horas_extra_tramo2: null,
+    minutos_extra_tramo2: null,
+    horas_extra_tramo3: null,
+    minutos_extra_tramo3: null,
     tipo_dia_especial: null,
   };
 }
@@ -134,7 +139,15 @@ export default function TareoDiario({ periodo }: Props) {
     }
   }
 
-  function actualizarHoras(fecha: string, campo: CampoHoras, valor: number) {
+  // Migracion 040: "valor" llega en null cuando el usuario borro el campo
+  // por completo (input vacio) - se guarda tal cual (queda vacio en
+  // pantalla) en vez de forzarlo a 0, para no pelear con el usuario cada
+  // vez que borra para volver a escribir.
+  function actualizarHoras(fecha: string, campo: CampoHoras, valor: number | null) {
+    if (valor === null) {
+      setDias((prev) => prev.map((f) => (f.fecha === fecha ? { ...f, [campo]: null } : f)));
+      return;
+    }
     // Las horas y minutos se guardan como enteros (columnas INT en la base
     // de datos) - si el usuario escribe un decimal por error (ej. "1.13"
     // pensando en "1 hora 13 minutos"), se redondea aqui mismo en vez de
@@ -267,8 +280,10 @@ export default function TareoDiario({ periodo }: Props) {
                               step={1}
                               disabled={esEspecial}
                               style={{ width: 48 }}
-                              value={fila[campoHoras]}
-                              onChange={(e) => actualizarHoras(fila.fecha, campoHoras, Number(e.target.value))}
+                              value={fila[campoHoras] ?? ""}
+                              onChange={(e) =>
+                                actualizarHoras(fila.fecha, campoHoras, e.target.value === "" ? null : Number(e.target.value))
+                              }
                             />
                             {" h "}
                             <input
@@ -278,8 +293,10 @@ export default function TareoDiario({ periodo }: Props) {
                               step={1}
                               disabled={esEspecial}
                               style={{ width: 48 }}
-                              value={fila[campoMinutos]}
-                              onChange={(e) => actualizarHoras(fila.fecha, campoMinutos, Number(e.target.value))}
+                              value={fila[campoMinutos] ?? ""}
+                              onChange={(e) =>
+                                actualizarHoras(fila.fecha, campoMinutos, e.target.value === "" ? null : Number(e.target.value))
+                              }
                             />
                             {" m"}
                           </td>

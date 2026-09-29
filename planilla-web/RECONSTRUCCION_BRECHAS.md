@@ -341,3 +341,52 @@ desactivar, `activo` no booleano). Se agregó el mismo patrón `try/catch` ya
 usado en el resto de `src/routes/conceptos.ts` — no es una regresión de
 esta reconstrucción: la ruta nunca tuvo ese manejo en ningún punto de los
 46 parches recuperados hasta ahora.
+
+## 12. Migración 040 (parche #27/46) — pestaña de Configuración inexistente, `filaTieneDatos`/modal de Tareo, `.subtabs`
+
+**Descubrimiento nuevo, mayor que lo documentado hasta ahora:** al intentar
+aplicar la sección 1 de esta migración ("Configuracion -> Límites de
+tareo"), se confirmó que `frontend/src/components/Configuracion.tsx` en
+este árbol es una página de una sola tabla ("Conceptos de ingreso"), sin
+NINGUNA de las otras 5 secciones que el parche da por existentes: "Aportes
+y retenciones", "Plan de cuentas", "Días feriados", "Cuota sindical" (el
+backend de cuota sindical sí existe — `GET/PUT /api/conceptos/
+cuota-sindical` — pero se administra desde `Proyectos.tsx`, no desde
+Configuración) y "Conceptos con fórmula propia" (esta última ya apuntada en
+la brecha 3/4.1 de arriba, pero ahora confirmado que ninguna de las otras 4
+tampoco existe, ni sus rutas backend correspondientes — `/conceptos/
+aportes`, `/conceptos/plan-cuentas`, `/conceptos/dias-feriados`,
+`/conceptos/mapeo-contable` no están definidas en `routes/conceptos.ts`).
+Es decir: el "sub-menu de pestañas" completo de Configuración (`type
+Seccion`, `SECCIONES`, la clase CSS `.subtabs`) nunca se reconstruyó — muy
+probablemente forma parte de alguno de los 6 archivos `.patch` nunca
+recuperados (brecha #8).
+
+**Cómo se resolvió para este parche:** en vez de inventar las 5 pestañas
+faltantes solo para alojar la sexta ("Límites de tareo"), se agregó esa
+sección como una segunda tarjeta simple debajo de la tabla de conceptos
+(sin pestañas), consumiendo la ruta backend `GET/PUT /api/conceptos/
+limites-tareo` (esta sí se reconstruyó completa, incluida en
+`src/routes/conceptos.ts`). La regla `.subtabs`/`.subtabs button` de
+`styles.css` (fondo azul unificado) se omitió por completo — no hay ningún
+elemento en el árbol que use esa clase todavía. `.titulo-reporte` (mismo
+parche, para `Reportes.tsx`) sí se aplicó, porque `Reportes.tsx` sí existe
+y ya lo usa.
+
+**Cómo cerrarla en el futuro:** si aparece alguno de los parches faltantes
+que construya el sub-menu de pestañas de Configuración (backend de
+aportes/plan de cuentas/feriados + la UI de pestañas), esta tarjeta de
+"Límites de tareo" debería moverse a su propia pestaña dentro de ese
+sub-menu, siguiendo el mismo patrón que las demás.
+
+**Menor, misma migración:** dos piezas de `TareoDiario.tsx` tampoco se
+pudieron aplicar por depender del "formulario flotante" (brecha #1, ya
+documentada — parches #16/#17/#18 saltados): la función `filaTieneDatos`
+(decide si un día ya tiene datos para no sobreescribirlo al abrir el
+formulario) y los inputs de horas/minutos dentro de `filaModal` (la
+versión del formulario flotante de esos mismos campos) — ninguno de los
+dos existe en este árbol. Sí se aplicó el resto de la migración 040 para
+este archivo: `filaVacia` con los 12 campos en `null` en vez de `0`,
+`actualizarHoras` aceptando `null`, y los inputs de horas/minutos de la
+grilla normal (`fila[campoHoras]`/`fila[campoMinutos]`) mostrando vacío en
+vez de "0".

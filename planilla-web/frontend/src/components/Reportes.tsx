@@ -57,7 +57,7 @@ export default function Reportes() {
   return (
     <div>
       <div className="card">
-        <h2>Reportes</h2>
+        <h2 className="titulo-reporte">Reportes</h2>
         {error && <div className="mensaje-error">{error}</div>}
         <div className="form-grid" style={{ maxWidth: 400 }}>
           <label>
@@ -100,7 +100,7 @@ export default function Reportes() {
 
       {datos && !cargando && (
         <div className="card">
-          <h2>
+          <h2 className="titulo-reporte">
             Vista previa — {MESES[datos.periodo.mes - 1]} {datos.periodo.anio} ({datos.filas.length} trabajadores)
           </h2>
           <div
@@ -122,14 +122,15 @@ export default function Reportes() {
                         top: 0,
                         left: i < COLUMNAS_FIJAS ? IZQUIERDA_FIJA[i] : undefined,
                         zIndex: i < COLUMNAS_FIJAS ? 3 : 2,
-                        background: "#fafbfc",
+                        background: "var(--azul-jhcr)",
+                        color: "#ffffff",
                         whiteSpace: "nowrap",
                         minWidth: i < COLUMNAS_FIJAS ? ANCHOS_FIJOS[i] : 120,
                         borderBottom: "1px solid #e3e5ea",
-                        borderRight: i === COLUMNAS_FIJAS - 1 ? "2px solid #d5d9e0" : undefined,
+                        borderRight: i === COLUMNAS_FIJAS - 1 ? "2px solid #ffffff" : undefined,
                       }}
                     >
-                      {col || <span style={{ color: "#c3c7d1" }}>—</span>}
+                      {col || <span style={{ color: "rgba(255,255,255,0.65)" }}>—</span>}
                     </th>
                   ))}
                 </tr>

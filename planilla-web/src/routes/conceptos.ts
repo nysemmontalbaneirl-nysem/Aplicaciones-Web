@@ -122,6 +122,85 @@ conceptosRouter.get(
 );
 
 // ===========================================================================
+// Limites de horas/minutos del Tareo Diario (limites_tareo, migracion 040):
+// fila unica (id=1), a pedido explicito del usuario. Se validan en
+// routes/planilla.ts (PUT /:id/tareo-diario/:contratoId) contra la SUMA de
+// todas las columnas de horas (y, por separado, de minutos) de cada dia -
+// domingo queda sin limite (no forma parte de lun-vie/sabado).
+// ===========================================================================
+
+interface LimitesTareo {
+  horas_max_lun_vie: number;
+  minutos_max_lun_vie: number;
+  horas_max_sabado: number;
+  minutos_max_sabado: number;
+}
+
+function filaALimitesTareo(fila: Record<string, unknown>): LimitesTareo {
+  return {
+    horas_max_lun_vie: Number(fila.horas_max_lun_vie),
+    minutos_max_lun_vie: Number(fila.minutos_max_lun_vie),
+    horas_max_sabado: Number(fila.horas_max_sabado),
+    minutos_max_sabado: Number(fila.minutos_max_sabado),
+  };
+}
+
+// GET /api/conceptos/limites-tareo -> valores actuales (siempre existe la
+// fila id=1, sembrada por la migracion). Requiere solo estar autenticado
+// (no "conceptos.editar") porque routes/planilla.ts necesita poder leerla
+// implicitamente al guardar tareo, y el propio formulario de Configuracion
+// necesita mostrarla a cualquiera que pueda ENTRAR a esa pantalla; la
+// escritura si queda restringida (ver PUT abajo).
+conceptosRouter.get(
+  "/limites-tareo",
+  asyncHandler(async (_req: Request, res: Response) => {
+    const r = await pool.query("SELECT * FROM limites_tareo WHERE id = 1");
+    res.json(filaALimitesTareo(r.rows[0]));
+  })
+);
+
+// PUT /api/conceptos/limites-tareo -> actualiza los 4 valores de una vez.
+conceptosRouter.put(
+  "/limites-tareo",
+  requierePermiso("conceptos.editar"),
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const b = req.body ?? {};
+      const CAMPOS_HORAS_LIMITE = ["horas_max_lun_vie", "horas_max_sabado"] as const;
+      const CAMPOS_MINUTOS_LIMITE = ["minutos_max_lun_vie", "minutos_max_sabado"] as const;
+      for (const campo of CAMPOS_HORAS_LIMITE) {
+        if (typeof b[campo] !== "number" || !Number.isFinite(b[campo]) || b[campo] < 0 || b[campo] > 24) {
+          throw new ErrorValidacion(`${campo} debe ser un numero entre 0 y 24`);
+        }
+      }
+      for (const campo of CAMPOS_MINUTOS_LIMITE) {
+        if (typeof b[campo] !== "number" || !Number.isFinite(b[campo]) || b[campo] < 0 || b[campo] > 59) {
+          throw new ErrorValidacion(`${campo} debe ser un numero entre 0 y 59`);
+        }
+      }
+      const r = await pool.query(
+        `UPDATE limites_tareo SET
+           horas_max_lun_vie = $1, minutos_max_lun_vie = $2,
+           horas_max_sabado = $3, minutos_max_sabado = $4,
+           actualizado_en = now()
+         WHERE id = 1
+         RETURNING *`,
+        [b.horas_max_lun_vie, b.minutos_max_lun_vie, b.horas_max_sabado, b.minutos_max_sabado]
+      );
+      await registrarBitacora(req.usuario!.id, "EDICION_LIMITES_TAREO", "limites_tareo", 1, {
+        despues: filaALimitesTareo(r.rows[0]),
+      });
+      res.json(filaALimitesTareo(r.rows[0]));
+    } catch (err) {
+      if (err instanceof ErrorValidacion) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
+    }
+  })
+);
+
+// ===========================================================================
 // Cuota sindical por proyecto y categoria (cuota_sindical_categoria,
 // migracion_029): el monto SEMANAL que acuerda el sindicato varia por
 // categoria del trabajador (peon/oficial/operario), no solo por proyecto -

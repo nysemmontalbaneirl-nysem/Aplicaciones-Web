@@ -2,6 +2,15 @@
   box-sizing: border-box;
 }
 
+/* Migracion 040: token de color unico para el azul de marca (antes repetido
+   como literal #2f6fed en varios archivos, sin una fuente unica de verdad).
+   Se usa para uniformizar "fondo azul, letra blanca" en pestañas, titulos
+   de reportes y encabezados de boleta, a pedido explicito del usuario. */
+:root {
+  --azul-jhcr: #2f6fed;
+  --azul-jhcr-oscuro: #1d4fbf;
+}
+
 body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -260,6 +269,20 @@ body {
   margin-top: 0;
   margin-bottom: 18px;
   font-size: 1.3rem;
+}
+
+/* Migracion 040: rotulo de titulo de reporte - fondo azul, letra blanca,
+   a pedido explicito del usuario ("uniformizar la presentacion visual de
+   todos los rotulos correspondientes a reportes y pestañas"). Usado en
+   Reportes.tsx; disponible para cualquier otro titulo de reporte futuro. */
+.titulo-reporte {
+  display: inline-block;
+  background: var(--azul-jhcr);
+  color: #ffffff;
+  padding: 7px 14px;
+  border-radius: 5px;
+  font-size: 1.1rem;
+  margin: 0 0 18px;
 }
 
 .seccion-titulo {

@@ -33,9 +33,20 @@ beforeAll(async () => {
      VALUES (2026, 2, 'MENSUAL', '2026-02-01', '2026-02-28', 28) RETURNING id`
   );
   periodoId = p.rows[0].id;
+
+  // Migracion 040: los limites configurables de tareo (max 8h/dia lun-vie,
+  // 5h/dia sabado) no son el objeto de esta prueba - se relajan aqui para
+  // no romper fixtures existentes con fechas/horas anteriores a esta
+  // migracion. Se restauran en afterAll.
+  await pool.query(
+    "UPDATE limites_tareo SET horas_max_lun_vie = 24, minutos_max_lun_vie = 59, horas_max_sabado = 24, minutos_max_sabado = 59 WHERE id = 1"
+  );
 });
 
 afterAll(async () => {
+  await pool.query(
+    "UPDATE limites_tareo SET horas_max_lun_vie = 8, minutos_max_lun_vie = 30, horas_max_sabado = 5, minutos_max_sabado = 30 WHERE id = 1"
+  );
   await pool.query("DELETE FROM detalle_planilla WHERE periodo_id = $1", [periodoId]);
   await pool.query("DELETE FROM tareo_diario WHERE periodo_id = $1", [periodoId]);
   await pool.query("DELETE FROM asistencia_periodo WHERE periodo_id = $1", [periodoId]);

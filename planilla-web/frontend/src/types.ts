@@ -313,18 +313,23 @@ export type TipoDiaEspecial =
 
 export interface TareoDiarioFila {
   fecha: string; // YYYY-MM-DD
-  horas_normales: number;
-  minutos_normales: number;
-  horas_dominical: number;
-  minutos_dominical: number;
-  horas_feriado: number;
-  minutos_feriado: number;
-  horas_extra_tramo1: number;
-  minutos_extra_tramo1: number;
-  horas_extra_tramo2: number;
-  minutos_extra_tramo2: number;
-  horas_extra_tramo3: number;
-  minutos_extra_tramo3: number;
+  // Migracion 040: null representa un campo TODAVIA NO digitado por el
+  // usuario (se muestra vacio en la grilla, a pedido explicito del usuario -
+  // antes se mostraba "0" y habia que borrarlo a mano antes de escribir). Se
+  // envia tal cual al guardar - el backend ya trata null igual que 0
+  // (routes/planilla.ts, ver validacion de CAMPOS_HORAS/CAMPOS_MINUTOS).
+  horas_normales: number | null;
+  minutos_normales: number | null;
+  horas_dominical: number | null;
+  minutos_dominical: number | null;
+  horas_feriado: number | null;
+  minutos_feriado: number | null;
+  horas_extra_tramo1: number | null;
+  minutos_extra_tramo1: number | null;
+  horas_extra_tramo2: number | null;
+  minutos_extra_tramo2: number | null;
+  horas_extra_tramo3: number | null;
+  minutos_extra_tramo3: number | null;
   tipo_dia_especial: TipoDiaEspecial | null;
 }
 
@@ -683,4 +688,14 @@ export interface RecordVacacional {
   total_gozado: number;
   saldo_pendiente: number;
   goces: GoceVacaciones[];
+}
+
+// limites_tareo (migracion 040): fila unica, editable desde Configuracion ->
+// "Limites de tareo". Domingo queda sin limite - ver el comentario completo
+// en la migracion SQL y en routes/planilla.ts.
+export interface LimitesTareo {
+  horas_max_lun_vie: number;
+  minutos_max_lun_vie: number;
+  horas_max_sabado: number;
+  minutos_max_sabado: number;
 }
