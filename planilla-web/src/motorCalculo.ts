@@ -335,7 +335,7 @@ function redondear(valor: number): number {
  * como string por el driver "pg" (mismo patron de bug ya corregido antes
  * en asignacion_familiar/seguro_vida_ley).
  */
-function obtenerFactor(
+export function obtenerFactor(
   conceptos: ConceptosPlanilla,
   codigo: string,
   campo: "factor1" | "factor2" | "factor3"

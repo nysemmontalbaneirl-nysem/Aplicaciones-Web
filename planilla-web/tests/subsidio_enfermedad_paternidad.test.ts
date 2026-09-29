@@ -14,12 +14,14 @@
 // 4) Valorizacion: el mismo jornal diario de un dia normal trabajado.
 // 5) Tratamiento tributario del descanso medico por enfermedad: NO afecto a
 //    EsSalud/SENATI/ONP, SI afecto a SCTR y AFP - segun el codigo oficial
-//    PLAME 916 "SUBSIDIOS DE INCAPACIDAD POR ENFERMEDAD" (Anexo 22 SUNAT,
+//    PLAME 0916 "SUBSIDIOS DE INCAPACIDAD POR ENFERMEDAD" (Anexo 22 SUNAT,
 //    docs/tabla22_plame.json), que el usuario confirmo seguir tal cual
 //    (respetar el Anexo 22), incluso sobre su primera respuesta ("afecto a
-//    todo"). La licencia por paternidad usa el codigo 907 "LICENCIA CON
+//    todo"). La licencia por paternidad usa el codigo 0907 "LICENCIA CON
 //    GOCE DE HABER" (no existe un codigo especifico de "paternidad" en el
 //    catalogo), afecto a todo segun ese mismo Anexo 22.
+//    (migracion 035, 17/09/2026: los codigos se corrigieron de "916"/"907"
+//    a "0916"/"0907" - les faltaba el 0 inicial en conceptos_planilla.)
 import request from "supertest";
 import { app } from "../src/app";
 import { pool } from "../src/db";
@@ -199,14 +201,14 @@ describe("SUBSIDIO_ENFERMEDAD: se paga igual que un dia trabajado, afecto solo a
     expect(Number(con.sctr)).toBeCloseTo(Number(sin.sctr), 2);
   });
 
-  it("aparece en el PLAME/REM bajo el codigo oficial 916 (Anexo 22 SUNAT)", async () => {
+  it("aparece en el PLAME/REM bajo el codigo oficial 0916 (Anexo 22 SUNAT)", async () => {
     const lineas = await generarLineasREM(periodoId);
-    const lineaDelContrato = lineas.find((l) => l.includes("|77791001|916|"));
+    const lineaDelContrato = lineas.find((l) => l.includes("|77791001|0916|"));
     expect(lineaDelContrato).toBeDefined();
   });
 });
 
-describe("LICENCIA_PATERNIDAD: se paga igual que un dia trabajado, sin tope, afecto a todo (codigo PLAME 907)", () => {
+describe("LICENCIA_PATERNIDAD: se paga igual que un dia trabajado, sin tope, afecto a todo (codigo PLAME 0907)", () => {
   let contratoConId: number;
   let contratoSinId: number;
 
@@ -243,9 +245,9 @@ describe("LICENCIA_PATERNIDAD: se paga igual que un dia trabajado, sin tope, afe
     expect(Number(con.aporte_pension)).toBeCloseTo(Number(sin.aporte_pension), 2);
   });
 
-  it("aparece en el PLAME/REM bajo el codigo oficial 907 (Anexo 22 SUNAT)", async () => {
+  it("aparece en el PLAME/REM bajo el codigo oficial 0907 (Anexo 22 SUNAT)", async () => {
     const lineas = await generarLineasREM(periodoId);
-    const lineaDelContrato = lineas.find((l) => l.includes("|77791003|907|"));
+    const lineaDelContrato = lineas.find((l) => l.includes("|77791003|0907|"));
     expect(lineaDelContrato).toBeDefined();
   });
 });

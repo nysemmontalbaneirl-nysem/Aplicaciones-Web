@@ -14,6 +14,33 @@
 //   0601 SPP comision | 0606 SPP prima de seguro | 0602 CONAFOVICER |
 //   0605 renta 5ta.
 //
+// CORRECCIONES DE LA MIGRACION 035 (17/09/2026): al comparar este generador
+// contra el catalogo oficial Tabla 22 y contra el sistema Excel/VBA legado
+// de la empresa (ver docs/referencia-excel-legado/hallazgos-analisis-legado.md)
+// se confirmo que varios conceptos SI se calculan y SI se pagan (entran a
+// total_ingresos/neto_pagar) pero nunca se declaraban aqui:
+//   - BUC: el codigo "0314" que se usaba SI es un codigo real del catalogo,
+//     pero corresponde a "Bonificacion especial por trabajo agrario - Ley
+//     31110 (BETA)", sin relacion con construccion civil. Corregido a
+//     "0311" ("Bonificacion Unificada de Construccion").
+//   - Asignacion por escolaridad (0211), Movilidad (0909), Vacaciones
+//     (0117, "compensacion vacacional") y Bonificacion Extraordinaria Ley
+//     29351/30334 (0313, "proporcional"): no tenian codigo_plame ni estaban
+//     conectados aqui - ahora si se declaran.
+//   - Horas extra: el monto ya se calculaba (importe_horas_extra) pero
+//     nunca se emitia. Confirmado con el usuario: solo existen codigos
+//     SUNAT para 25% (0105) y 35% (0106) - el convenio de construccion
+//     civil paga 60%/100%, y el tramo de 100% de regimen general tampoco
+//     tiene codigo propio, asi que todo lo que no sea el tramo1 de regimen
+//     general (25% real) se declara bajo 0106. Ver calcularLineasHorasExtra.
+//   - Subsidio por enfermedad (916->0916) y licencia por paternidad
+//     (907->0907): les faltaba el 0 inicial (formato de 3 digitos en vez de
+//     4), lo que generaba una linea mal formada.
+// BAE (Bonificacion por Alta Especializacion) queda pendiente: no se
+// encontro en el catalogo ninguna descripcion que coincida con este
+// concepto especifico de JHCR - no se declara hasta que el usuario
+// confirme el codigo.
+//
 // PENDIENTE DE VALIDAR (no aparecen en los archivos reales de esta empresa,
 // pero SI son codigos oficiales del catalogo SUNAT - se omiten aqui hasta
 // que el usuario confirme si deben declararse):
@@ -23,13 +50,6 @@
 //     SENATI (0807): ausentes en ambos archivos reales revisados. Puede
 //     ser que se declaren en otro sitio o que sea un vacio de la plantilla
 //     original - por eso este generador tampoco los emite por ahora.
-//   - "0314" (usado por la empresa real para lo que aqui es BUC/bonificacion
-//     unificada de construccion): este codigo NO aparece en el catalogo
-//     oficial de la Tabla 22 que se encontro en el Excel (que solo llega
-//     hasta 0313 antes de saltar a la serie 0400) - aun asi, como aparece
-//     en 2 archivos reales aceptados por SUNAT con montos consistentes con
-//     el BUC (32%/30% del jornal), se usa aqui con alta confianza pero
-//     sigue sin poder confirmarse contra el catalogo oficial.
 //
 // IMPORTANTE: valida cada archivo nuevo contra el detalle de una planilla
 // real ya declarada antes de confiar en el, sobre todo si cambian las
@@ -39,6 +59,8 @@
 
 import { pool } from "./db";
 import { obtenerConceptos } from "./routes/conceptos";
+import { esConstruccionCivil, obtenerFactor } from "./motorCalculo";
+import { CategoriaOcupacional } from "./tipos";
 
 export const CONCEPTO = {
   REMUNERACION_BASICA: "0121",
@@ -46,7 +68,11 @@ export const CONCEPTO = {
   HORAS_EXTRA_25: "0105",
   HORAS_EXTRA_35: "0106",
   ASIGNACION_FAMILIAR: "0201",
-  BUC_CONSTRUCCION: "0314", // ver nota arriba: no esta en el catalogo oficial, pero confirmado en archivos reales
+  ASIGNACION_ESCOLARIDAD: "0211", // migracion 035
+  BUC_CONSTRUCCION: "0311", // migracion 035: corregido de "0314" (bonificacion agraria, otro concepto)
+  MOVILIDAD: "0909", // migracion 035
+  VACACIONES: "0117", // migracion 035: "compensacion vacacional"
+  BONIFICACION_EXTRAORDINARIA: "0313", // migracion 035: "proporcional" (Ley 29351/30334)
   GRATIFICACION: "0406", // Ley 29351 - confirmado real, reemplaza el generico 0401
   CTS: "0904",
 
@@ -63,8 +89,8 @@ export const CONCEPTO = {
   // (catalogo oficial SUNAT, TABLA22.xls) - no hay un codigo especifico de
   // "paternidad" en el catalogo, se usa 0907 "LICENCIA CON GOCE DE HABER"
   // (el que mas se ajusta, confirmado con el usuario).
-  SUBSIDIO_INCAPACIDAD_ENFERMEDAD: "916",
-  LICENCIA_CON_GOCE_DE_HABER: "907",
+  SUBSIDIO_INCAPACIDAD_ENFERMEDAD: "0916", // migracion 035: corregido de "916" (le faltaba el 0 inicial)
+  LICENCIA_CON_GOCE_DE_HABER: "0907", // migracion 035: corregido de "907"
 
   // Codigos oficiales del catalogo, pendientes de confirmar en la practica (ver nota arriba)
   ONP: "0607",
@@ -76,6 +102,7 @@ export const CONCEPTO = {
 
 interface FilaExportacion {
   numero_documento: string;
+  categoria_ocupacional: CategoriaOcupacional;
   sueldo_basico: string;
   remuneracion_dominical: string;
   // NOTA (recon 19/46): igual criterio que en afpnet.ts - estos 3 campos son
@@ -89,9 +116,16 @@ interface FilaExportacion {
   sobretasa_dominical?: string;
   sobretasa_feriado?: string;
   remuneracion_feriado: string;
-  importe_horas_extra: string;
+  horas_extra_25: string;
+  horas_extra_35: string;
+  horas_extra_100: string;
+  jornal_diario: string;
   asignacion_familiar: string;
+  asignacion_escolaridad: string;
   bonificacion_buc: string;
+  bonificacion_movilidad: string;
+  vacaciones: string;
+  bonificacion_extraordinaria: string;
   subsidio_enfermedad: string;
   licencia_paternidad: string;
   gratificacion: string;
@@ -133,11 +167,21 @@ interface CodigosPlame {
   CODIGO_DESCANSO_FERIADO: string;
   CODIGO_SOBRETASA_FERIADO_DESCANSO: string;
   CODIGO_ASIGNACION_FAMILIAR: string;
+  CODIGO_ASIGNACION_ESCOLARIDAD: string;
   CODIGO_BUC: string;
+  CODIGO_MOVILIDAD: string;
+  CODIGO_VACACIONES: string;
+  CODIGO_BONIFICACION_EXTRAORDINARIA: string;
   CODIGO_GRATIFICACION: string;
   CODIGO_CTS: string;
   CODIGO_SUBSIDIO_ENFERMEDAD: string;
   CODIGO_LICENCIA_PATERNIDAD: string;
+  // Horas extra: 2 codigos fijos (0105/0106), no editables desde
+  // Configuracion como los demas - ver calcularLineasHorasExtra. Los
+  // factores SI son editables (HORAS_EXTRA_CONSTRUCCION/GENERAL), por eso
+  // se resuelven aqui junto con los codigos.
+  FACTORES_HORAS_EXTRA_CONSTRUCCION: [number, number, number];
+  FACTORES_HORAS_EXTRA_GENERAL: [number, number, number];
 }
 
 /**
@@ -173,12 +217,54 @@ async function resolverCodigosPlame(): Promise<CodigosPlame> {
     // reconstruya esa brecha.
     CODIGO_SOBRETASA_FERIADO_DESCANSO: codigoConcepto("SOBRETASA_FERIADO", CONCEPTO.DESCANSO_FERIADO),
     CODIGO_ASIGNACION_FAMILIAR: codigoConcepto("ASIGNACION_FAMILIAR", CONCEPTO.ASIGNACION_FAMILIAR),
+    CODIGO_ASIGNACION_ESCOLARIDAD: codigoConcepto("ASIGNACION_ESCOLARIDAD", CONCEPTO.ASIGNACION_ESCOLARIDAD),
     CODIGO_BUC: codigoConcepto("BUC", CONCEPTO.BUC_CONSTRUCCION),
+    CODIGO_MOVILIDAD: codigoConcepto("MOVILIDAD", CONCEPTO.MOVILIDAD),
+    CODIGO_VACACIONES: codigoConcepto("VACACIONES", CONCEPTO.VACACIONES),
+    CODIGO_BONIFICACION_EXTRAORDINARIA: codigoConcepto("BONIFICACION_EXTRAORDINARIA", CONCEPTO.BONIFICACION_EXTRAORDINARIA),
     CODIGO_GRATIFICACION: codigoConcepto("GRATIFICACION", CONCEPTO.GRATIFICACION),
     CODIGO_CTS: codigoConcepto("CTS", CONCEPTO.CTS),
     CODIGO_SUBSIDIO_ENFERMEDAD: codigoConcepto("SUBSIDIO_ENFERMEDAD", CONCEPTO.SUBSIDIO_INCAPACIDAD_ENFERMEDAD),
     CODIGO_LICENCIA_PATERNIDAD: codigoConcepto("LICENCIA_PATERNIDAD", CONCEPTO.LICENCIA_CON_GOCE_DE_HABER),
+    FACTORES_HORAS_EXTRA_CONSTRUCCION: [
+      obtenerFactor(conceptos, "HORAS_EXTRA_CONSTRUCCION", "factor1"),
+      obtenerFactor(conceptos, "HORAS_EXTRA_CONSTRUCCION", "factor2"),
+      obtenerFactor(conceptos, "HORAS_EXTRA_CONSTRUCCION", "factor3"),
+    ],
+    FACTORES_HORAS_EXTRA_GENERAL: [
+      obtenerFactor(conceptos, "HORAS_EXTRA_GENERAL", "factor1"),
+      obtenerFactor(conceptos, "HORAS_EXTRA_GENERAL", "factor2"),
+      obtenerFactor(conceptos, "HORAS_EXTRA_GENERAL", "factor3"),
+    ],
   };
+}
+
+/**
+ * Lineas PLAME de horas extra a partir de las horas ya acumuladas por tramo
+ * (horas_extra_25/35/100, mismos "tramos" que motorCalculo.ts usa para
+ * calcular el importe combinado - ver calcularHorasExtra) y del jornal
+ * diario ya guardado en el detalle. Confirmado con el usuario (17/09/2026):
+ * el catalogo SUNAT solo tiene codigo para el recargo de 25% (0105) y de
+ * 35% (0106) - construccion civil paga 60%/100% (sin codigo propio) y el
+ * tramo de 100% de regimen general tampoco lo tiene, asi que TODO lo que no
+ * sea el tramo1 de regimen general (que si es 25% real) se declara bajo
+ * 0106, igual criterio que el usuario ya aplica a mano en su declaracion.
+ */
+function calcularLineasHorasExtra(fila: FilaExportacion, codigos: CodigosPlame): Array<[string, number]> {
+  const jornalHora = num(fila.jornal_diario) / 8;
+  const esConstruccion = esConstruccionCivil(fila.categoria_ocupacional);
+  const [r1, r2, r3] = esConstruccion ? codigos.FACTORES_HORAS_EXTRA_CONSTRUCCION : codigos.FACTORES_HORAS_EXTRA_GENERAL;
+  const importeTramo1 = redondear(jornalHora * r1 * num(fila.horas_extra_25));
+  const importeTramo2 = redondear(jornalHora * r2 * num(fila.horas_extra_35));
+  const importeTramo3 = redondear(jornalHora * r3 * num(fila.horas_extra_100));
+
+  if (esConstruccion) {
+    return [[CONCEPTO.HORAS_EXTRA_35, redondear(importeTramo1 + importeTramo2 + importeTramo3)]];
+  }
+  return [
+    [CONCEPTO.HORAS_EXTRA_25, importeTramo1],
+    [CONCEPTO.HORAS_EXTRA_35, redondear(importeTramo2 + importeTramo3)],
+  ];
 }
 
 /**
@@ -199,7 +285,11 @@ function construirLineasREM(
     CODIGO_DESCANSO_FERIADO,
     CODIGO_SOBRETASA_FERIADO_DESCANSO,
     CODIGO_ASIGNACION_FAMILIAR,
+    CODIGO_ASIGNACION_ESCOLARIDAD,
     CODIGO_BUC,
+    CODIGO_MOVILIDAD,
+    CODIGO_VACACIONES,
+    CODIGO_BONIFICACION_EXTRAORDINARIA,
     CODIGO_GRATIFICACION,
     CODIGO_CTS,
     CODIGO_SUBSIDIO_ENFERMEDAD,
@@ -235,7 +325,11 @@ function construirLineasREM(
       ],
       [CODIGO_SOBRETASA_FERIADO_DESCANSO, sobretasa],
       [CODIGO_ASIGNACION_FAMILIAR, num(fila.asignacion_familiar)],
+      [CODIGO_ASIGNACION_ESCOLARIDAD, num(fila.asignacion_escolaridad)],
       [CODIGO_BUC, num(fila.bonificacion_buc)],
+      [CODIGO_MOVILIDAD, num(fila.bonificacion_movilidad)],
+      [CODIGO_VACACIONES, num(fila.vacaciones)],
+      [CODIGO_BONIFICACION_EXTRAORDINARIA, num(fila.bonificacion_extraordinaria)],
       [CODIGO_SUBSIDIO_ENFERMEDAD, num(fila.subsidio_enfermedad)],
       [CODIGO_LICENCIA_PATERNIDAD, num(fila.licencia_paternidad)],
       [CODIGO_GRATIFICACION, num(fila.gratificacion)],
@@ -244,7 +338,12 @@ function construirLineasREM(
       [CONCEPTO.CUOTA_SINDICAL, num(fila.descuento_sindicato)],
       [CONCEPTO.CONAFOVICER, num(fila.conafovicer)],
       [CONCEPTO.RENTA_5TA, num(fila.renta_5ta)],
+      ...calcularLineasHorasExtra(fila, codigos),
     ];
+
+    // BAE (bonificacion_bae) NO se incluye: pendiente de que el usuario
+    // confirme bajo que codigo PLAME declararlo (ver nota en CONCEPTO /
+    // migracion 035) - no hay un candidato claro en el catalogo Tabla 22.
 
     // AFP: confirmado en archivos reales. ONP: sin confirmar (ver cabecera del archivo) -
     // se emite igual porque omitirlo dejaria a los trabajadores por ONP sin ningun
@@ -283,7 +382,9 @@ function construirLineasREM(
 
 // Columnas comunes a ambas variantes (periodo de pago y mensual consolidada).
 const COLUMNAS_FILA_EXPORTACION = `sueldo_basico, remuneracion_dominical, remuneracion_feriado,
-            importe_horas_extra, asignacion_familiar, bonificacion_buc,
+            horas_extra_25, horas_extra_35, horas_extra_100, jornal_diario,
+            asignacion_familiar, asignacion_escolaridad, bonificacion_buc,
+            bonificacion_movilidad, vacaciones, bonificacion_extraordinaria,
             subsidio_enfermedad, licencia_paternidad,
             gratificacion, cts, aporte_pension, descuento_sindicato,
             conafovicer, renta_5ta, seguro_vida, essalud, sctr, senati,
@@ -304,7 +405,7 @@ export async function generarLineasREM(periodoId: number): Promise<string[]> {
   const codigos = await resolverCodigosPlame();
 
   const resultado = await pool.query<FilaExportacion>(
-    `SELECT e.numero_documento, c.sistema_pension, d.${COLUMNAS_FILA_EXPORTACION}
+    `SELECT e.numero_documento, c.sistema_pension, c.categoria_ocupacional, d.${COLUMNAS_FILA_EXPORTACION}
      FROM detalle_planilla d
      JOIN contratos c ON c.id = d.contrato_id
      JOIN empleados e ON e.id = c.empleado_id
@@ -347,7 +448,7 @@ export async function generarLineasREMMensual(planillaMensualId: number): Promis
   const codigos = await resolverCodigosPlame();
 
   const resultado = await pool.query<FilaExportacion>(
-    `SELECT e.numero_documento, c.sistema_pension, d.${COLUMNAS_FILA_EXPORTACION_MENSUAL}
+    `SELECT e.numero_documento, c.sistema_pension, c.categoria_ocupacional, d.${COLUMNAS_FILA_EXPORTACION_MENSUAL}
      FROM detalle_planilla_mensual d
      JOIN contratos c ON c.id = d.contrato_id
      JOIN empleados e ON e.id = c.empleado_id

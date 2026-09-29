@@ -739,84 +739,116 @@ CREATE TABLE detalle_planilla_conceptos_mensual (
 CREATE INDEX idx_detalle_planilla_conceptos_mensual_detalle ON detalle_planilla_conceptos_mensual(detalle_id);
 
 INSERT INTO conceptos_planilla
-    (codigo, nombre, descripcion, orden,
+    (codigo, nombre, descripcion, orden, codigo_plame,
      factor1, factor1_etiqueta, factor2, factor2_etiqueta, factor3, factor3_etiqueta,
      afecto_essalud, afecto_sctr, afecto_senati, afecto_onp, afecto_afp, afecto_renta5ta, afecto_conafovicer)
 VALUES
-    ('SUELDO_BASICO', 'Sueldo / Jornal básico', 'Remuneración base del período: jornal diario x días trabajados, o sueldo mensual prorrateado para Empleados.', 10,
+    ('SUELDO_BASICO', 'Sueldo / Jornal básico', 'Remuneración base del período: jornal diario x días trabajados, o sueldo mensual prorrateado para Empleados.', 10, NULL,
      NULL, NULL, NULL, NULL, NULL, NULL,
      true, true, true, true, true, true, true),
 
-    ('REM_DOMINICAL', 'Remuneración dominical', 'Pago por días de descanso dominical trabajados.', 20,
+    ('REM_DOMINICAL', 'Remuneración dominical', 'Pago por días de descanso dominical trabajados.', 20, NULL,
      NULL, NULL, NULL, NULL, NULL, NULL,
      true, true, true, true, true, true, true),
 
-    ('REM_FERIADO', 'Remuneración feriado', 'Pago por feriados no laborados.', 30,
+    ('REM_FERIADO', 'Remuneración feriado', 'Pago por feriados no laborados.', 30, NULL,
      NULL, NULL, NULL, NULL, NULL, NULL,
      true, true, true, true, true, true, false),
 
-    ('HORAS_EXTRA_CONSTRUCCION', 'Horas extra (construcción civil)', 'Recargo sobre el valor hora del jornal, según convenio colectivo de construcción civil.', 40,
+    -- migracion 035: las horas extra NO usan codigo_plame (no son editables
+    -- desde Configuracion como los demas conceptos) - sus codigos SUNAT
+    -- (0105/0106) estan fijos en plame.ts (CONCEPTO.HORAS_EXTRA_25/35), ver
+    -- calcularLineasHorasExtra.
+    ('HORAS_EXTRA_CONSTRUCCION', 'Horas extra (construcción civil)', 'Recargo sobre el valor hora del jornal, según convenio colectivo de construcción civil.', 40, NULL,
      1.60, 'Recargo primeras 2 horas (multiplicador del valor hora)', 2.00, 'Recargo horas adicionales (multiplicador)', 2.00, 'Recargo tramo 100% (multiplicador)',
      true, true, false, true, true, true, false),
 
-    ('HORAS_EXTRA_GENERAL', 'Horas extra (régimen general / Empleado)', 'Recargo legal estándar (D.S. 007-2002-TR).', 50,
+    ('HORAS_EXTRA_GENERAL', 'Horas extra (régimen general / Empleado)', 'Recargo legal estándar (D.S. 007-2002-TR).', 50, NULL,
      1.25, 'Recargo primeras 2 horas (multiplicador del valor hora)', 1.35, 'Recargo horas adicionales (multiplicador)', 2.00, 'Recargo tramo 100% (multiplicador)',
      true, true, false, true, true, true, false),
 
-    ('ASIGNACION_FAMILIAR', 'Asignación familiar', 'Solo Empleados con hijos: porcentaje de la Remuneración Mínima Vital (RMV).', 60,
+    ('ASIGNACION_FAMILIAR', 'Asignación familiar', 'Solo Empleados con hijos: porcentaje de la Remuneración Mínima Vital (RMV).', 60, NULL,
      0.10, 'Porcentaje de la RMV', NULL, NULL, NULL, NULL,
      true, true, true, true, true, true, false),
 
-    ('ASIGNACION_ESCOLARIDAD', 'Asignación por escolaridad', 'Solo construcción civil con hijos: 30 jornales básicos al año por hijo (RD N°100-72-DPRTESS).', 70,
+    -- migracion 035: '0211' confirmado con el usuario (Asignacion por
+    -- escolaridad 30 jornales basicos/año, Tabla 22 SUNAT).
+    ('ASIGNACION_ESCOLARIDAD', 'Asignación por escolaridad', 'Solo construcción civil con hijos: 30 jornales básicos al año por hijo (RD N°100-72-DPRTESS).', 70, '0211',
      12, 'Divisor (jornal ÷ este número = monto diario por hijo)', NULL, NULL, NULL, NULL,
      false, false, false, false, false, true, false),
 
     -- afecto_senati = false (migracion_029): el BUC no debe formar parte de
     -- la base del Fondo de Capacitacion (0.45%), correccion confirmada por
     -- el usuario tras detectar el error en produccion.
-    ('BUC', 'Bonificación Unificada de Construcción (BUC)', 'Solo construcción civil. La tasa se configura en Parámetros → Tabla salarial mensual, por categoría.', 80,
+    --
+    -- migracion 035: codigo_plame '0311' ("Bonificacion Unificada de
+    -- Construccion"). Un intento anterior de esta migracion (ver .rej/patch
+    -- original) uso "0314", que SI es un codigo real del catalogo Tabla 22,
+    -- pero corresponde a "Bonificacion especial por trabajo agrario - Ley
+    -- 31110 (BETA)", un concepto agricola sin ninguna relacion con
+    -- construccion civil - se siembra directamente con el codigo correcto.
+    ('BUC', 'Bonificación Unificada de Construcción (BUC)', 'Solo construcción civil. La tasa se configura en Parámetros → Tabla salarial mensual, por categoría.', 80, '0311',
      NULL, NULL, NULL, NULL, NULL, NULL,
      true, true, false, true, true, true, false),
 
-    ('BAE', 'Bonificación por Alta Especialización (BAE)', 'Solo operarios especializados (EP/EM/TP). La tasa se configura en Parámetros → Tabla salarial mensual.', 90,
+    -- BAE (Bonificacion por Alta Especializacion, propia de JHCR para
+    -- EP/EM/TP) sigue sin codigo_plame: a diferencia de los demas conceptos
+    -- de esta migracion, no se encontro ninguna descripcion en el catalogo
+    -- Tabla 22 que coincida con este concepto especifico - pendiente de que
+    -- el usuario confirme bajo que codigo declararlo (candidato mas
+    -- cercano: '0303' "Bonificacion por produccion, altura, turno, etc.",
+    -- sin confirmar).
+    ('BAE', 'Bonificación por Alta Especialización (BAE)', 'Solo operarios especializados (EP/EM/TP). La tasa se configura en Parámetros → Tabla salarial mensual.', 90, NULL,
      NULL, NULL, NULL, NULL, NULL, NULL,
      true, true, false, true, true, true, false),
 
-    ('MOVILIDAD', 'Bonificación por movilidad', 'Solo construcción civil. El monto fijo por día se configura en Parámetros → Tabla salarial mensual.', 100,
+    -- migracion 035: '0909' confirmado (Movilidad supeditada a asistencia y
+    -- que cubre solo el traslado - coincide con el monto fijo por dia
+    -- trabajado que ya usa este concepto).
+    ('MOVILIDAD', 'Bonificación por movilidad', 'Solo construcción civil. El monto fijo por día se configura en Parámetros → Tabla salarial mensual.', 100, '0909',
      NULL, NULL, NULL, NULL, NULL, NULL,
      false, false, false, false, false, true, false),
 
-    ('GRATIFICACION', 'Gratificación (Fiestas Patrias / Navidad)', 'Construcción civil: se paga cada período (factor diario). Empleado: pago semestral con fórmula fija (jul/dic), no editable aquí. Su afectación a Renta de 5ta ya está incorporada en la fórmula anual de Empleado, por eso esa columna no aplica para este concepto.', 110,
+    ('GRATIFICACION', 'Gratificación (Fiestas Patrias / Navidad)', 'Construcción civil: se paga cada período (factor diario). Empleado: pago semestral con fórmula fija (jul/dic), no editable aquí. Su afectación a Renta de 5ta ya está incorporada en la fórmula anual de Empleado, por eso esa columna no aplica para este concepto.', 110, NULL,
      40, 'Numerador en jornales básicos (solo construcción civil)', 210, 'Denominador en días (solo construcción civil)', NULL, NULL,
      false, false, false, false, false, NULL, false),
 
-    ('BONIFICACION_EXTRAORDINARIA', 'Bonificación Extraordinaria (Ley 29351/30334)', 'Porcentaje de la gratificación, pagado en efectivo en vez de EsSalud. Su afectación a Renta de 5ta ya está incorporada en la fórmula anual de Empleado, por eso esa columna no aplica para este concepto.', 120,
+    -- migracion 035: '0313' ("proporcional") en vez de '0312' ("temporal"):
+    -- este concepto se calcula cada periodo junto con la gratificacion de
+    -- construccion civil (nunca como un monto semestral fijo unico), lo que
+    -- coincide con la version "proporcional" del catalogo.
+    ('BONIFICACION_EXTRAORDINARIA', 'Bonificación Extraordinaria (Ley 29351/30334)', 'Porcentaje de la gratificación, pagado en efectivo en vez de EsSalud. Su afectación a Renta de 5ta ya está incorporada en la fórmula anual de Empleado, por eso esa columna no aplica para este concepto.', 120, '0313',
      0.09, 'Porcentaje de la gratificación', NULL, NULL, NULL, NULL,
      false, false, false, false, false, NULL, false),
 
-    ('CTS', 'Compensación por Tiempo de Servicios (CTS)', 'Construcción civil: se devenga cada período (factor diario). Empleado: depósito semestral con fórmula fija (may/nov), no editable aquí. Totalmente inafecta a aportes y descuentos.', 130,
+    ('CTS', 'Compensación por Tiempo de Servicios (CTS)', 'Construcción civil: se devenga cada período (factor diario). Empleado: depósito semestral con fórmula fija (may/nov), no editable aquí. Totalmente inafecta a aportes y descuentos.', 130, NULL,
      0.15, 'Porcentaje del jornal diario (solo construcción civil)', NULL, NULL, NULL, NULL,
      false, false, false, false, false, false, false),
 
-    ('VACACIONES', 'Vacaciones (construcción civil)', 'Solo construcción civil, se devenga cada período. Para Empleado, ver el módulo de récord vacacional en la pestaña Vacaciones.', 140,
+    -- migracion 035: '0117' ("Compensacion vacacional") en vez de '0118'
+    -- ("Remuneracion vacacional") o '0114' ("Vacaciones truncas"): este
+    -- concepto se paga en efectivo cada periodo sin que el trabajador salga
+    -- de vacaciones realmente (no es un goce real ni un pago por cese), que
+    -- es exactamente lo que cubre la version "compensacion" del catalogo.
+    ('VACACIONES', 'Vacaciones (construcción civil)', 'Solo construcción civil, se devenga cada período. Para Empleado, ver el módulo de récord vacacional en la pestaña Vacaciones.', 140, '0117',
      0.10, 'Porcentaje del jornal diario', NULL, NULL, NULL, NULL,
      true, true, false, true, true, true, false),
 
     -- migracion 030: descanso medico por enfermedad y licencia por
-    -- paternidad AHORA SI se pagan (antes eran puramente informativos). El
-    -- codigo PLAME oficial (916/907, Anexo 22 SUNAT) todavia no aplica aqui
-    -- porque la columna codigo_plame de esta tabla la agrega una migracion
-    -- posterior (019) que no se ha reconstruido todavia en este punto -
-    -- revisar/completar cuando llegue ese parche. "orden" tampoco replica el
-    -- valor original del parche (106/107, que colisionaba con conceptos ya
-    -- reordenados en este arbol) - se usan 145/146, despues de VACACIONES.
+    -- paternidad AHORA SI se pagan (antes eran puramente informativos).
+    -- "orden" no replica el valor original del parche (106/107, que
+    -- colisionaba con conceptos ya reordenados en este arbol) - se usan
+    -- 145/146, despues de VACACIONES.
+    -- migracion 035: codigo_plame corregido de '916'/'907' a '0916'/'0907'
+    -- (les faltaba el 0 inicial - el archivo .rem espera codigos de 4
+    -- digitos, igual que el resto del catalogo).
     ('SUBSIDIO_ENFERMEDAD', 'Subsidio por incapacidad temporal (descanso médico)',
-     'Pago de los primeros 20 dias por año calendario de descanso medico por enfermedad, a cargo del empleador (D.S. 009-97-SA) - del dia 21 en adelante lo paga EsSalud directamente, fuera de planilla (el sistema bloquea el registro de mas de 20 dias/año por contrato, ver Tareo Diario). Valorizado igual que un dia normal trabajado.', 145,
+     'Pago de los primeros 20 dias por año calendario de descanso medico por enfermedad, a cargo del empleador (D.S. 009-97-SA) - del dia 21 en adelante lo paga EsSalud directamente, fuera de planilla (el sistema bloquea el registro de mas de 20 dias/año por contrato, ver Tareo Diario). Valorizado igual que un dia normal trabajado.', 145, '0916',
      NULL, NULL, NULL, NULL, NULL, NULL,
      false, true, false, false, true, false, false),
 
     ('LICENCIA_PATERNIDAD', 'Licencia por paternidad',
-     'Pago de los dias de licencia por paternidad (Ley 29409), sin tope de dias, valorizado igual que un dia normal trabajado.', 146,
+     'Pago de los dias de licencia por paternidad (Ley 29409), sin tope de dias, valorizado igual que un dia normal trabajado.', 146, '0907',
      NULL, NULL, NULL, NULL, NULL, NULL,
      true, true, true, true, true, true, true);
 

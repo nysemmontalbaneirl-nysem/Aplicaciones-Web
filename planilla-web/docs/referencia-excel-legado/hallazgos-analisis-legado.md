@@ -327,15 +327,29 @@ sistema actual debe verificar:
    (por ejemplo la Escolaridad que aparece en su boleta)?
 2. ¿Confirma que el trabajador con tipo="04" en el `.rem` real corresponde a
    un `EMPLEADO` de régimen general (no construcción civil)?
-3. ¿El sistema web actual necesita generar ya los 7 archivos PLAME completos
-   (.rem, .tas, .toc, .jor, .snl, y opcionalmente .or5) en vez de solo `.rem`,
-   y también `.4ta`/`.ps4` para el personal de renta de 4ta (esto implicaría
-   modelar en el sistema web un tipo de persona nuevo: prestador de servicios
-   por honorarios, distinto de un trabajador en planilla)?
-4. Antes de corregir `src/plame.ts`: ¿doy luz verde para aplicar ya el cambio
-   confirmado de `BUC_CONSTRUCCION` de "0314" a "0311", o prefieres que
-   agrupe esa corrección junto con el resto de conceptos faltantes (horas
-   extra, movilidad, escolaridad, BAE, etc.) en un solo cambio?
+3. Los archivos `.4ta`/`.ps4` (prestadores de servicios por honorarios) se
+   dejan para una ronda aparte, cuando se cree en el sistema web una pestaña
+   propia para "locadores/prestadores de servicios" (personas totalmente
+   distintas de los trabajadores en planilla) - confirmado con el usuario
+   el 17/09/2026. `.tas`, `.toc`, `.jor` (jornada: horas y minutos, incluida
+   la hora extra) y `.snl` (días subsidiados y no laborados) siguen
+   pendientes de construir - el usuario confirmó explícitamente que `.jor` y
+   `.snl` siguen siendo necesarios.
+4. **RESUELTO (migración 035, 17/09/2026)**: se aplicó la corrección de
+   `BUC_CONSTRUCCION` de "0314" a "0311", junto con el resto de conceptos que
+   ya se calculaban y pagaban pero no se declaraban (Asignación por
+   Escolaridad 0211, Movilidad 0909, Vacaciones 0117, Bonificación
+   Extraordinaria Ley 29351/30334 0313, y Horas Extra 0105/0106 - esta
+   última con una regla confirmada por el usuario: solo existen códigos
+   SUNAT para 25% y 35%, así que el 60%/100% del convenio de construcción
+   civil (y el tramo de 100% de régimen general) se declara bajo el mismo
+   código 0106). También se corrigió el formato de los códigos de Subsidio
+   por enfermedad y Licencia por paternidad ("916"/"907" → "0916"/"0907",
+   les faltaba el 0 inicial). Ver `src/plame.ts` y
+   `sql/migracion_035_correccion_codigos_plame.sql`. BAE (Bonificación por
+   Alta Especialización, propia de JHCR) queda sin código PLAME - no se
+   encontró ninguna descripción del catálogo Tabla 22 que coincida con este
+   concepto específico, pendiente de que el usuario lo confirme.
 5. Para el Libro Diario: ¿tienes a la mano el plan de cuentas contable
    completo (qué código de cuenta corresponde a cada concepto de planilla:
    sueldos, CTS, aportes del empleador, etc.), o prefieres que lo derivemos
