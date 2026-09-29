@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiPut } from "../api";
 import {
+  ClaveConceptoLimiteTareo,
   Contrato,
   esConstruccionCivil,
   FactoresHorasExtra,
@@ -85,24 +86,25 @@ type CampoHoras = Exclude<keyof TareoDiarioFila, "fecha" | "tipo_dia_especial">;
 // del limite de horas/minutos solo se notaba al presionar "Guardar" (el
 // campo aceptaba cualquier valor mientras tanto) - se pidio explicitamente
 // un control PREVENTIVO que rechace el valor de inmediato, sin esperar al
-// guardado. Mismos 2 grupos de campos que ya usa el backend
-// (routes/planilla.ts: CAMPOS_HORAS/CAMPOS_MINUTOS) para sumar TODAS las
-// columnas de un dia, no solo el campo que se esta editando.
-const CAMPOS_HORAS: CampoHoras[] = [
-  "horas_normales",
-  "horas_dominical",
-  "horas_feriado",
-  "horas_extra_tramo1",
-  "horas_extra_tramo2",
-  "horas_extra_tramo3",
-];
-const CAMPOS_MINUTOS: CampoHoras[] = [
-  "minutos_normales",
-  "minutos_dominical",
-  "minutos_feriado",
-  "minutos_extra_tramo1",
-  "minutos_extra_tramo2",
-  "minutos_extra_tramo3",
+// guardado.
+//
+// Migracion 043 (sept. 2026): el limite dejo de ser UNA suma combinada de
+// todas las columnas - ahora cada CONCEPTO (Jornal normal, y cada tramo de
+// horas extra) tiene su propio limite independiente (mismo criterio que ya
+// valida el backend, routes/planilla.ts: CONCEPTOS_LIMITE_TAREO), para que
+// llegar al tope del jornal normal ya no bloquee registrar horas extra ese
+// mismo dia. Domingo trabajado y Feriado trabajado quedan sin limite (no
+// estan en esta lista, a proposito).
+const CONCEPTOS_LIMITE_TAREO: {
+  clave: ClaveConceptoLimiteTareo;
+  campoHoras: CampoHoras;
+  campoMinutos: CampoHoras;
+  etiqueta: string;
+}[] = [
+  { clave: "normal", campoHoras: "horas_normales", campoMinutos: "minutos_normales", etiqueta: "Jornal normal" },
+  { clave: "tramo1", campoHoras: "horas_extra_tramo1", campoMinutos: "minutos_extra_tramo1", etiqueta: "Horas extra tramo 1" },
+  { clave: "tramo2", campoHoras: "horas_extra_tramo2", campoMinutos: "minutos_extra_tramo2", etiqueta: "Horas extra tramo 2" },
+  { clave: "tramo3", campoHoras: "horas_extra_tramo3", campoMinutos: "minutos_extra_tramo3", etiqueta: "Horas extra tramo 3" },
 ];
 
 export default function TareoDiario({ periodo }: Props) {
@@ -212,35 +214,29 @@ export default function TareoDiario({ periodo }: Props) {
     // Migracion 040 (ampliacion, sept. 2026): bloqueo PREVENTIVO en tiempo
     // real, a pedido explicito del usuario - antes se avisaba recien al
     // presionar "Guardar" (el campo aceptaba cualquier numero mientras
-    // tanto), lo cual el usuario reporto como poco efectivo. Ahora, antes de
-    // aceptar el cambio, se recalcula como quedaria la suma de TODAS las
-    // columnas de horas (o, por separado, de minutos) de ese dia CON este
-    // valor nuevo ya puesto, usando el mismo criterio de dia
-    // habil/sabado/domingo y los mismos 2 grupos de campos que ya valida el
-    // backend (routes/planilla.ts, PUT /tareo-diario/:contratoId) - si se
-    // pasa del limite configurado (Configuracion -> Limites de tareo), se
-    // rechaza el cambio de una vez (el input vuelve a mostrar el valor
-    // anterior, porque el estado nunca llega a actualizarse) en vez de
-    // dejarlo pasar hasta el guardado.
-    const fila = dias.find((f) => f.fecha === fecha);
+    // tanto), lo cual el usuario reporto como poco efectivo.
+    //
+    // Migracion 043 (sept. 2026): "campo" solo se compara contra el limite
+    // de SU PROPIO concepto (Jornal normal o el tramo de horas extra que
+    // corresponda) - ya no se suma con las demas columnas del dia. Domingo
+    // trabajado y Feriado trabajado no tienen concepto en
+    // CONCEPTOS_LIMITE_TAREO, asi que nunca se bloquean por este control
+    // (mismo criterio confirmado con el usuario que ya aplicaba a Domingo
+    // por dia de la semana).
+    const concepto = CONCEPTOS_LIMITE_TAREO.find((c) => c.campoHoras === campo || c.campoMinutos === campo);
     const diaSemana = fechaLocal(fecha).getDay(); // 0=domingo .. 6=sabado
-    if (fila && limites && diaSemana !== 0) {
+    if (concepto && limites && diaSemana !== 0) {
       const esSabado = diaSemana === 6;
-      const grupo = esMinutos ? CAMPOS_MINUTOS : CAMPOS_HORAS;
+      const tipoDia = esSabado ? "sabado" : "lun_vie";
       const maximo = esMinutos
-        ? esSabado
-          ? limites.minutos_max_sabado
-          : limites.minutos_max_lun_vie
-        : esSabado
-          ? limites.horas_max_sabado
-          : limites.horas_max_lun_vie;
-      const suma = grupo.reduce((acc, c) => acc + (c === campo ? acotado : Number(fila[c] ?? 0)), 0);
-      if (suma > maximo) {
+        ? limites[`minutos_max_${concepto.clave}_${tipoDia}`]
+        : limites[`horas_max_${concepto.clave}_${tipoDia}`];
+      if (acotado > maximo) {
         const etiquetaDia = esSabado ? "sábado" : "día (lunes a viernes)";
         const unidad = esMinutos ? "minutos" : "horas";
         setErroresLimite((prev) => ({
           ...prev,
-          [fecha]: `Este ${etiquetaDia} no puede sumar más de ${maximo} ${unidad} entre todos los campos (con este valor llegaría a ${suma}).`,
+          [fecha]: `"${concepto.etiqueta}" no puede superar ${maximo} ${unidad} este ${etiquetaDia} (Configuración → Límites de tareo).`,
         }));
         return; // se rechaza el cambio - no se actualiza "dias"
       }

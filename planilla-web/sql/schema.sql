@@ -682,21 +682,37 @@ CREATE TABLE configuracion_seguridad (
 );
 INSERT INTO configuracion_seguridad (id, clave_formulas_hash) VALUES (1, NULL);
 
--- limites_tareo (migracion 040): fila unica con los limites configurables de
--- horas/minutos por dia para el Tareo Diario (Configuracion -> "Limites de
--- tareo"), a pedido explicito del usuario. Domingo queda sin limite (se paga
--- aparte como "domingo trabajado"). Se valida contra la SUMA de todas las
--- columnas de horas (y, por separado, de minutos) de cada dia - ver
+-- limites_tareo (migracion 040, ampliada en migracion 043): fila unica con
+-- los limites configurables de horas/minutos por dia para el Tareo Diario
+-- (Configuracion -> "Limites de tareo"), a pedido explicito del usuario.
+-- Domingo (por dia de la semana) y las columnas de Feriado trabajado quedan
+-- SIN limite (se pagan aparte). Cada CONCEPTO tiene su propio limite
+-- independiente: Jornal normal, y cada tramo de horas extra (60%, 100%,
+-- 100%) por separado - antes (migracion 040) todos compartian un solo tope
+-- combinado (suma de todas las columnas), lo que bloqueaba registrar horas
+-- extra en cuanto el jornal normal ya llegaba al limite. Ver
 -- routes/planilla.ts, PUT /:id/tareo-diario/:contratoId.
 CREATE TABLE limites_tareo (
-    id                   SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    horas_max_lun_vie    SMALLINT NOT NULL DEFAULT 8  CHECK (horas_max_lun_vie BETWEEN 0 AND 24),
-    minutos_max_lun_vie  SMALLINT NOT NULL DEFAULT 30 CHECK (minutos_max_lun_vie BETWEEN 0 AND 59),
-    horas_max_sabado     SMALLINT NOT NULL DEFAULT 5  CHECK (horas_max_sabado BETWEEN 0 AND 24),
-    minutos_max_sabado   SMALLINT NOT NULL DEFAULT 30 CHECK (minutos_max_sabado BETWEEN 0 AND 59),
-    actualizado_en       TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                          SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    horas_max_normal_lun_vie    SMALLINT NOT NULL DEFAULT 8  CHECK (horas_max_normal_lun_vie BETWEEN 0 AND 24),
+    minutos_max_normal_lun_vie  SMALLINT NOT NULL DEFAULT 30 CHECK (minutos_max_normal_lun_vie BETWEEN 0 AND 59),
+    horas_max_normal_sabado     SMALLINT NOT NULL DEFAULT 5  CHECK (horas_max_normal_sabado BETWEEN 0 AND 24),
+    minutos_max_normal_sabado   SMALLINT NOT NULL DEFAULT 30 CHECK (minutos_max_normal_sabado BETWEEN 0 AND 59),
+    horas_max_tramo1_lun_vie    SMALLINT NOT NULL DEFAULT 4  CHECK (horas_max_tramo1_lun_vie BETWEEN 0 AND 24),
+    minutos_max_tramo1_lun_vie  SMALLINT NOT NULL DEFAULT 0  CHECK (minutos_max_tramo1_lun_vie BETWEEN 0 AND 59),
+    horas_max_tramo1_sabado     SMALLINT NOT NULL DEFAULT 4  CHECK (horas_max_tramo1_sabado BETWEEN 0 AND 24),
+    minutos_max_tramo1_sabado   SMALLINT NOT NULL DEFAULT 0  CHECK (minutos_max_tramo1_sabado BETWEEN 0 AND 59),
+    horas_max_tramo2_lun_vie    SMALLINT NOT NULL DEFAULT 4  CHECK (horas_max_tramo2_lun_vie BETWEEN 0 AND 24),
+    minutos_max_tramo2_lun_vie  SMALLINT NOT NULL DEFAULT 0  CHECK (minutos_max_tramo2_lun_vie BETWEEN 0 AND 59),
+    horas_max_tramo2_sabado     SMALLINT NOT NULL DEFAULT 4  CHECK (horas_max_tramo2_sabado BETWEEN 0 AND 24),
+    minutos_max_tramo2_sabado   SMALLINT NOT NULL DEFAULT 0  CHECK (minutos_max_tramo2_sabado BETWEEN 0 AND 59),
+    horas_max_tramo3_lun_vie    SMALLINT NOT NULL DEFAULT 4  CHECK (horas_max_tramo3_lun_vie BETWEEN 0 AND 24),
+    minutos_max_tramo3_lun_vie  SMALLINT NOT NULL DEFAULT 0  CHECK (minutos_max_tramo3_lun_vie BETWEEN 0 AND 59),
+    horas_max_tramo3_sabado     SMALLINT NOT NULL DEFAULT 4  CHECK (horas_max_tramo3_sabado BETWEEN 0 AND 24),
+    minutos_max_tramo3_sabado   SMALLINT NOT NULL DEFAULT 0  CHECK (minutos_max_tramo3_sabado BETWEEN 0 AND 59),
+    actualizado_en              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-INSERT INTO limites_tareo (id, horas_max_lun_vie, minutos_max_lun_vie, horas_max_sabado, minutos_max_sabado)
+INSERT INTO limites_tareo (id, horas_max_normal_lun_vie, minutos_max_normal_lun_vie, horas_max_normal_sabado, minutos_max_normal_sabado)
 VALUES (1, 8, 30, 5, 30);
 
 -- -------------------------------------------------------------------------

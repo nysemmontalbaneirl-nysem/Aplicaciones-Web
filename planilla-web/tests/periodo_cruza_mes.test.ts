@@ -279,13 +279,13 @@ beforeAll(async () => {
   // no romper fixtures existentes con fechas/horas anteriores a esta
   // migracion. Se restauran en afterAll.
   await pool.query(
-    "UPDATE limites_tareo SET horas_max_lun_vie = 24, minutos_max_lun_vie = 59, horas_max_sabado = 24, minutos_max_sabado = 59 WHERE id = 1"
+    "UPDATE limites_tareo SET horas_max_normal_lun_vie = 24, minutos_max_normal_lun_vie = 59, horas_max_normal_sabado = 24, minutos_max_normal_sabado = 59, horas_max_tramo1_lun_vie = 24, minutos_max_tramo1_lun_vie = 59, horas_max_tramo1_sabado = 24, minutos_max_tramo1_sabado = 59, horas_max_tramo2_lun_vie = 24, minutos_max_tramo2_lun_vie = 59, horas_max_tramo2_sabado = 24, minutos_max_tramo2_sabado = 59, horas_max_tramo3_lun_vie = 24, minutos_max_tramo3_lun_vie = 59, horas_max_tramo3_sabado = 24, minutos_max_tramo3_sabado = 59 WHERE id = 1"
   );
 });
 
 afterAll(async () => {
   await pool.query(
-    "UPDATE limites_tareo SET horas_max_lun_vie = 8, minutos_max_lun_vie = 30, horas_max_sabado = 5, minutos_max_sabado = 30 WHERE id = 1"
+    "UPDATE limites_tareo SET horas_max_normal_lun_vie = 8, minutos_max_normal_lun_vie = 30, horas_max_normal_sabado = 5, minutos_max_normal_sabado = 30, horas_max_tramo1_lun_vie = 4, minutos_max_tramo1_lun_vie = 0, horas_max_tramo1_sabado = 4, minutos_max_tramo1_sabado = 0, horas_max_tramo2_lun_vie = 4, minutos_max_tramo2_lun_vie = 0, horas_max_tramo2_sabado = 4, minutos_max_tramo2_sabado = 0, horas_max_tramo3_lun_vie = 4, minutos_max_tramo3_lun_vie = 0, horas_max_tramo3_sabado = 4, minutos_max_tramo3_sabado = 0 WHERE id = 1"
   );
   for (const periodoId of periodosCreados) {
     await pool.query("DELETE FROM detalle_planilla WHERE periodo_id = $1", [periodoId]);

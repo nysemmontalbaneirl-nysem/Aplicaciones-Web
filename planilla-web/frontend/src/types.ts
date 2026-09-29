@@ -764,12 +764,39 @@ export interface RecordVacacional {
   goces: GoceVacaciones[];
 }
 
-// limites_tareo (migracion 040): fila unica, editable desde Configuracion ->
-// "Limites de tareo". Domingo queda sin limite - ver el comentario completo
-// en la migracion SQL y en routes/planilla.ts.
+// limites_tareo (migracion 040, ampliada en migracion 043): fila unica,
+// editable desde Configuracion -> "Limites de tareo". Domingo (por dia de
+// la semana) y las columnas de Feriado trabajado quedan sin limite. Cada
+// concepto (Jornal normal, y cada tramo de horas extra) tiene su propio
+// limite independiente - ver el comentario completo en la migracion SQL y
+// en routes/planilla.ts.
 export interface LimitesTareo {
-  horas_max_lun_vie: number;
-  minutos_max_lun_vie: number;
-  horas_max_sabado: number;
-  minutos_max_sabado: number;
+  // Firma indice (ademas de los 16 campos explicitos de abajo): permite
+  // construir el nombre de columna dinamicamente a partir de un concepto
+  // (ej. `horas_max_${concepto.clave}_${tipoDia}`) sin pelear con el
+  // chequeo de tipos, tanto en TareoDiario.tsx (bloqueo preventivo) como en
+  // Configuracion.tsx (formulario de edicion).
+  [campo: string]: number;
+  horas_max_normal_lun_vie: number;
+  minutos_max_normal_lun_vie: number;
+  horas_max_normal_sabado: number;
+  minutos_max_normal_sabado: number;
+  horas_max_tramo1_lun_vie: number;
+  minutos_max_tramo1_lun_vie: number;
+  horas_max_tramo1_sabado: number;
+  minutos_max_tramo1_sabado: number;
+  horas_max_tramo2_lun_vie: number;
+  minutos_max_tramo2_lun_vie: number;
+  horas_max_tramo2_sabado: number;
+  minutos_max_tramo2_sabado: number;
+  horas_max_tramo3_lun_vie: number;
+  minutos_max_tramo3_lun_vie: number;
+  horas_max_tramo3_sabado: number;
+  minutos_max_tramo3_sabado: number;
 }
+
+// Un concepto de Jornal/Horas extra con limite independiente en
+// LimitesTareo - clave usada para armar los nombres de columna
+// (horas_max_<clave>_lun_vie, etc.) tanto en TareoDiario.tsx (bloqueo
+// preventivo) como en Configuracion.tsx (formulario de edicion).
+export type ClaveConceptoLimiteTareo = "normal" | "tramo1" | "tramo2" | "tramo3";

@@ -738,6 +738,24 @@ const CAMPOS_MINUTOS = [
   "minutos_extra_tramo3",
 ] as const satisfies readonly (keyof FilaTareoDiario)[];
 
+// Conceptos con limite INDEPENDIENTE en limites_tareo (migracion 043): cada
+// uno se valida por separado contra su propia columna horas_max_<clave>_*/
+// minutos_max_<clave>_* (ver PUT /:id/tareo-diario/:contratoId, mas abajo).
+// Domingo trabajado y Feriado trabajado NO tienen limite (a proposito, no
+// estan en esta lista) - mismo criterio confirmado con el usuario que ya
+// aplicaba a Domingo por dia de la semana.
+const CONCEPTOS_LIMITE_TAREO: {
+  clave: "normal" | "tramo1" | "tramo2" | "tramo3";
+  campoHoras: keyof FilaTareoDiario;
+  campoMinutos: keyof FilaTareoDiario;
+  etiqueta: string;
+}[] = [
+  { clave: "normal", campoHoras: "horas_normales", campoMinutos: "minutos_normales", etiqueta: "Jornal normal" },
+  { clave: "tramo1", campoHoras: "horas_extra_tramo1", campoMinutos: "minutos_extra_tramo1", etiqueta: "Horas extra tramo 1 (60%)" },
+  { clave: "tramo2", campoHoras: "horas_extra_tramo2", campoMinutos: "minutos_extra_tramo2", etiqueta: "Horas extra tramo 2 (100%)" },
+  { clave: "tramo3", campoHoras: "horas_extra_tramo3", campoMinutos: "minutos_extra_tramo3", etiqueta: "Horas extra tramo 3 (100%)" },
+];
+
 function redondear2(valor: number): number {
   return Math.round(valor * 100) / 100;
 }
@@ -997,36 +1015,41 @@ planillaRouter.put(
       }
     }
 
-    // Migracion 040: limites configurables de horas/minutos por dia
-    // (Configuracion -> Limites de tareo), a pedido explicito del usuario -
-    // se valida la SUMA de TODAS las columnas de horas (y, por separado, de
-    // minutos) de cada dia contra el limite del tipo de dia que corresponda.
-    // Domingo queda sin limite (no forma parte de "lunes a viernes"/"sabado"
-    // en el pedido original - ya se paga aparte como "domingo trabajado").
+    // Migracion 040 (ampliada en migracion 043): limites configurables de
+    // horas/minutos por dia (Configuracion -> Limites de tareo), a pedido
+    // explicito del usuario. Cada CONCEPTO tiene su propio limite
+    // independiente (antes todos compartian un solo tope combinado - la
+    // suma de TODAS las columnas de horas del dia -, lo que bloqueaba
+    // registrar horas extra en cuanto el jornal normal ya llegaba al
+    // limite). Domingo (por dia de la semana) y las columnas de Feriado
+    // trabajado quedan SIN limite (se pagan aparte).
     const limitesResult = await pool.query("SELECT * FROM limites_tareo WHERE id = 1");
-    const limites = limitesResult.rows[0];
+    const limites = limitesResult.rows[0] as Record<string, unknown>;
     for (const d of dias) {
       const diaSemana = new Date(d.fecha.slice(0, 10) + "T00:00:00Z").getUTCDay(); // 0=domingo .. 6=sabado
       if (diaSemana === 0) continue;
       const esSabado = diaSemana === 6;
-      const horasMax = Number(esSabado ? limites.horas_max_sabado : limites.horas_max_lun_vie);
-      const minutosMax = Number(esSabado ? limites.minutos_max_sabado : limites.minutos_max_lun_vie);
-      const sumaHoras = CAMPOS_HORAS.reduce((acc, campo) => acc + Number(d[campo] ?? 0), 0);
-      const sumaMinutos = CAMPOS_MINUTOS.reduce((acc, campo) => acc + Number(d[campo] ?? 0), 0);
+      const tipoDia = esSabado ? "sabado" : "lun_vie";
       const etiquetaDia = esSabado ? "sabado" : "dia (lunes a viernes)";
-      if (sumaHoras > horasMax) {
-        return res.status(400).json({
-          error:
-            `El ${etiquetaDia} ${d.fecha.slice(0, 10)} suma ${sumaHoras} horas entre todos los campos de ese dia, ` +
-            `y el limite configurado es ${horasMax} horas (Configuracion -> Limites de tareo).`,
-        });
-      }
-      if (sumaMinutos > minutosMax) {
-        return res.status(400).json({
-          error:
-            `El ${etiquetaDia} ${d.fecha.slice(0, 10)} suma ${sumaMinutos} minutos entre todos los campos de ese dia, ` +
-            `y el limite configurado es ${minutosMax} minutos (Configuracion -> Limites de tareo).`,
-        });
+      for (const c of CONCEPTOS_LIMITE_TAREO) {
+        const horas = Number(d[c.campoHoras] ?? 0);
+        const minutos = Number(d[c.campoMinutos] ?? 0);
+        const horasMax = Number(limites[`horas_max_${c.clave}_${tipoDia}`]);
+        const minutosMax = Number(limites[`minutos_max_${c.clave}_${tipoDia}`]);
+        if (horas > horasMax) {
+          return res.status(400).json({
+            error:
+              `El ${etiquetaDia} ${d.fecha.slice(0, 10)}: "${c.etiqueta}" tiene ${horas} horas, ` +
+              `y el limite configurado para ese concepto es ${horasMax} horas (Configuracion -> Limites de tareo).`,
+          });
+        }
+        if (minutos > minutosMax) {
+          return res.status(400).json({
+            error:
+              `El ${etiquetaDia} ${d.fecha.slice(0, 10)}: "${c.etiqueta}" tiene ${minutos} minutos, ` +
+              `y el limite configurado para ese concepto es ${minutosMax} minutos (Configuracion -> Limites de tareo).`,
+          });
+        }
       }
     }
 

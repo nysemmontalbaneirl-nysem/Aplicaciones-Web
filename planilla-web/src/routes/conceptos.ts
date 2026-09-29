@@ -122,27 +122,45 @@ conceptosRouter.get(
 );
 
 // ===========================================================================
-// Limites de horas/minutos del Tareo Diario (limites_tareo, migracion 040):
-// fila unica (id=1), a pedido explicito del usuario. Se validan en
-// routes/planilla.ts (PUT /:id/tareo-diario/:contratoId) contra la SUMA de
-// todas las columnas de horas (y, por separado, de minutos) de cada dia -
-// domingo queda sin limite (no forma parte de lun-vie/sabado).
+// Limites de horas/minutos del Tareo Diario (limites_tareo, migracion 040,
+// ampliada en migracion 043): fila unica (id=1), a pedido explicito del
+// usuario. Cada CONCEPTO (Jornal normal, y cada tramo de horas extra) tiene
+// su propio limite independiente, para 2 tipos de dia (lunes a viernes /
+// sabado) - antes (migracion 040) todos los conceptos compartian un solo
+// tope combinado (suma de todas las columnas de horas del dia), lo que
+// bloqueaba registrar horas extra en cuanto el jornal normal ya llegaba al
+// limite. Domingo (por dia de la semana) y las columnas de Feriado
+// trabajado quedan SIN limite (se pagan aparte) - ver routes/planilla.ts,
+// PUT /:id/tareo-diario/:contratoId.
 // ===========================================================================
 
-interface LimitesTareo {
-  horas_max_lun_vie: number;
-  minutos_max_lun_vie: number;
-  horas_max_sabado: number;
-  minutos_max_sabado: number;
+// Un concepto ("normal", "tramo1", "tramo2", "tramo3") x un tipo de dia
+// ("lun_vie", "sabado") = 1 limite de horas + 1 de minutos. Se generan los
+// 16 nombres de columna a partir de estas 2 listas en vez de escribirlos a
+// mano, para no desalinear GET/PUT/validacion si algun dia se agrega un
+// concepto o tipo de dia nuevo.
+const CONCEPTOS_LIMITE_TAREO = ["normal", "tramo1", "tramo2", "tramo3"] as const;
+const TIPOS_DIA_LIMITE_TAREO = ["lun_vie", "sabado"] as const;
+
+type LimitesTareo = Record<string, number>;
+
+function camposLimitesTareo(): { horas: string; minutos: string }[] {
+  const campos: { horas: string; minutos: string }[] = [];
+  for (const concepto of CONCEPTOS_LIMITE_TAREO) {
+    for (const tipoDia of TIPOS_DIA_LIMITE_TAREO) {
+      campos.push({ horas: `horas_max_${concepto}_${tipoDia}`, minutos: `minutos_max_${concepto}_${tipoDia}` });
+    }
+  }
+  return campos;
 }
 
 function filaALimitesTareo(fila: Record<string, unknown>): LimitesTareo {
-  return {
-    horas_max_lun_vie: Number(fila.horas_max_lun_vie),
-    minutos_max_lun_vie: Number(fila.minutos_max_lun_vie),
-    horas_max_sabado: Number(fila.horas_max_sabado),
-    minutos_max_sabado: Number(fila.minutos_max_sabado),
-  };
+  const resultado: LimitesTareo = {};
+  for (const { horas, minutos } of camposLimitesTareo()) {
+    resultado[horas] = Number(fila[horas]);
+    resultado[minutos] = Number(fila[minutos]);
+  }
+  return resultado;
 }
 
 // GET /api/conceptos/limites-tareo -> valores actuales (siempre existe la
@@ -159,33 +177,30 @@ conceptosRouter.get(
   })
 );
 
-// PUT /api/conceptos/limites-tareo -> actualiza los 4 valores de una vez.
+// PUT /api/conceptos/limites-tareo -> actualiza los 16 valores de una vez.
 conceptosRouter.put(
   "/limites-tareo",
   requierePermiso("conceptos.editar"),
   asyncHandler(async (req: Request, res: Response) => {
     try {
       const b = req.body ?? {};
-      const CAMPOS_HORAS_LIMITE = ["horas_max_lun_vie", "horas_max_sabado"] as const;
-      const CAMPOS_MINUTOS_LIMITE = ["minutos_max_lun_vie", "minutos_max_sabado"] as const;
-      for (const campo of CAMPOS_HORAS_LIMITE) {
-        if (typeof b[campo] !== "number" || !Number.isFinite(b[campo]) || b[campo] < 0 || b[campo] > 24) {
-          throw new ErrorValidacion(`${campo} debe ser un numero entre 0 y 24`);
+      const campos = camposLimitesTareo();
+      for (const { horas, minutos } of campos) {
+        if (typeof b[horas] !== "number" || !Number.isFinite(b[horas]) || b[horas] < 0 || b[horas] > 24) {
+          throw new ErrorValidacion(`${horas} debe ser un numero entre 0 y 24`);
+        }
+        if (typeof b[minutos] !== "number" || !Number.isFinite(b[minutos]) || b[minutos] < 0 || b[minutos] > 59) {
+          throw new ErrorValidacion(`${minutos} debe ser un numero entre 0 y 59`);
         }
       }
-      for (const campo of CAMPOS_MINUTOS_LIMITE) {
-        if (typeof b[campo] !== "number" || !Number.isFinite(b[campo]) || b[campo] < 0 || b[campo] > 59) {
-          throw new ErrorValidacion(`${campo} debe ser un numero entre 0 y 59`);
-        }
-      }
+      const asignaciones = campos.flatMap(({ horas, minutos }, i) => [
+        `${horas} = $${i * 2 + 1}`,
+        `${minutos} = $${i * 2 + 2}`,
+      ]);
+      const valores = campos.flatMap(({ horas, minutos }) => [b[horas], b[minutos]]);
       const r = await pool.query(
-        `UPDATE limites_tareo SET
-           horas_max_lun_vie = $1, minutos_max_lun_vie = $2,
-           horas_max_sabado = $3, minutos_max_sabado = $4,
-           actualizado_en = now()
-         WHERE id = 1
-         RETURNING *`,
-        [b.horas_max_lun_vie, b.minutos_max_lun_vie, b.horas_max_sabado, b.minutos_max_sabado]
+        `UPDATE limites_tareo SET ${asignaciones.join(", ")}, actualizado_en = now() WHERE id = 1 RETURNING *`,
+        valores
       );
       await registrarBitacora(req.usuario!.id, "EDICION_LIMITES_TAREO", "limites_tareo", 1, {
         despues: filaALimitesTareo(r.rows[0]),

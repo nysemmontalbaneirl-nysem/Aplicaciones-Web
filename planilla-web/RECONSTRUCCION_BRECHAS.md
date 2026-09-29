@@ -765,3 +765,91 @@ y luego reintentar estos 4 en orden cronológico.
 
 No requirió verificación (`tsc`/`jest`) porque no se tocó ningún código
 funcional, solo se agregó un comentario.
+
+---
+
+## 19. Parche #35/46 (`b7fb93f8`, "Tareo Diario: limite de horas independiente por concepto") — reconstruido completo, sin brechas nuevas
+
+**Estado: aplicado y verificado completo (migración 043 + backend + frontend + pruebas).**
+
+Este parche reemplaza el límite ÚNICO y COMBINADO de horas de tareo por
+día (una sola pareja de columnas `horas_max_lun_vie`/`minutos_max_lun_vie`
+y `horas_max_sabado`/`minutos_max_sabado` en `limites_tareo`, que topaba la
+SUMA de todas las horas del día) por 4 límites INDEPENDIENTES, uno por
+concepto (Jornal normal, Horas extra tramo 1/2/3), cada uno con su propio
+límite para 2 tipos de día (lunes a viernes / sábado) = 16 columnas nuevas
+(`horas_max_<concepto>_<tipo_dia>` / `minutos_max_<concepto>_<tipo_dia>`).
+Domingo trabajado y Feriado trabajado siguen SIN límite (se pagan aparte),
+igual que antes.
+
+**Patrón "hunk parcialmente aplicado" recurrente una vez más** (ya
+documentado en secciones anteriores): en `src/routes/planilla.ts` y en
+`frontend/src/components/TareoDiario.tsx`, el hunk que DEFINE/IMPORTA
+`CONCEPTOS_LIMITE_TAREO` (o el tipo `ClaveConceptoLimiteTareo`) falló,
+mientras que el hunk posterior que ya lo USA aplicó limpio — dejando el
+árbol en estado no compilable hasta reinsertar manualmente la definición
+faltante, tomada íntegra del propio diff del parche (sin inventar nada,
+ya que el parche mostraba el contenido completo de la definición).
+
+**`frontend/src/types.ts`**: el único hunk (reemplazo íntegro de la
+interfaz `LimitesTareo` de 4 campos por la de 16 campos + índice) falló al
+100% por desajuste de contexto/offset, pero el contenido nuevo completo
+venía dado enteramente por el diff, así que se transcribió directo.
+
+**`frontend/src/components/Configuracion.tsx`**: 4 de 5 hunks fallaron
+(el 5to, el cuerpo de `guardarLimitesTareo`, ya había aplicado solo y
+referenciaba constantes aún no definidas — mismo patrón de "éxito
+parcial"). Los 4 pendientes se reconstruyeron a mano, íntegros del propio
+diff: import de `ClaveConceptoLimiteTareo`; los arreglos
+`CONCEPTOS_LIMITE_TAREO`/`TIPOS_DIA_LIMITE_TAREO` (mismas claves que ya usa
+el backend); el inicializador de `edicionLimites` reescrito como bucle
+sobre esos arreglos en vez de 4 campos fijos; el `setEdicionLimites(...)`
+dentro de `cargar()` reescrito igual; y el bloque de edición reemplazado
+por una tabla dinámica (`CONCEPTOS_LIMITE_TAREO.map` ×
+`TIPOS_DIA_LIMITE_TAREO.flatMap`) en vez de 4 pares `<label>`/`<input>`
+fijos. Esta pantalla sigue siendo mucho más chica que la del autor
+original del parche (ver `NOTA (recon 27/46)` ya existente en el archivo:
+varias sub-pestañas de Configuración, como Días feriados o Plan de
+cuentas, nunca se reconstruyeron), pero esta funcionalidad puntual
+("Límites de tareo") es autocontenida y no depende de esas sub-pestañas
+faltantes, así que se reconstruyó completa sin tocar esa brecha.
+
+**Archivos que aplicaron limpios (0 hunks fallidos), revisados igual para
+confirmar consistencia con el nuevo esquema de 16 columnas**:
+`sql/schema.sql` (tabla `limites_tareo` actualizada), `src/routes/conceptos.ts`
+(GET/PUT genérico basado en `CONCEPTOS_LIMITE_TAREO`/`TIPOS_DIA_LIMITE_TAREO`),
+`tests/limites_tareo.test.ts` (archivo nuevo, 5 pruebas), y
+`tests/periodo_cruza_mes.test.ts`, `tests/planilla_mensual_consolidada.test.ts`,
+`tests/planilla_mensual_rutas.test.ts`, `tests/reportes_resumen_planilla.test.ts`,
+`tests/subsidio_enfermedad_paternidad.test.ts`, `tests/tareo_diario.test.ts`
+— ninguno referencia los nombres de columna viejos (`horas_max_lun_vie`,
+`minutos_max_lun_vie`, `horas_max_sabado`, `minutos_max_sabado`; confirmado
+con grep en los 7 archivos, cero coincidencias).
+
+**Archivo nuevo**: `sql/migracion_043_limites_tareo_por_concepto.sql` — un
+bloque `DO $$ ... IF EXISTS ... RENAME COLUMN ... END $$` defensivo que
+renombra las 4 columnas viejas a su equivalente `_normal_` (para conservar
+cualquier valor que el usuario ya haya configurado en producción), más
+`ALTER TABLE ... ADD COLUMN IF NOT EXISTS` para las 12 columnas nuevas de
+tramo1/2/3, cada una con su `CHECK` (0-24 horas, 0-59 minutos) y valores
+por defecto razonables (4 horas, 0 minutos). No crea tablas nuevas, así
+que no hace falta ningún `GRANT` adicional para `grupojhc_boletas` (a
+diferencia de otras migraciones anteriores de este proyecto que sí crean
+tablas).
+
+**3 archivos de prueba NO reconstruidos, confirmado que NO es una brecha
+nueva**: `tests/dominical_proporcional.test.ts`, `tests/feriado_no_laborado.test.ts`
+y `tests/feriados_por_ubicacion.test.ts` no existen en este árbol (`patch`
+reportó "can't find file to patch" para los 3). Se confirmó revisando el
+diff crudo del parche para estos 3 archivos: sus únicos cambios son, en
+`beforeAll`/`afterAll`, actualizar el `UPDATE limites_tareo SET ...` que
+relaja/restaura los límites (de las 4 columnas viejas a las 16 nuevas) —
+es decir, dependen enteramente de que el archivo base ya exista, y esos 3
+archivos completos nunca se reconstruyeron por las brechas #4 (columnas de
+dominical proporcional/feriado no laborado faltantes en `detalle_planilla`)
+y #15 (tabla `dias_feriados` nunca existió). No es una brecha nueva de
+este parche, solo la misma ausencia ya documentada propagándose a este
+cambio puntual.
+
+Verificado: `tsc --noEmit` limpio (backend y frontend). 365/365 tests
+(360 previos + 5 nuevos de `tests/limites_tareo.test.ts`).
