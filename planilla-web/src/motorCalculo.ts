@@ -37,6 +37,254 @@ export function esConstruccionCivil(categoria: CategoriaOcupacional): boolean {
   return CATEGORIAS_CONSTRUCCION_CIVIL.includes(categoria);
 }
 
+// =========================================================================
+// Ronda 3: periodo que cruza de mes calendario. Las tablas salariales
+// (tabla_salarial_mensual/tasas_afp_mensuales) son por mes calendario, pero
+// un periodo QUINCENAL/SEMANAL puede empezar en un mes y terminar en otro
+// (ej. 24/08-06/09/2026) - sin esto, todo el periodo se calculaba con la
+// tabla de un solo mes (el de fecha_inicio), lo cual es incorrecto cuando
+// el jornal/BUC/etc. cambia de un mes a otro (tipico en construccion civil
+// cuando cambia el convenio colectivo a mitad de un periodo).
+// =========================================================================
+
+/**
+ * true si un periodo (fechas "YYYY-MM-DD") abarca mas de un mes calendario
+ * - ej. una quincena 24/08 al 06/09 SI cruza, una quincena 01/09 al 15/09
+ * no. Un periodo MENSUAL nunca cruza (por definicion cubre un solo mes).
+ */
+export function periodoCruzaMes(fechaInicio: string, fechaFin: string): boolean {
+  return fechaInicio.slice(0, 7) !== fechaFin.slice(0, 7);
+}
+
+export interface TramoMes {
+  anio: number;
+  mes: number;
+  desde: string;
+  hasta: string;
+}
+
+/**
+ * Parte un rango de fechas [fechaInicio, fechaFin] en los tramos de mes
+ * calendario que toca (lo normal es 2, pero soporta mas por robustez -
+ * ej. un rango de varios meses). Cada tramo queda acotado al mes calendario
+ * que le corresponde, con fechas inclusive en formato "YYYY-MM-DD". Usa
+ * UTC medianoche para las fechas (mismo patron que el resto del motor de
+ * calculo) para no depender de la zona horaria del servidor.
+ */
+export function calcularTramosMes(fechaInicio: string, fechaFin: string): TramoMes[] {
+  const tramos: TramoMes[] = [];
+  let actual = new Date(fechaInicio + "T00:00:00Z");
+  const fin = new Date(fechaFin + "T00:00:00Z");
+  while (actual <= fin) {
+    const anio = actual.getUTCFullYear();
+    const mes = actual.getUTCMonth() + 1;
+    // Dia 0 del mes SIGUIENTE = ultimo dia de este mes (truco estandar de
+    // Date con UTC para no tener que calcular a mano cuantos dias tiene
+    // cada mes/si es bisiesto).
+    const finDeMes = new Date(Date.UTC(anio, mes, 0));
+    const hasta = finDeMes.getTime() < fin.getTime() ? finDeMes : fin;
+    tramos.push({
+      anio,
+      mes,
+      desde: actual.toISOString().slice(0, 10),
+      hasta: hasta.toISOString().slice(0, 10),
+    });
+    actual = new Date(hasta.getTime() + 24 * 60 * 60 * 1000);
+  }
+  return tramos;
+}
+
+/** Dias calendario, inclusive, entre 2 fechas "YYYY-MM-DD". */
+export function diasEntreFechas(desde: string, hasta: string): number {
+  const a = new Date(desde + "T00:00:00Z");
+  const b = new Date(hasta + "T00:00:00Z");
+  return Math.round((b.getTime() - a.getTime()) / 86400000) + 1;
+}
+
+/**
+ * Suma los resultados de calcularLineaPlanilla de 2+ tramos de mes de un
+ * mismo periodo (Ronda 3) en un solo detalle, como si se hubiera calculado
+ * de una vez.
+ *
+ * La mayoria de los campos son proporcionales a los dias/horas de CADA
+ * tramo (dias trabajados, dominical, feriado, horas extra, gratificacion,
+ * CTS, vacaciones, aportes/descuentos basados en una base de remuneracion,
+ * etc.) y sumarlos tramo por tramo da el mismo resultado que si se hubiera
+ * calculado el periodo completo con una sola tabla - la diferencia es que
+ * cada tramo usa la tabla salarial/tasas AFP correctas de SU mes.
+ *
+ * PERO al menos 1 campo es un monto FIJO por tipo de periodo, no por dias
+ * trabajados en el tramo - sumarlo tal cual lo duplicaria:
+ * - "seguro_vida" (EsSalud+Vida, migracion 029): monto fijo segun el TIPO
+ *   de periodo (quincenal/semanal/mensual), no segun los dias de cada
+ *   tramo - es exactamente el mismo tipo de bug que la migracion 029 ya
+ *   corrigio una vez para este campo (antes se pagaba entero en cada
+ *   periodo en vez de prorratearse).
+ * Este campo se toma UNA sola vez, del ultimo tramo cronologico (mismo
+ * criterio ya confirmado con el usuario para jornal_diario), en vez de
+ * sumarse.
+ *
+ * NOTA (recon 11/46): el parche original de esta funcion tambien excluia
+ * "condicion_trabajo" (migracion 026, monto fijo por contrato) de la suma
+ * por el mismo motivo que seguro_vida. Esa migracion (026) no existe
+ * todavia en este punto de la reconstruccion - ni el campo
+ * "condicion_trabajo" esta en DetallePlanilla - asi que no se referencia
+ * aqui. Revisar y reincorporar (tomar del ultimo tramo, no sumar) cuando
+ * se reconstruya esa migracion.
+ *
+ * NOTA (recon 11/46): el parche original tambien sumaba
+ * "dias_dominical_no_laborado", "remuneracion_dominical_proporcional",
+ * "sobretasa_dominical" y "sobretasa_feriado" (infraestructura de
+ * "dominical proporcional / feriado no laborado", ver migraciones
+ * 022/023 aun no reconstruidas). Esos campos no existen todavia en
+ * DetallePlanilla, asi que se omiten aqui. Revisar cuando se reconstruya
+ * esa infraestructura: agregarlos de vuelta a "detalle" (sumados, igual
+ * que remuneracion_dominical/remuneracion_feriado) y a totalIngresos.
+ *
+ * total_ingresos, total_descuentos, neto_pagar y
+ * detalle_json.total_aportes_empleador se RECALCULAN a partir de los
+ * componentes ya sumados/tomados (en vez de sumar esos totales tal cual),
+ * precisamente porque dependen del campo que no se suma.
+ */
+export function sumarResultadosLinea(resultados: ResultadoCalculoLinea[]): ResultadoCalculoLinea {
+  if (resultados.length === 0) {
+    throw new Error("sumarResultadosLinea necesita al menos 1 resultado");
+  }
+  if (resultados.length === 1) return resultados[0];
+
+  const detalles = resultados.map((r) => r.detalle);
+  const ultimo = detalles[detalles.length - 1];
+  const sumar = (
+    campo: Exclude<keyof (typeof detalles)[number], "contrato_id" | "detalle_json">
+  ): number => redondear(detalles.reduce((acc, d) => acc + Number(d[campo]), 0));
+
+  const detalle = {
+    contrato_id: ultimo.contrato_id,
+    dias_trabajados: sumar("dias_trabajados"),
+    dias_dominical: sumar("dias_dominical"),
+    // NOTA (recon 11/46): "dias_dominical_no_laborado" no existe todavia en
+    // DetallePlanilla (ver comentario de la funcion) - se omite.
+    dias_feriado: sumar("dias_feriado"),
+    dias_falta: sumar("dias_falta"),
+    horas_extra_25: sumar("horas_extra_25"),
+    horas_extra_35: sumar("horas_extra_35"),
+    horas_extra_100: sumar("horas_extra_100"),
+    dias_subsidio_enfermedad: sumar("dias_subsidio_enfermedad"),
+    dias_subsidio_maternidad: sumar("dias_subsidio_maternidad"),
+    dias_licencia_paternidad: sumar("dias_licencia_paternidad"),
+    // Del ultimo tramo cronologico - ver comentario de la funcion.
+    jornal_diario: ultimo.jornal_diario,
+    sueldo_basico: sumar("sueldo_basico"),
+    remuneracion_dominical: sumar("remuneracion_dominical"),
+    // NOTA (recon 11/46): "remuneracion_dominical_proporcional",
+    // "sobretasa_dominical" y "sobretasa_feriado" no existen todavia en
+    // DetallePlanilla (ver comentario de la funcion) - se omiten.
+    remuneracion_feriado: sumar("remuneracion_feriado"),
+    importe_horas_extra: sumar("importe_horas_extra"),
+    asignacion_familiar: sumar("asignacion_familiar"),
+    asignacion_escolaridad: sumar("asignacion_escolaridad"),
+    bonificacion_buc: sumar("bonificacion_buc"),
+    bonificacion_bae: sumar("bonificacion_bae"),
+    bonificacion_movilidad: sumar("bonificacion_movilidad"),
+    // NOTA (recon 11/46): "condicion_trabajo" no existe todavia en
+    // DetallePlanilla (ver comentario de la funcion) - se omite.
+    subsidio_enfermedad: sumar("subsidio_enfermedad"),
+    licencia_paternidad: sumar("licencia_paternidad"),
+    otras_bonificaciones: sumar("otras_bonificaciones"),
+    gratificacion: sumar("gratificacion"),
+    bonificacion_extraordinaria: sumar("bonificacion_extraordinaria"),
+    cts: sumar("cts"),
+    vacaciones: sumar("vacaciones"),
+    aporte_pension: sumar("aporte_pension"),
+    descuento_sindicato: sumar("descuento_sindicato"),
+    // No se suma: monto fijo segun tipo de periodo - ver comentario de la
+    // funcion.
+    seguro_vida: ultimo.seguro_vida,
+    conafovicer: sumar("conafovicer"),
+    renta_5ta: sumar("renta_5ta"),
+    otros_descuentos: sumar("otros_descuentos"),
+    essalud: sumar("essalud"),
+    sctr: sumar("sctr"),
+    senati: sumar("senati"),
+  };
+
+  // NOTA (recon 11/46): la suma original tambien incluia
+  // "remuneracion_dominical_proporcional", "sobretasa_dominical",
+  // "sobretasa_feriado" y "condicion_trabajo" - omitidos porque esos
+  // campos no existen todavia (ver comentario de la funcion). Revisar y
+  // reincorporar cuando se reconstruyan esas migraciones.
+  const totalIngresos = redondear(
+    detalle.sueldo_basico +
+      detalle.remuneracion_dominical +
+      detalle.remuneracion_feriado +
+      detalle.importe_horas_extra +
+      detalle.asignacion_familiar +
+      detalle.asignacion_escolaridad +
+      detalle.bonificacion_buc +
+      detalle.bonificacion_bae +
+      detalle.bonificacion_movilidad +
+      detalle.subsidio_enfermedad +
+      detalle.licencia_paternidad +
+      detalle.gratificacion +
+      detalle.bonificacion_extraordinaria +
+      detalle.cts +
+      detalle.vacaciones
+  );
+  const totalDescuentos = redondear(
+    detalle.aporte_pension + detalle.descuento_sindicato + detalle.conafovicer + detalle.renta_5ta + detalle.otros_descuentos
+  );
+  const netoPagar = redondear(totalIngresos - totalDescuentos);
+  const totalAportesEmpleador = redondear(detalle.essalud + detalle.sctr + detalle.senati + detalle.seguro_vida);
+
+  const bases = detalles.reduce(
+    (acc, d) => {
+      const b = (d.detalle_json as { bases?: Record<string, number> }).bases ?? {};
+      for (const clave of Object.keys(acc) as (keyof typeof acc)[]) {
+        acc[clave] = redondear(acc[clave] + Number(b[clave] ?? 0));
+      }
+      return acc;
+    },
+    { essalud: 0, sctr: 0, senati: 0, onp: 0, afp: 0, renta5ta: 0, conafovicer: 0 }
+  );
+  const remuneracionComputable = redondear(
+    detalles.reduce((acc, d) => acc + Number((d.detalle_json as { remuneracion_computable?: number }).remuneracion_computable ?? 0), 0)
+  );
+  const aportePensionDetalle = detalles.reduce(
+    (acc, d) => {
+      const ap = (d.detalle_json as { aporte_pension_detalle?: Record<string, number> }).aporte_pension_detalle ?? {};
+      for (const clave of Object.keys(acc) as (keyof typeof acc)[]) {
+        acc[clave] = redondear(acc[clave] + Number(ap[clave] ?? 0));
+      }
+      return acc;
+    },
+    { total: 0, onp: 0, aporteObligatorio: 0, comisionFlujo: 0, primaSeguro: 0 }
+  );
+
+  return {
+    detalle: {
+      ...detalle,
+      total_ingresos: totalIngresos,
+      total_descuentos: totalDescuentos,
+      neto_pagar: netoPagar,
+      detalle_json: {
+        remuneracion_computable: remuneracionComputable,
+        bases,
+        aporte_pension_detalle: aportePensionDetalle,
+        total_aportes_empleador: totalAportesEmpleador,
+        // Trazabilidad (Ronda 3): que tramos de mes se usaron para este
+        // calculo y el jornal diario que le correspondio a cada uno, para
+        // que se pueda explicar de donde salio el monto final si el
+        // usuario pregunta.
+        tramos_mes: detalles.map((d) => ({
+          jornal_diario: d.jornal_diario,
+          sueldo_basico: d.sueldo_basico,
+          total_ingresos: d.total_ingresos,
+        })),
+      },
+    },
+  };
+}
+
 function redondear(valor: number): number {
   return Math.round(valor * 100) / 100;
 }

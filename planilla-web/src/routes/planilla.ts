@@ -5,10 +5,18 @@ import ExcelJS from "exceljs";
 import { asyncHandler } from "../asyncHandler";
 import { requierePermiso } from "../authMiddleware";
 import { pool } from "../db";
-import { calcularLineaPlanilla, esConstruccionCivil } from "../motorCalculo";
+import {
+  calcularLineaPlanilla,
+  calcularTramosMes,
+  diasEntreFechas,
+  esConstruccionCivil,
+  periodoCruzaMes,
+  ResultadoCalculoLinea,
+  sumarResultadosLinea,
+} from "../motorCalculo";
 import { obtenerConceptos } from "./conceptos";
 import { tieneAccesoProyecto } from "../permisos";
-import { Contrato, ParametrosNormativos, TablaSalarialMensual, TasasAFPMensuales } from "../tipos";
+import { AsistenciaEntrada, Contrato, ParametrosNormativos, TablaSalarialMensual, TasasAFPMensuales } from "../tipos";
 import { ErrorValidacion } from "../validaciones";
 import { registrarBitacora } from "../bitacora";
 import { generarPdfTabla } from "../pdfTabla";
@@ -602,22 +610,44 @@ function redondear2(valor: number): number {
 }
 
 /**
- * Suma todas las filas de tareo_diario de un contrato en un periodo y
- * actualiza asistencia_periodo con los totales resultantes, via la misma
- * guardarAsistencia() que usan la carga por Excel y la edicion manual. Los
- * conceptos que hoy se guardan en "dias" (jornal normal, dominical, feriado)
- * se obtienen dividiendo el total de horas entre 8 (jornada estandar) -
- * mismo criterio que ya tolera dias_trabajados fraccionario en el resto del
- * sistema (ver comentarios de motorCalculo.ts sobre dias redondeados).
+ * Normaliza una fecha de columna DATE (que pg puede devolver como objeto
+ * Date, o ya como string en algunos drivers/consultas) al formato
+ * "YYYY-MM-DD" que esperan periodoCruzaMes/calcularTramosMes/diasEntreFechas
+ * (motorCalculo.ts, Ronda 3). El servidor corre en UTC (confirmado), asi
+ * que toISOString() no desfasa el dia.
  */
-async function recalcularAsistenciaDesdeTareoDiario(periodoId: string, contratoId: number) {
+function fechaISO(v: unknown): string {
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return String(v).slice(0, 10);
+}
+
+/**
+ * Suma todas las filas de tareo_diario de un contrato, en el rango
+ * [fechaDesde, fechaHasta], en los totales que espera asistencia_periodo.
+ * Los conceptos que hoy se guardan en "dias" (jornal normal, dominical,
+ * feriado) se obtienen dividiendo el total de horas entre 8 (jornada
+ * estandar) - mismo criterio que ya tolera dias_trabajados fraccionario en
+ * el resto del sistema (ver comentarios de motorCalculo.ts sobre dias
+ * redondeados).
+ *
+ * NOTA (recon 11/46): separada de recalcularAsistenciaDesdeTareoDiario para
+ * que el tramo-por-tramo de un periodo que cruza de mes (Ronda 3, ver
+ * calcularTramosMes en motorCalculo.ts) pueda pedir el tareo diario de SOLO
+ * un tramo a la vez, sin tener que releer el periodo completo cada vez.
+ */
+async function agregarTareoDiario(
+  periodoId: string | number,
+  contratoId: number,
+  fechaDesde: string,
+  fechaHasta: string
+): Promise<Omit<AsistenciaEntrada, "contrato_id">> {
   const r = await pool.query(
     `SELECT horas_normales, minutos_normales, horas_dominical, minutos_dominical,
             horas_feriado, minutos_feriado, horas_extra_tramo1, minutos_extra_tramo1,
             horas_extra_tramo2, minutos_extra_tramo2, horas_extra_tramo3, minutos_extra_tramo3,
             tipo_dia_especial
-     FROM tareo_diario WHERE periodo_id = $1 AND contrato_id = $2`,
-    [periodoId, contratoId]
+     FROM tareo_diario WHERE periodo_id = $1 AND contrato_id = $2 AND fecha BETWEEN $3 AND $4`,
+    [periodoId, contratoId, fechaDesde, fechaHasta]
   );
 
   let horasNormales = 0;
@@ -654,8 +684,7 @@ async function recalcularAsistenciaDesdeTareoDiario(periodoId: string, contratoI
     horasTramo3 += Number(fila.horas_extra_tramo3) + Number(fila.minutos_extra_tramo3) / 60;
   }
 
-  await guardarAsistencia(periodoId, {
-    contrato_id: contratoId,
+  return {
     dias_trabajados: redondear2(horasNormales / 8),
     dias_dominical: redondear2(horasDominical / 8),
     dias_feriado: redondear2(horasFeriado / 8),
@@ -666,7 +695,20 @@ async function recalcularAsistenciaDesdeTareoDiario(periodoId: string, contratoI
     dias_subsidio_enfermedad: diasSubsidioEnfermedad,
     dias_subsidio_maternidad: diasSubsidioMaternidad,
     dias_licencia_paternidad: diasLicenciaPaternidad,
-  });
+  };
+}
+
+/**
+ * Envoltorio de agregarTareoDiario que cubre el periodo COMPLETO (fecha_inicio
+ * a fecha_fin de periodos_planilla) y guarda el resultado en
+ * asistencia_periodo via guardarAsistencia() - el mismo flujo que usan la
+ * carga por Excel y la edicion manual de totales.
+ */
+async function recalcularAsistenciaDesdeTareoDiario(periodoId: string, contratoId: number) {
+  const periodo = await obtenerPeriodo(periodoId);
+  if (!periodo) return;
+  const valores = await agregarTareoDiario(periodoId, contratoId, fechaISO(periodo.fecha_inicio), fechaISO(periodo.fecha_fin));
+  await guardarAsistencia(periodoId, { contrato_id: contratoId, ...valores });
 }
 
 async function verificarAccesoContrato(req: Request, contratoId: string): Promise<string | null> {
@@ -1113,6 +1155,49 @@ planillaRouter.post(
     const afpTasas = await obtenerAfpTasas(periodo.anio, periodo.mes);
     const conceptos = await obtenerConceptos();
 
+    // Ronda 3: si el periodo cruza de mes calendario (tipico en quincenas/
+    // semanas, ej. 24/08-06/09), el calculo de cada contrato CON Tareo
+    // Diario cargado se parte en tramos de mes calendario - cada uno con su
+    // propia tabla salarial/tasas AFP - y se suman (ver
+    // periodoCruzaMes/calcularTramosMes/sumarResultadosLinea en
+    // motorCalculo.ts). Un contrato sin Tareo Diario (solo carga en bloque,
+    // sin fecha por dia) no tiene forma de saber que parte de su asistencia
+    // cae en cada tramo, asi que sigue usando el comportamiento anterior
+    // (una sola tabla, la del mes de inicio) y se avisa para revisar a mano.
+    const fechaInicioPeriodo = fechaISO(periodo.fecha_inicio);
+    const fechaFinPeriodo = fechaISO(periodo.fecha_fin);
+    const cruzaMes = periodoCruzaMes(fechaInicioPeriodo, fechaFinPeriodo);
+    const tramosPeriodo = cruzaMes ? calcularTramosMes(fechaInicioPeriodo, fechaFinPeriodo) : [];
+    const contratosConTareoDiarioResult = cruzaMes
+      ? await pool.query("SELECT DISTINCT contrato_id FROM tareo_diario WHERE periodo_id = $1", [periodo.id])
+      : { rows: [] as { contrato_id: number }[] };
+    const contratosConTareoDiario = new Set(contratosConTareoDiarioResult.rows.map((f) => f.contrato_id));
+    // Cache de parametros/tabla salarial/tasas AFP por tramo de mes, para no
+    // volver a consultarlos por cada trabajador que toque el mismo tramo.
+    const cacheConfigTramo = new Map<
+      string,
+      { parametros: ParametrosNormativos; tablaCategorias: TablaSalarialMensual; afpTasas: TasasAFPMensuales }
+    >();
+    async function obtenerConfigTramo(anio: number, mes: number) {
+      const clave = `${anio}-${mes}`;
+      let config = cacheConfigTramo.get(clave);
+      if (!config) {
+        config = {
+          parametros: await obtenerParametros(anio),
+          tablaCategorias: await obtenerTablaCategorias(anio, mes),
+          afpTasas: await obtenerAfpTasas(anio, mes),
+        };
+        cacheConfigTramo.set(clave, config);
+      }
+      return config;
+    }
+    // Puramente informativo (Ronda 3): un contrato con tareo cargado solo
+    // en bloque (sin fecha por dia) en un periodo que cruza de mes - no se
+    // puede saber que parte de su asistencia corresponde a cada tramo, asi
+    // que se calcula con una sola tabla (la del mes de inicio) y se avisa
+    // para revisar a mano si el jornal/tabla cambio de un mes a otro.
+    const avisosCruceMes: Array<{ contrato_id: number; dni: string; nombre: string; mensaje: string }> = [];
+
     await cliente.query("BEGIN");
 
     // Deja detalle_planilla en sincronia exacta con el tareo actual: borra
@@ -1208,20 +1293,65 @@ planillaRouter.post(
 
       await cliente.query(`SAVEPOINT trabajador_${i}`);
       try {
-        const { detalle } = calcularLineaPlanilla(
-          contrato,
-          contrato.numero_hijos,
-          asistencia,
-          parametros,
-          tablaCategorias,
-          afpTasas,
-          periodo.dias_periodo,
-          periodo.mes,
-          periodo.anio,
-          Number(fila.cuota_sindical_semanal),
-          conceptos,
-          periodo.tipo
-        );
+        let resultado: ResultadoCalculoLinea;
+        // EVENTUAL nunca se parte en tramos: es un monto pactado fijo por
+        // una tarea puntual (ver calcularLineaEventual), no un sueldo que
+        // dependa de la tabla salarial del mes - partirlo duplicaria el
+        // monto pactado si el contrato tuviera tareo diario cargado.
+        if (cruzaMes && contrato.categoria_ocupacional !== "EVENTUAL" && contratosConTareoDiario.has(contrato.id)) {
+          const resultadosTramos: ResultadoCalculoLinea[] = [];
+          for (const tramo of tramosPeriodo) {
+            const { parametros: parametrosTramo, tablaCategorias: tablaTramo, afpTasas: afpTramo } =
+              await obtenerConfigTramo(tramo.anio, tramo.mes);
+            const valoresTramo = await agregarTareoDiario(periodo.id, contrato.id, tramo.desde, tramo.hasta);
+            const asistenciaTramo = { contrato_id: contrato.id, ...valoresTramo };
+            const diasPeriodoTramo = diasEntreFechas(tramo.desde, tramo.hasta);
+            resultadosTramos.push(
+              calcularLineaPlanilla(
+                contrato,
+                contrato.numero_hijos,
+                asistenciaTramo,
+                parametrosTramo,
+                tablaTramo,
+                afpTramo,
+                diasPeriodoTramo,
+                tramo.mes,
+                tramo.anio,
+                Number(fila.cuota_sindical_semanal),
+                conceptos,
+                periodo.tipo
+              )
+            );
+          }
+          resultado = sumarResultadosLinea(resultadosTramos);
+        } else {
+          if (cruzaMes && contrato.categoria_ocupacional !== "EVENTUAL" && !contratosConTareoDiario.has(contrato.id)) {
+            avisosCruceMes.push({
+              contrato_id: contrato.id,
+              dni: contrato.numero_documento,
+              nombre: contrato.apellidos_nombres,
+              mensaje:
+                "Este periodo cruza de mes calendario y este trabajador no tiene Tareo Diario cargado (solo tareo en bloque): " +
+                "se calculo con una sola tabla salarial (la del mes de inicio del periodo). Revisar a mano si la tabla salarial " +
+                "cambio de un mes a otro dentro de este periodo.",
+            });
+          }
+          resultado = calcularLineaPlanilla(
+            contrato,
+            contrato.numero_hijos,
+            asistencia,
+            parametros,
+            tablaCategorias,
+            afpTasas,
+            periodo.dias_periodo,
+            periodo.mes,
+            periodo.anio,
+            Number(fila.cuota_sindical_semanal),
+            conceptos,
+            periodo.tipo
+          );
+        }
+        const { detalle } = resultado;
 
         const r = await cliente.query(
           `INSERT INTO detalle_planilla (
@@ -1360,6 +1490,7 @@ planillaRouter.post(
       errores: erroresCalculo,
       avisos_subsidio: avisosSubsidio,
       avisos_regimen: avisosRegimen,
+      avisos_cruce_mes: avisosCruceMes,
     });
   } catch (err) {
     await cliente.query("ROLLBACK");
