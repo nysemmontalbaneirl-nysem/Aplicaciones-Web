@@ -169,11 +169,18 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles, d
             if (e.currentTarget.src !== logoJhcr) e.currentTarget.src = logoJhcr;
           }}
           alt="Logo de la empresa"
-          style={{ width: 52, height: 52, objectFit: "contain", display: "block", margin: "0 auto 8px" }}
+          // Tamaño reducido (antes 52x52 + 8px de margen): bug real
+          // reportado por el usuario - al imprimir/guardar como PDF desde
+          // el navegador, la boleta se desbordaba a 2 hojas. Este logo mas
+          // chico es parte de la reduccion general de espacios en blanco
+          // (ver tambien styles.css, ".boleta-imprimible") para que todo
+          // vuelva a caber en 1 sola pagina, igual que ya cabe en el PDF
+          // que genera el backend.
+          style={{ width: 40, height: 40, objectFit: "contain", display: "block", margin: "0 auto 4px" }}
         />
       </div>
 
-      <table style={{ marginTop: 16, marginBottom: 16 }}>
+      <table style={{ marginTop: 8, marginBottom: 8 }}>
         <tbody>
           <tr>
             <td style={{ width: 140, color: "#5a6172" }}>Apellidos y nombres</td>
@@ -214,7 +221,17 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles, d
         </tbody>
       </table>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+      {/* Ingresos suele tener bastantes mas conceptos (y etiquetas mas
+          largas: "Bonificacion Unificada Construccion (BUC)", "Subsidio
+          incapacidad temporal (descanso medico)", etc.) que Descuentos o
+          Aportes del empleador - con las 3 columnas del mismo ancho, esas
+          etiquetas largas se envolvian a 2 lineas seguido, y esa columna
+          (la que define el alto total de las 3) terminaba empujando la
+          boleta a una segunda hoja al imprimir/guardar como PDF (bug real
+          reportado por el usuario). Dandole mas ancho a Ingresos evita la
+          mayoria de esos saltos de linea sin tener que achicar la fuente
+          a un tamaño dificil de leer. */}
+      <div style={{ display: "grid", gridTemplateColumns: "1.3fr 0.85fr 0.85fr", gap: 8 }}>
         <div>
           <h3 style={{ fontSize: "0.95rem", marginBottom: 6 }}>Ingresos</h3>
           <table>
@@ -274,9 +291,9 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles, d
 
       <div
         style={{
-          marginTop: 20,
+          marginTop: 10,
           textAlign: "right",
-          fontSize: "1.2rem",
+          fontSize: "1.1rem",
           fontWeight: 700,
         }}
       >
@@ -292,14 +309,14 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles, d
           misma linea solo si estan configuradas. */}
       <div
         className="bloque-firmas"
-        style={{ marginTop: 36, display: "flex", justifyContent: "space-between", gap: 16 }}
+        style={{ marginTop: 16, display: "flex", justifyContent: "space-between", gap: 16 }}
       >
         <div style={{ width: 180, textAlign: "center" as const }}>
           {datosEmpresa?.tiene_firma_empleador && (
             <img
               src={conToken(`${BASE_URL}/empresa/firma-empleador`)}
               alt="Firma del empleador"
-              style={{ height: 40, maxWidth: 160, objectFit: "contain", display: "block", margin: "0 auto" }}
+              style={{ height: 32, maxWidth: 150, objectFit: "contain", display: "block", margin: "0 auto" }}
               onError={(e) => {
                 e.currentTarget.style.display = "none";
               }}
@@ -318,7 +335,7 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles, d
             <img
               src={conToken(`${BASE_URL}/contratos/${detalle.contrato_id}/firma`)}
               alt="Firma del trabajador"
-              style={{ height: 40, maxWidth: 160, objectFit: "contain", display: "block", margin: "0 auto" }}
+              style={{ height: 32, maxWidth: 150, objectFit: "contain", display: "block", margin: "0 auto" }}
               onError={(e) => {
                 e.currentTarget.style.display = "none";
               }}

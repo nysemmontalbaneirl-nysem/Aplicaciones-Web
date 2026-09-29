@@ -442,6 +442,34 @@ input[type="number"] {
   width: 90px;
 }
 
+/* Bug real reportado por el usuario: al imprimir o guardar como PDF desde
+   el navegador (boton "Imprimir" de la boleta), el contenido salia en 2
+   hojas. Causa: la boleta reutiliza <table> igual que el resto de la app
+   (para no duplicar estilos), pero el padding generoso de "th, td" de mas
+   arriba esta pensado para listas normales (Trabajadores, Tareo, etc.), no
+   para una boleta con hasta 17+ lineas de ingreso en una columna angosta -
+   ese padding sumado hace que la altura total se pase de una pagina. Se
+   reduce el padding y el tamaño de fuente SOLO dentro de la boleta (no
+   afecta ninguna otra pantalla) - mismo criterio de "filas compactas" que
+   ya se uso para el PDF que genera el backend (fuente 8-10pt, ver
+   src/boletaPdf.ts). Se aplica siempre (no solo en @media print) para que
+   la vista en pantalla coincida con lo que despues se imprime.
+*/
+.boleta-imprimible {
+  /* El resto de la app usa line-height:1.5 (mas legible en pantalla para
+     texto largo) - en la boleta, con muchas lineas cortas de monto, ese
+     interlineado generoso era gran parte de lo que hacia que se desbordara
+     a 2 hojas al imprimir/guardar como PDF. Se reduce solo aqui dentro. */
+  line-height: 1.2;
+}
+.boleta-imprimible th,
+.boleta-imprimible td {
+  padding: 2px 6px;
+}
+.boleta-imprimible table {
+  font-size: 0.78rem;
+}
+
 /* Grilla del Tareo Diario: muchas columnas de horas/minutos por fila, se
    necesitan inputs angostos y la tabla debe poder desplazarse horizontal
    sin que la pagina completa se desborde. */
@@ -488,6 +516,11 @@ input[type="number"] {
     left: 0;
     top: 0;
     width: 100%;
+    /* Bug real reportado por el usuario (boleta en 2 hojas al imprimir/
+       guardar como PDF desde el navegador) - se reduce junto con el resto
+       de los espacios en blanco de la boleta. */
+    padding: 8mm 10mm;
+    box-sizing: border-box;
     box-shadow: none;
   }
   .lote-imprimible {
@@ -495,11 +528,22 @@ input[type="number"] {
     left: 0;
     top: 0;
     width: 100%;
+    /* Mismo criterio que .boleta-imprimible de arriba - solo horizontal
+       porque el padding horizontal de un bloque no se ve afectado por los
+       saltos de pagina (a diferencia del vertical, que solo aparece antes
+       de la primera linea y despues de la ultima). */
+    padding: 0 10mm;
+    box-sizing: border-box;
   }
   /* Dentro de un lote, cada boleta pasa a flujo normal y se imprime en su
-     propia hoja (equivalente a la impresion "por bloques" del Excel). */
+     propia hoja (equivalente a la impresion "por bloques" del Excel).
+     Padding vertical si hace falta aqui porque cada boleta reinicia su
+     propio "top" de pagina - el margen de pagina del navegador quedo en 0
+     arriba. */
   .lote-imprimible .boleta-imprimible {
     position: static;
+    padding: 8mm 0;
+    box-sizing: border-box;
     box-shadow: none;
     page-break-after: always;
   }
