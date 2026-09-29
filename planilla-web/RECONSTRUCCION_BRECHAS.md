@@ -1023,3 +1023,57 @@ CSS.
 
 Verificado: `tsc --noEmit` limpio (backend y frontend). 365/365 tests
 (sin tests propios de este parche, cambio de frontend puro).
+
+---
+
+## 22. Parche #38/46 (`74d63657`, "Trabajadores: convierte Historial y Dar de baja/Editar cese a formulario flotante") SALTADO — construye ENCIMA de la brecha #1 (vía el parche #37), no la cierra
+
+**Estado: saltado sin aplicar (no hay commit funcional para él, solo un
+comentario `NOTA` en el punto donde hubiera ido).**
+
+Convierte las tarjetas de "Historial de periodos" y "Dar de baja/Editar
+cese" de `Trabajadores.tsx` (que hasta ahora quedaban renderadas al final
+de la lista, obligando a desplazarse) al mismo patrón
+`modal-overlay`/`modal-flotante` que el parche #37/46 quiso introducir
+para el formulario de alta/edición — y que se tuvo que omitir por la
+brecha #1 (ver sección 21). Este parche depende ENTERAMENTE de esa misma
+base: usa las mismas clases CSS (`modal-overlay`, `modal-flotante`,
+`modal-flotante-ancho`, `modal-flotante-cabecera`,
+`modal-flotante-cerrar`) que ya se confirmó que no existen en
+`styles.css`, y además asume como contexto ya existente el cambio de
+`useEffect` de Escape del parche #37/46 (el que combina cerrar
+cesando/historial/formulario con Escape en orden de "más anidado
+primero") — cambio que también se omitió al revertir el envoltorio de
+modal completo en la sección 21.
+
+De los 4 hunks, 2 (que solo eliminan las referencias `cesandoRef`/
+`historialRef` y sus `useEffect` de scroll-into-view) aplicarían "limpio"
+en aislamiento, pero dejarían el árbol roto: esas refs siguen en uso por
+las tarjetas simples que SÍ se conservaron (patrón ya visto de "éxito
+parcial" pero en sentido inverso — aquí el peligro es aplicar solo la
+mitad "de atrás" sin la mitad "de adelante", que es justamente la que no
+se puede reconstruir). El hunk que combina la lógica de Escape falló por
+completo (el contexto que esperaba, ya modificado por el parche #37/46,
+nunca se aplicó en este árbol). El hunk grande que reemplaza ambas
+tarjetas por modales sí calificaría como "aplicable" en un dry-run
+aislado, pero por la misma razón de fondo (CSS inexistente) que la
+sección 21 ya explicó para el formulario principal.
+
+**Decisión**: se saltó el parche completo (SALTADO), sin tocar código
+funcional — solo se agregó un comentario `NOTA (recon 38/46): ...` justo
+antes de la tarjeta de "Dar de baja/Editar cese", explicando que depende
+de la misma brecha #1 vía el parche #37/46. Las tarjetas de Historial y
+Dar de baja/Editar cese siguen funcionando exactamente igual que antes
+de este parche (con scroll automático hacia ellas, sin modal).
+
+**Cómo cerrar esta brecha en el futuro:** igual que las secciones 1, 18 y
+21 — si aparecen las clases CSS `modal-overlay`/`modal-flotante`/etc. (ya
+sea porque aparece el parche original que las creó, o porque se decide
+escribirlas a mano en algún momento dado lo extendida que está esta
+brecha), reintentar de una sola vez todos los fragmentos ya identificados
+como bloqueados por esta causa: parche #18 (`Tareo.tsx`), parche #37
+(formulario principal de `Trabajadores.tsx`) y este mismo parche #38
+(Historial y Dar de baja/Editar cese de `Trabajadores.tsx`).
+
+No requirió verificación (`tsc`/`jest`) porque no se tocó ningún código
+funcional, solo se agregó un comentario.

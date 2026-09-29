@@ -1241,6 +1241,14 @@ export default function Trabajadores() {
       </div>
       )}
 
+      {/* NOTA (recon 38/46): el parche #38/46 ("Trabajadores: convierte
+          Historial y Dar de baja/Editar cese a formulario flotante")
+          convierte esta tarjeta (y la de Historial, mas abajo) al mismo
+          patron modal-overlay/modal-flotante que el parche #37/46 queria
+          usar para el formulario de alta/edicion - misma brecha #1 (clases
+          CSS modal-* que ningun parche de los 46 define, ver NOTA arriba
+          en este archivo y RECONSTRUCCION_BRECHAS.md). Se omitio entero
+          (SALTADO), se conservan las tarjetas simples de siempre. */}
       {cesando && (
         <div className="card" ref={cesandoRef} style={{ order: 2 }}>
           <h2 className="titulo-reporte">
