@@ -89,19 +89,52 @@ export async function obtenerAfpTasas(anio: number, mes: number): Promise<TasasA
   return tasas;
 }
 
-// Trae el periodo y sus boletas calculadas, con el mismo filtro de texto
-// (DNI o nombre) y el mismo recorte por proyectos del usuario que usa tanto
-// la vista en pantalla (Boletas.tsx) como las descargas de Excel/PDF, para
-// que "lo que ves es lo que exportas".
-async function obtenerDetallePeriodo(periodoId: string, q: string | undefined, usuario: NonNullable<Request["usuario"]>) {
+// Filtros opcionales que aceptan tanto la vista en pantalla (Boletas.tsx)
+// como las descargas de Excel/PDF/boletas, para que "lo que ves es lo que
+// exportas": "q" (DNI o nombre, ya existia) y, desde la mejora "Boletas"
+// (sept. 2026), "calculadoDesde"/"calculadoHasta" - el usuario confirmo
+// que "Periodo creado" en su pedido se refiere a la fecha en que se
+// CALCULO cada boleta (detalle_planilla.calculado_en), no a cuando se dio
+// de alta el periodo en si.
+interface FiltrosDetallePeriodo {
+  q?: string;
+  calculadoDesde?: string;
+  calculadoHasta?: string;
+}
+
+function filtrosDetallePeriodoDeQuery(query: Request["query"]): FiltrosDetallePeriodo {
+  return {
+    q: query.q as string | undefined,
+    calculadoDesde: query.calculado_desde as string | undefined,
+    calculadoHasta: query.calculado_hasta as string | undefined,
+  };
+}
+
+// Trae el periodo y sus boletas calculadas, con los mismos filtros (texto,
+// rango de fecha de calculo) y el mismo recorte por proyectos del usuario
+// que usa tanto la vista en pantalla como las descargas de Excel/PDF/
+// boletas, para que "lo que ves es lo que exportas".
+async function obtenerDetallePeriodo(periodoId: string, filtros: FiltrosDetallePeriodo, usuario: NonNullable<Request["usuario"]>) {
   const periodo = await obtenerPeriodo(periodoId);
   if (!periodo) return null;
 
   const condiciones = ["d.periodo_id = $1"];
   const valores: unknown[] = [periodoId];
-  if (q && q.trim()) {
-    valores.push(`%${q.trim()}%`);
+  if (filtros.q && filtros.q.trim()) {
+    valores.push(`%${filtros.q.trim()}%`);
     condiciones.push(`(e.numero_documento ILIKE $${valores.length} OR e.apellidos_nombres ILIKE $${valores.length})`);
+  }
+  if (filtros.calculadoDesde) {
+    valores.push(filtros.calculadoDesde);
+    condiciones.push(`d.calculado_en >= $${valores.length}::date`);
+  }
+  if (filtros.calculadoHasta) {
+    valores.push(filtros.calculadoHasta);
+    // Limite superior EXCLUSIVO del dia siguiente: "calculado_en" es un
+    // TIMESTAMPTZ (trae hora), asi que comparar con "<= fecha::date" dejaria
+    // fuera cualquier calculo hecho despues de la medianoche de ese mismo
+    // dia - el usuario espera que "hasta el 22/09" incluya TODO el 22/09.
+    condiciones.push(`d.calculado_en < ($${valores.length}::date + INTERVAL '1 day')`);
   }
   if (usuario.rol !== "ADMIN") {
     valores.push(usuario.proyectos);
@@ -121,6 +154,28 @@ async function obtenerDetallePeriodo(periodoId: string, q: string | undefined, u
     valores
   );
   return { periodo, detalle: resultado.rows };
+}
+
+// Cuenta TODAS las boletas de un periodo (sin busqueda ni rango de fecha de
+// calculo, solo el recorte por proyectos del usuario) - permite al
+// frontend distinguir "este periodo no tiene ninguna boleta calculada
+// todavia" de "la busqueda/rango no encontro nada dentro de un periodo que
+// SI tiene boletas" (pedido explicito del usuario, mejora "Boletas").
+async function contarBoletasPeriodo(periodoId: string, usuario: NonNullable<Request["usuario"]>): Promise<number> {
+  const condiciones = ["d.periodo_id = $1"];
+  const valores: unknown[] = [periodoId];
+  if (usuario.rol !== "ADMIN") {
+    valores.push(usuario.proyectos);
+    condiciones.push(`c.proyecto = ANY($${valores.length}::text[])`);
+  }
+  const r = await pool.query(
+    `SELECT COUNT(*)::int AS total
+     FROM detalle_planilla d
+     JOIN contratos c ON c.id = d.contrato_id
+     WHERE ${condiciones.join(" AND ")}`,
+    valores
+  );
+  return r.rows[0].total as number;
 }
 
 // Adjunta los montos de conceptos PERSONALIZADOS (formula propia, "Ronda D",
@@ -199,9 +254,10 @@ planillaRouter.get(
   "/:id/planilla",
   requierePermiso("boletas.ver"),
   asyncHandler(async (req: Request, res: Response) => {
-  const datos = await obtenerDetallePeriodo(req.params.id, req.query.q as string | undefined, req.usuario!);
+  const datos = await obtenerDetallePeriodo(req.params.id, filtrosDetallePeriodoDeQuery(req.query), req.usuario!);
   if (!datos) return res.status(404).json({ error: "Periodo no encontrado" });
-  res.json(datos);
+  const totalBoletasPeriodo = await contarBoletasPeriodo(req.params.id, req.usuario!);
+  res.json({ ...datos, total_boletas_periodo: totalBoletasPeriodo });
 }));
 
 // Descargas del mismo listado de boletas de un periodo (resumen por
@@ -212,7 +268,7 @@ planillaRouter.get(
   "/:id/planilla/excel",
   requierePermiso("boletas.ver"),
   asyncHandler(async (req: Request, res: Response) => {
-    const datos = await obtenerDetallePeriodo(req.params.id, req.query.q as string | undefined, req.usuario!);
+    const datos = await obtenerDetallePeriodo(req.params.id, filtrosDetallePeriodoDeQuery(req.query), req.usuario!);
     if (!datos) return res.status(404).json({ error: "Periodo no encontrado" });
     const { periodo, detalle } = datos;
 
@@ -275,7 +331,7 @@ planillaRouter.get(
   "/:id/planilla/pdf",
   requierePermiso("boletas.ver"),
   asyncHandler(async (req: Request, res: Response) => {
-    const datos = await obtenerDetallePeriodo(req.params.id, req.query.q as string | undefined, req.usuario!);
+    const datos = await obtenerDetallePeriodo(req.params.id, filtrosDetallePeriodoDeQuery(req.query), req.usuario!);
     if (!datos) return res.status(404).json({ error: "Periodo no encontrado" });
     const { periodo, detalle } = datos;
 
@@ -351,7 +407,7 @@ planillaRouter.get(
   "/:id/boletas/pdf",
   requierePermiso("boletas.ver"),
   asyncHandler(async (req: Request, res: Response) => {
-    const datos = await obtenerDetallePeriodo(req.params.id, req.query.q as string | undefined, req.usuario!);
+    const datos = await obtenerDetallePeriodo(req.params.id, filtrosDetallePeriodoDeQuery(req.query), req.usuario!);
     if (!datos) return res.status(404).json({ error: "Periodo no encontrado" });
     const { periodo, detalle } = datos;
 
@@ -379,7 +435,7 @@ planillaRouter.get(
   "/:id/boletas/zip",
   requierePermiso("boletas.ver"),
   asyncHandler(async (req: Request, res: Response) => {
-    const datos = await obtenerDetallePeriodo(req.params.id, req.query.q as string | undefined, req.usuario!);
+    const datos = await obtenerDetallePeriodo(req.params.id, filtrosDetallePeriodoDeQuery(req.query), req.usuario!);
     if (!datos) return res.status(404).json({ error: "Periodo no encontrado" });
     const { periodo, detalle } = datos;
 

@@ -572,3 +572,73 @@ el que recién se podría retomar el resto de este parche #31/46 (el
 Verificado: `tsc --noEmit` limpio (backend y frontend). 336/336 tests
 (sin cambio en el conteo - no se conservó ningún test nuevo de este
 parche).
+
+## 16. Parche #32/46 (`ba17c03a`, "Boletas: busqueda por fecha de calculo, mensajes de estado y modal flotante") — el "formulario flotante" es OTRA VEZ la brecha #1, se omite solo esa parte
+
+**Estado: mayormente reconstruido** - se aplicó todo el parche EXCEPTO la
+conversión de "Ver boleta" a un formulario flotante (modal), que se
+mantiene con el comportamiento anterior (la boleta se inserta debajo del
+listado, como ya funcionaba antes de este parche).
+
+**Causa raíz de lo omitido**: el propio comentario del parche original
+dice textualmente "Reusa el mismo patron modal-overlay/modal-flotante ya
+usado en Registrar Tareo Diario" - es decir, este modal para "Ver boleta"
+depende de la MISMA infraestructura CSS/UX (clases `.modal-overlay`,
+`.modal-flotante`, `.modal-flotante-cabecera`, `.modal-flotante-cerrar`,
+`.modal-flotante-buscador`, `.modal-flotante-resultados`,
+`.modal-flotante-resultado-vacio`) que nunca se reconstruyó, porque los
+parches que la creaban (`#16`/`#17`/`#18`, el "formulario flotante" de
+Tareo Diario) fueron SALTADOS por completo - ver brecha #1 más arriba.
+Confirmado por grep: ninguna de esas clases existe en `styles.css` ni en
+ningún componente. A diferencia de las brechas con una tabla SQL faltante
+(que hacen fallar la app con un 500), aquí el riesgo es distinto: el
+parche aplica mecánicamente 100% limpio (el JSX no depende de que la
+clase CSS exista para compilar), pero el resultado visual sería un
+`<div>` sin overlay, sin centrado ni superposición - una experiencia
+rota, no lo que el usuario pidió. Se prefirió, otra vez, no inventar esa
+UX desde cero y en su lugar conservar el comportamiento previo, coherente
+con el criterio ya aplicado en la brecha #1.
+
+**Qué se omitió/revirtió** en
+`frontend/src/components/Boletas.tsx` (el parche aplicó 100% limpio con
+`patch -p2`, esto se revirtió a mano después):
+- El estado `dniModal`/`resultadosModal`/`buscandoModal`/`envioModal`, las
+  funciones `abrirBoleta`/`cerrarBoleta` (wrappers de
+  `setBoletaSeleccionada` que además reseteaban ese estado del modal) y
+  `enviarBoletaModalPorCorreo`, y el `useEffect` que buscaba "otro
+  trabajador" por DNI dentro del modal.
+- El bloque JSX `<div className="modal-overlay">...` completo (cabecera
+  con nombre/DNI + botones Descargar PDF/Enviar por correo/Imprimir/Cerrar
+  movidos ahí, el buscador de DNI dentro del modal, y `<Boleta
+  ocultarControles />` embebida) - se restauró el `<Boleta detalle={...}
+  onCerrar={() => setBoletaSeleccionada(null)} />` simple que ya existía
+  antes de este parche (sin `ocultarControles`, con sus propios controles
+  internos).
+- `frontend/src/styles.css`: se omitió por completo el hunk que agregaba
+  `.modal-flotante-ancho { max-width: 1100px }` (una variante de una clase
+  base `.modal-flotante` que no existe - no tiene nada que extender).
+
+**Qué SÍ se reconstruyó completo** (100% del resto del parche, sin
+depender del modal en absoluto):
+- `src/routes/planilla.ts`: filtro `calculado_desde`/`calculado_hasta`
+  (por `detalle_planilla.calculado_en`, límite superior exclusivo del día
+  siguiente para incluir todo el día) en `GET /:id/planilla` y las 4
+  descargas (excel/pdf/boletas-pdf/boletas-zip) vía el nuevo
+  `FiltrosDetallePeriodo`/`filtrosDetallePeriodoDeQuery`; nueva función
+  `contarBoletasPeriodo` y el campo `total_boletas_periodo` en la
+  respuesta de `GET /:id/planilla` (1 hunk con desfase de contexto,
+  reinsertado a mano sin cambios de contenido).
+- `frontend/src/components/Boletas.tsx` (todo lo demás): `etiquetaPeriodo`
+  (quincena/semana/proyecto/"(sin calcular)" en el selector de periodo,
+  que ahora lista TODOS los periodos y no solo los ya calculados),
+  filtros de fecha "Calculado desde/hasta" en el formulario de búsqueda,
+  `mensajeSinResultados` (mensaje de 3 vías: sin calcular / calculado sin
+  boletas / búsqueda sin resultados), y los botones de exportar/imprimir
+  ahora ocultos cuando no hay resultados.
+- `tests/boletas_busqueda_y_estado.test.ts` (9 casos, archivo completo):
+  todos ejercitan exclusivamente el backend (`GET /:id/planilla` con los
+  filtros de fecha y `total_boletas_periodo`), ninguno depende del modal
+  - se conservó completo, sin cambios.
+
+Verificado: `tsc --noEmit` limpio (backend y frontend). 345/345 tests
+(336 previos + 9 nuevos de `boletas_busqueda_y_estado.test.ts`).

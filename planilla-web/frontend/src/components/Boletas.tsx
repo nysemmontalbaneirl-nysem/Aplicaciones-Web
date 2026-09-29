@@ -20,6 +20,22 @@ const MESES = [
   "Julio", "Agosto", "Setiembre", "Octubre", "Noviembre", "Diciembre",
 ];
 
+// Etiqueta del selector de periodo: antes solo mostraba "{Mes} {Año}", lo
+// que no distinguia 2 periodos del mismo mes (ej. 1ra/2da quincena, o 2
+// proyectos con periodo propio el mismo mes) - se agrega quincena/semana y
+// proyecto cuando corresponde. "(sin calcular)" es el pedido explicito del
+// usuario (mejora "Boletas", sept. 2026): antes el selector solo ofrecia
+// periodos YA calculados, asi que nunca se podia mostrar el aviso de "este
+// periodo todavia no tiene boletas generadas" - ahora se listan todos.
+function etiquetaPeriodo(p: PeriodoPlanilla): string {
+  let base = `${MESES[p.mes - 1]} ${p.anio}`;
+  if (p.tipo === "QUINCENAL") base += p.quincena === 2 ? " - 2da quincena" : " - 1ra quincena";
+  else if (p.tipo === "SEMANAL") base += ` - Semana (${p.fecha_inicio.slice(0, 10)} al ${p.fecha_fin.slice(0, 10)})`;
+  if (p.proyecto) base += ` [${p.proyecto}]`;
+  if (p.estado !== "CALCULADO") base += " (sin calcular)";
+  return base;
+}
+
 interface Props {
   periodoInicial: PeriodoPlanilla | null;
 }
@@ -30,7 +46,18 @@ export default function Boletas({ periodoInicial }: Props) {
   const [periodos, setPeriodos] = useState<PeriodoPlanilla[]>([]);
   const [periodoId, setPeriodoId] = useState<number | null>(periodoInicial?.id ?? null);
   const [busqueda, setBusqueda] = useState("");
+  // "Periodo creado" (mejora Boletas, sept. 2026): el usuario confirmo que
+  // esto significa la fecha en que se CALCULO la planilla (no la fecha en
+  // que se dio de alta el periodo), para poder acotar la busqueda a
+  // boletas calculadas/recalculadas dentro de un rango de fechas concreto.
+  const [calculadoDesde, setCalculadoDesde] = useState("");
+  const [calculadoHasta, setCalculadoHasta] = useState("");
   const [resultado, setResultado] = useState<DetallePlanilla[]>([]);
+  // Total de boletas del periodo SIN aplicar busqueda/rango de calculo -
+  // permite distinguir "el periodo no tiene ninguna boleta calculada
+  // todavia" de "la busqueda no encontro nada dentro de un periodo que SI
+  // tiene boletas" (pedido explicito del usuario).
+  const [totalBoletasPeriodo, setTotalBoletasPeriodo] = useState(0);
   const [periodoActual, setPeriodoActual] = useState<PeriodoPlanilla | null>(periodoInicial);
   const [error, setError] = useState<string | null>(null);
   const [boletaSeleccionada, setBoletaSeleccionada] = useState<DetallePlanilla | null>(null);
@@ -58,10 +85,14 @@ export default function Boletas({ periodoInicial }: Props) {
   useEffect(() => {
     apiGet<PeriodoPlanilla[]>("/periodos")
       .then((lista) => {
-        setPeriodos(lista.filter((p) => p.estado === "CALCULADO"));
+        // Antes se ofrecian solo los periodos YA CALCULADOS - eso impedia
+        // mostrarle al usuario el aviso de "este periodo todavia no se ha
+        // calculado" (nunca se podia seleccionar uno asi). Ahora se listan
+        // todos; se sigue prefiriendo un CALCULADO como seleccion inicial.
+        setPeriodos(lista);
         if (!periodoId && lista.length > 0) {
-          const primero = lista.find((p) => p.estado === "CALCULADO");
-          if (primero) setPeriodoId(primero.id);
+          const primero = lista.find((p) => p.estado === "CALCULADO") ?? lista[0];
+          setPeriodoId(primero.id);
         }
       })
       .catch((e) => setError((e as Error).message));
@@ -73,20 +104,32 @@ export default function Boletas({ periodoInicial }: Props) {
       });
   }, []);
 
+  function armarQuery(): string {
+    const params = new URLSearchParams();
+    if (busqueda.trim()) params.set("q", busqueda.trim());
+    if (calculadoDesde) params.set("calculado_desde", calculadoDesde);
+    if (calculadoHasta) params.set("calculado_hasta", calculadoHasta);
+    const texto = params.toString();
+    return texto ? `?${texto}` : "";
+  }
+
   useEffect(() => {
     if (!periodoId) return;
     setError(null);
     setSeleccionados(new Set());
     setImprimiendoLote(false);
     setResultadoEnvio(null);
-    const q = busqueda.trim() ? `?q=${encodeURIComponent(busqueda.trim())}` : "";
-    apiGet<{ periodo: PeriodoPlanilla; detalle: DetallePlanilla[] }>(`/periodos/${periodoId}/planilla${q}`)
+    apiGet<{ periodo: PeriodoPlanilla; detalle: DetallePlanilla[]; total_boletas_periodo: number }>(
+      `/periodos/${periodoId}/planilla${armarQuery()}`
+    )
       .then((d) => {
         setResultado(d.detalle);
         setPeriodoActual(d.periodo);
+        setTotalBoletasPeriodo(d.total_boletas_periodo);
       })
       .catch((e) => setError((e as Error).message));
-  }, [periodoId, busqueda]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodoId, busqueda, calculadoDesde, calculadoHasta]);
 
   const totales = resultado.reduce(
     (acc, d) => ({
@@ -98,23 +141,21 @@ export default function Boletas({ periodoInicial }: Props) {
     { ingresos: 0, descuentos: 0, aportes: 0, neto: 0 }
   );
 
-  // URL de descarga (Excel/PDF) de este mismo listado: mismo periodo y
-  // mismo texto de busqueda que se ve en pantalla.
+  // URL de descarga (Excel/PDF) de este mismo listado: mismos criterios
+  // (periodo, busqueda y rango de calculo) que se ven en pantalla.
   function urlExportar(formato: "excel" | "pdf"): string {
-    const params = new URLSearchParams();
-    if (busqueda.trim()) params.set("q", busqueda.trim());
-    return conToken(`${BASE_URL}/periodos/${periodoId}/planilla/${formato}?${params.toString()}`);
+    return conToken(`${BASE_URL}/periodos/${periodoId}/planilla/${formato}${armarQuery()}`);
   }
 
   // URL de descarga de las boletas COMPLETAS (no el resumen tabular de
   // arriba): "pdf" arma un solo PDF con una boleta por pagina, "zip" un PDF
   // por trabajador dentro de un ZIP. Sin ids seleccionados exporta TODAS
-  // las boletas visibles en pantalla (mismo texto de busqueda), pedido
-  // explicito del usuario (sept. 2026) para poder guardar las boletas de
-  // un periodo completo sin tener que seleccionarlas una por una.
+  // las boletas visibles en pantalla (mismos criterios de busqueda).
   function urlExportarBoletas(formato: "pdf" | "zip", ids: number[]): string {
     const params = new URLSearchParams();
     if (busqueda.trim()) params.set("q", busqueda.trim());
+    if (calculadoDesde) params.set("calculado_desde", calculadoDesde);
+    if (calculadoHasta) params.set("calculado_hasta", calculadoHasta);
     if (ids.length > 0) params.set("ids", ids.join(","));
     return conToken(`${BASE_URL}/periodos/${periodoId}/boletas/${formato}?${params.toString()}`);
   }
@@ -153,6 +194,22 @@ export default function Boletas({ periodoInicial }: Props) {
     }
   }
 
+  // Mensaje a mostrar cuando la tabla de resultados queda vacia - distingue
+  // las 3 situaciones posibles (pedido explicito del usuario, mejora
+  // "Boletas" sept. 2026): periodo sin calcular, periodo calculado pero sin
+  // ninguna boleta, y busqueda sin resultados dentro de un periodo que si
+  // tiene boletas.
+  function mensajeSinResultados(): string {
+    if (!periodoActual) return "No se encontraron boletas.";
+    if (periodoActual.estado !== "CALCULADO") {
+      return "Las boletas correspondientes a este período aún no han sido generadas, debido a que el proceso de cálculo de la planilla todavía no ha sido ejecutado.";
+    }
+    if (totalBoletasPeriodo === 0) {
+      return "Este período ya fue calculado, pero no tiene ninguna boleta registrada.";
+    }
+    return "No se encontraron boletas con los criterios de búsqueda indicados.";
+  }
+
   return (
     <div>
       <div className="barra-accesos-rapidos">
@@ -165,14 +222,14 @@ export default function Boletas({ periodoInicial }: Props) {
 
       <div className="card">
         <h2>Boletas</h2>
-        <div className="form-grid" style={{ maxWidth: 500 }}>
+        <div className="form-grid" style={{ maxWidth: 700 }}>
           <label>
             Periodo
             <select value={periodoId ?? ""} onChange={(e) => setPeriodoId(Number(e.target.value))}>
-              {periodos.length === 0 && <option value="">No hay periodos calculados</option>}
+              {periodos.length === 0 && <option value="">No hay periodos registrados</option>}
               {periodos.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {MESES[p.mes - 1]} {p.anio}
+                  {etiquetaPeriodo(p)}
                 </option>
               ))}
             </select>
@@ -187,7 +244,20 @@ export default function Boletas({ periodoInicial }: Props) {
               placeholder="Ej. 12345678 o Perez"
             />
           </label>
+          <label>
+            Calculado desde
+            <input type="date" value={calculadoDesde} onChange={(e) => setCalculadoDesde(e.target.value)} />
+          </label>
+          <label>
+            Calculado hasta
+            <input type="date" value={calculadoHasta} onChange={(e) => setCalculadoHasta(e.target.value)} />
+          </label>
         </div>
+        <p style={{ color: "#5a6172", fontSize: "0.85rem", marginTop: 8, marginBottom: 0 }}>
+          "Calculado desde/hasta" filtra por la fecha en que se ejecutó el cálculo de cada boleta (útil para
+          ubicar boletas de una corrida de cálculo o recálculo concreta), y se puede combinar con el periodo y la
+          búsqueda por DNI/nombre.
+        </p>
       </div>
 
       {periodoActual && (
@@ -196,45 +266,47 @@ export default function Boletas({ periodoInicial }: Props) {
             <h2>
               {resultado.length} boletas — {MESES[periodoActual.mes - 1]} {periodoActual.anio}
             </h2>
-            <div style={{ display: "flex", gap: 8 }}>
-              {puedeEnviarCorreo && (
+            {resultado.length > 0 && (
+              <div style={{ display: "flex", gap: 8 }}>
+                {puedeEnviarCorreo && (
+                  <button
+                    type="button"
+                    disabled={seleccionados.size === 0 || enviandoCorreo}
+                    onClick={enviarPorCorreo}
+                  >
+                    {enviandoCorreo ? "Enviando..." : `Enviar por correo (${seleccionados.size})`}
+                  </button>
+                )}
                 <button
+                  className="primario"
                   type="button"
-                  disabled={seleccionados.size === 0 || enviandoCorreo}
-                  onClick={enviarPorCorreo}
+                  disabled={seleccionados.size === 0}
+                  onClick={() => setImprimiendoLote(true)}
                 >
-                  {enviandoCorreo ? "Enviando..." : `Enviar por correo (${seleccionados.size})`}
+                  Imprimir seleccionadas ({seleccionados.size})
                 </button>
-              )}
-              <button
-                className="primario"
-                type="button"
-                disabled={seleccionados.size === 0}
-                onClick={() => setImprimiendoLote(true)}
-              >
-                Imprimir seleccionadas ({seleccionados.size})
-              </button>
-              <a href={urlExportar("excel")}>
-                <button type="button">Exportar a Excel</button>
-              </a>
-              <a href={urlExportar("pdf")}>
-                <button type="button">Exportar a PDF (resumen)</button>
-              </a>
-              <a href={urlExportarBoletas("pdf", Array.from(seleccionados))}>
-                <button type="button" title="Un solo PDF con las boletas completas, una por pagina">
-                  {seleccionados.size > 0
-                    ? `Descargar boletas en PDF (${seleccionados.size})`
-                    : "Descargar todas las boletas en PDF"}
-                </button>
-              </a>
-              <a href={urlExportarBoletas("zip", Array.from(seleccionados))}>
-                <button type="button" title="Un archivo ZIP con un PDF de boleta por trabajador">
-                  {seleccionados.size > 0
-                    ? `Descargar boletas en ZIP (${seleccionados.size})`
-                    : "Descargar todas las boletas en ZIP"}
-                </button>
-              </a>
-            </div>
+                <a href={urlExportar("excel")}>
+                  <button type="button">Exportar a Excel</button>
+                </a>
+                <a href={urlExportar("pdf")}>
+                  <button type="button">Exportar a PDF (resumen)</button>
+                </a>
+                <a href={urlExportarBoletas("pdf", Array.from(seleccionados))}>
+                  <button type="button" title="Un solo PDF con las boletas completas, una por pagina">
+                    {seleccionados.size > 0
+                      ? `Descargar boletas en PDF (${seleccionados.size})`
+                      : "Descargar todas las boletas en PDF"}
+                  </button>
+                </a>
+                <a href={urlExportarBoletas("zip", Array.from(seleccionados))}>
+                  <button type="button" title="Un archivo ZIP con un PDF de boleta por trabajador">
+                    {seleccionados.size > 0
+                      ? `Descargar boletas en ZIP (${seleccionados.size})`
+                      : "Descargar todas las boletas en ZIP"}
+                  </button>
+                </a>
+              </div>
+            )}
           </div>
 
           {resultadoEnvio && (
@@ -303,8 +375,8 @@ export default function Boletas({ periodoInicial }: Props) {
               ))}
               {resultado.length === 0 && (
                 <tr>
-                  <td colSpan={10} style={{ textAlign: "center", color: "#5a6172" }}>
-                    No se encontraron boletas.
+                  <td colSpan={10} style={{ textAlign: "center", color: "#5a6172", padding: "18px 12px" }}>
+                    {mensajeSinResultados()}
                   </td>
                 </tr>
               )}
@@ -323,6 +395,21 @@ export default function Boletas({ periodoInicial }: Props) {
         </div>
       )}
 
+      {/* NOTA (recon 32/46): el parche original mostraba esta boleta puntual
+          dentro de un formulario flotante (modal-overlay/modal-flotante),
+          reusando ese mismo patron de "Registrar Tareo Diario" - con su
+          propio sub-buscador de DNI para saltar de una boleta a otra sin
+          cerrar el formulario, y los botones de descargar/enviar/imprimir
+          movidos a la cabecera del modal. Se omite esa conversion (y todo
+          el estado que la sostenia: dniModal/resultadosModal/envioModal,
+          abrirBoleta/cerrarBoleta, enviarBoletaModalPorCorreo): ese mismo
+          "formulario flotante" (clases modal-overlay/modal-flotante-*) es
+          la infraestructura de la brecha #1 (parches #16/17/18, SALTADOS
+          por completo - ver RECONSTRUCCION_BRECHAS.md punto 1), que nunca
+          llego a existir en este arbol. Se conserva el comportamiento
+          anterior (la boleta se inserta debajo del listado, con sus
+          propios controles de descargar/enviar/imprimir dentro de
+          <Boleta>). */}
       {boletaSeleccionada && periodoActual && (
         <Boleta
           detalle={boletaSeleccionada}
