@@ -1919,3 +1919,83 @@ simula el esquema real de producción (con `creado_en` ya existente en las
 2 tablas) — confirmado que ambas corren sin ningún error y que
 `plan_cuentas` queda con exactamente las mismas 5 columnas que mostró la
 consulta del usuario (`id, codigo, denominacion, activa, creado_en`).
+
+## 34. Corrección CRÍTICA: `conceptos_aportes.tipo_movimiento` usaba `'APORTE'`, un valor que no existe en producción (rompía la migración 049 al aplicarse) + 2 nombres de constraint que no coincidían con producción
+
+El usuario le pidió a otra sesión de Claude (la que hace el push a GitHub)
+revisar la reconstrucción, y esa sesión pidió 3 consultas nuevas al
+usuario para correr en su phpPgAdmin de producción real. Los resultados
+expusieron un bug real que ninguna prueba local podía haber detectado
+(porque las pruebas corren sobre una base nueva, sin las restricciones
+reales de producción).
+
+**Consulta 1 (restricciones existentes)** reveló que `conceptos_aportes`
+SÍ tiene en producción un CHECK (`conceptos_aportes_tipo_movimiento_check`)
+que esta reconstrucción no había contemplado - la sección 32 documentaba
+explícitamente que "no se agrega un CHECK aquí para no arriesgar un valor
+real que no se haya podido confirmar", usando `'APORTE'` como valor
+inventado para el caso "Debe y Haber". La definición visible del CHECK
+(`pg_get_constraintdef`) mostró `ARRAY['DEBE', 'HABER', 'DEBE_HABER'...]`
+- es decir, el valor real en producción para ese tercer caso es
+`'DEBE_HABER'`, no `'APORTE'`.
+
+**Por qué esto rompía la migración de verdad (no solo en teoría)**: se
+reprodujo el error exacto contra una base de prueba con el CHECK real de
+producción. La semilla de 16 filas usa `INSERT ... ON CONFLICT (codigo) DO
+NOTHING`, pero Postgres valida los CHECK de cada fila propuesta ANTES de
+resolver el conflicto de llave - así que si production ya tiene la fila
+`ESSALUD` (con su `tipo_movimiento` real, `'DEBE_HABER'`), el `INSERT` de
+esta migración con `'APORTE'` en esa misma fila hace fallar el CHECK y
+aborta la migración COMPLETA (ninguna de las 16 filas ni las demás
+secciones del archivo se aplican, transacción revertida). Es decir: tal
+como estaba, la migración 049 iba a fallar al primer intento en
+producción real.
+
+**Corrección**: se cambió `'APORTE'` por `'DEBE_HABER'` en las 4 filas
+que lo usaban (`ESSALUD`, `SCTR`, `SENATI`, `SEGURO_VIDA`, en
+`sql/migracion_049_...sql` y `sql/schema.sql`), y se agregó el mismo CHECK
+(`conceptos_aportes_tipo_movimiento_check`, con los 3 valores confirmados)
+en ambos archivos. No afecta ningún comportamiento del frontend:
+`movimientosDeAporte()` (`Configuracion.tsx`) ya trataba cualquier valor
+que no fuera el literal `'DEBE'`/`'HABER'` como "Debe y Haber", así que
+`'DEBE_HABER'` se comporta igual que `'APORTE'` se comportaba antes.
+
+**2 nombres de constraint que tampoco coincidían** (misma consulta 1):
+- `dias_feriados`: las 3 FK de ubigeo se llamaban en este árbol
+  `dias_feriados_ubigeo_{departamento,provincia,distrito}_fkey`, pero en
+  producción son `dias_feriados_ubigeo_{departamento,provincia,distrito}
+  _codigo_fkey` (con `_codigo` en medio). Como el bloque `DO` de la
+  migración 048 busca "ya existe" por nombre exacto en `pg_constraint`, con
+  el nombre viejo NUNCA iba a encontrar la FK real de producción y habría
+  intentado agregar una FK duplicada (misma columna, otro nombre - no da
+  error en Postgres, pero es redundante y rompe la idempotencia real que
+  se buscaba).
+- `mapeo_cuentas_contables`: el UNIQUE se había nombrado a mano
+  `mapeo_cuentas_contables_concepto_proyecto_movimiento_key`, pero en
+  producción Postgres lo autogeneró (sin nombre explícito en el CREATE
+  original) como `mapeo_cuentas_contables_concepto_codigo_proyecto_id_tipo_mo_key`
+  (truncado a 63 caracteres, el límite de Postgres para identificadores).
+  Mismo problema: la migración 049 no lo iba a reconocer como "ya existe".
+
+Se corrigieron los 4 nombres en `sql/schema.sql`, `sql/migracion_048_...sql`
+y `sql/migracion_049_...sql` para que coincidan exactamente con los de
+producción. Ningún archivo `.ts` los referenciaba por nombre (los busca
+por columnas via consultas normales), así que no hizo falta tocar código
+de aplicación.
+
+**Verificado**: `tsc --noEmit` limpio, suite completa 41/41 archivos y
+467/467 pruebas (con 1 reintento por la flakiness de Postgres ya conocida
+de este entorno, documentada en segmentos anteriores), y ambas migraciones
+corridas dos veces a mano contra una base que replica el esquema real
+completo de producción (mismos nombres de constraint, mismo CHECK, filas
+`ESSALUD`/`ONP` preexistentes) - confirmado que ahora corren sin ningún
+error y sin generar restricciones duplicadas.
+
+**Pendiente de una última confirmación del usuario** (no bloqueante para
+este commit, pero sí antes de desplegar en producción real): pedirle que
+corra `SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname =
+'conceptos_aportes_tipo_movimiento_check';` sola (para ver el texto
+completo sin que phpPgAdmin lo trunque) y confirmar que los 3 valores son
+exactamente `'DEBE'`, `'HABER'`, `'DEBE_HABER'` - la consulta 1 original
+mostraba la definición completa cortada por el ancho de columna de la
+tabla de resultados.

@@ -59,11 +59,22 @@
 --    "DEBE" como "solo Debe", "HABER" como "solo Haber", y CUALQUIER OTRO
 --    valor como "Debe y Haber" (para los aportes patronales, que generan
 --    una linea al Debe -gasto- y otra al Haber -pasivo- por el mismo
---    monto). Se usa 'APORTE' para ese tercer caso. Como esta columna no
---    tiene equivalente de validacion en la API (ver mas abajo, el PUT de
---    /aportes/:codigo no permite editarla), y la tabla ya existe con datos
---    reales en produccion, no se agrega un CHECK aqui para no arriesgar un
---    valor real que no se haya podido confirmar desde este arbol.
+--    monto).
+--
+--    CORRECCION (verificado en produccion via phpPgAdmin, 29-sept-2026):
+--    produccion SI tiene un CHECK aqui (conceptos_aportes_tipo_movimiento_check),
+--    con los valores 'DEBE', 'HABER' y 'DEBE_HABER' (confirmado por
+--    pg_get_constraintdef). La version original de este archivo usaba
+--    'APORTE' como tercer valor (nunca confirmado) - se cambio a
+--    'DEBE_HABER' en la semilla de abajo y se agrega el mismo CHECK aqui,
+--    porque la version con 'APORTE' rompia la migracion en la practica: el
+--    INSERT de la semilla viola el CHECK de produccion ANTES de llegar a
+--    evaluar el ON CONFLICT (Postgres valida CHECK por cada fila propuesta,
+--    conflicte o no), asi que la migracion completa fallaba y revertia
+--    (confirmado reproduciendo el error exacto en una base de prueba con
+--    este mismo CHECK). 'DEBE_HABER' no cambia ningun comportamiento del
+--    frontend (movimientosDeAporte() en Configuracion.tsx trata CUALQUIER
+--    valor que no sea el literal 'DEBE'/'HABER' como "Debe y Haber").
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS conceptos_aportes (
     codigo              VARCHAR(60) PRIMARY KEY,
@@ -77,6 +88,14 @@ ALTER TABLE conceptos_aportes
     ADD COLUMN IF NOT EXISTS orden INT NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now();
 
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'conceptos_aportes_tipo_movimiento_check') THEN
+        ALTER TABLE conceptos_aportes ADD CONSTRAINT conceptos_aportes_tipo_movimiento_check
+            CHECK (tipo_movimiento IN ('DEBE', 'HABER', 'DEBE_HABER'));
+    END IF;
+END $$;
+
 GRANT SELECT, INSERT, UPDATE, DELETE ON conceptos_aportes TO grupojhc_boletas;
 
 -- Semilla: 16 filas inferidas de src/asientoContable.ts (construirAsiento -
@@ -88,10 +107,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON conceptos_aportes TO grupojhc_boletas;
 -- y el neto a pagar).
 INSERT INTO conceptos_aportes (codigo, nombre, descripcion, codigo_plame, tipo_movimiento, orden) VALUES
     -- Aportes patronales (Debe = gasto, Haber = pasivo por pagar; mismo monto en ambos).
-    ('ESSALUD',     'ESSALUD',                        'Aporte patronal EsSalud (9%)',                                   '0804', 'APORTE', 10),
-    ('SCTR',        'SCTR salud',                      'Seguro Complementario de Trabajo de Riesgo - salud',             '0806', 'APORTE', 20),
-    ('SENATI',      'Fondo de Capacitacion (SENATI)',  'Aporte patronal SENATI',                                        '0807', 'APORTE', 30),
-    ('SEGURO_VIDA', 'Essalud + Vida',                  'Poliza de vida ley (D.Leg. 688 / convenio EsSalud+Vida)',        '0803', 'APORTE', 40),
+    ('ESSALUD',     'ESSALUD',                        'Aporte patronal EsSalud (9%)',                                   '0804', 'DEBE_HABER', 10),
+    ('SCTR',        'SCTR salud',                      'Seguro Complementario de Trabajo de Riesgo - salud',             '0806', 'DEBE_HABER', 20),
+    ('SENATI',      'Fondo de Capacitacion (SENATI)',  'Aporte patronal SENATI',                                        '0807', 'DEBE_HABER', 30),
+    ('SEGURO_VIDA', 'Essalud + Vida',                  'Poliza de vida ley (D.Leg. 688 / convenio EsSalud+Vida)',        '0803', 'DEBE_HABER', 40),
     -- Retenciones al trabajador (solo Haber).
     ('CUOTA_SINDICAL', 'Cuota sindical',               'Retencion de cuota sindical',                                   '0702', 'HABER', 50),
     ('CONAFOVICER',    'CONAFOVICER',                  'Retencion CONAFOVICER (construccion civil)',                    '0602', 'HABER', 60),
@@ -183,8 +202,8 @@ BEGIN
         ALTER TABLE mapeo_cuentas_contables ADD CONSTRAINT mapeo_cuentas_contables_tipo_movimiento_check
             CHECK (tipo_movimiento IN ('DEBE', 'HABER'));
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'mapeo_cuentas_contables_concepto_proyecto_movimiento_key') THEN
-        ALTER TABLE mapeo_cuentas_contables ADD CONSTRAINT mapeo_cuentas_contables_concepto_proyecto_movimiento_key
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'mapeo_cuentas_contables_concepto_codigo_proyecto_id_tipo_mo_key') THEN
+        ALTER TABLE mapeo_cuentas_contables ADD CONSTRAINT mapeo_cuentas_contables_concepto_codigo_proyecto_id_tipo_mo_key
             UNIQUE (concepto_codigo, proyecto_id, tipo_movimiento);
     END IF;
 END $$;

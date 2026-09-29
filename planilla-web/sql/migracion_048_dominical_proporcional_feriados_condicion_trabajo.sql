@@ -74,16 +74,16 @@ BEGIN
         ALTER TABLE dias_feriados ADD CONSTRAINT dias_feriados_ambito_check
             CHECK (ambito IN ('NACIONAL', 'REGIONAL', 'LOCAL'));
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dias_feriados_ubigeo_departamento_fkey') THEN
-        ALTER TABLE dias_feriados ADD CONSTRAINT dias_feriados_ubigeo_departamento_fkey
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dias_feriados_ubigeo_departamento_codigo_fkey') THEN
+        ALTER TABLE dias_feriados ADD CONSTRAINT dias_feriados_ubigeo_departamento_codigo_fkey
             FOREIGN KEY (ubigeo_departamento_codigo) REFERENCES catalogo_ubigeo_departamento(codigo);
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dias_feriados_ubigeo_provincia_fkey') THEN
-        ALTER TABLE dias_feriados ADD CONSTRAINT dias_feriados_ubigeo_provincia_fkey
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dias_feriados_ubigeo_provincia_codigo_fkey') THEN
+        ALTER TABLE dias_feriados ADD CONSTRAINT dias_feriados_ubigeo_provincia_codigo_fkey
             FOREIGN KEY (ubigeo_provincia_codigo) REFERENCES catalogo_ubigeo_provincia(codigo);
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dias_feriados_ubigeo_distrito_fkey') THEN
-        ALTER TABLE dias_feriados ADD CONSTRAINT dias_feriados_ubigeo_distrito_fkey
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dias_feriados_ubigeo_distrito_codigo_fkey') THEN
+        ALTER TABLE dias_feriados ADD CONSTRAINT dias_feriados_ubigeo_distrito_codigo_fkey
             FOREIGN KEY (ubigeo_distrito_codigo) REFERENCES catalogo_ubigeo_distrito(codigo);
     END IF;
     -- Un NACIONAL no lleva ubicacion; un REGIONAL lleva solo departamento;

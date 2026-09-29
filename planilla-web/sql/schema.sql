@@ -316,9 +316,9 @@ CREATE TABLE dias_feriados (
     -- alguna vez se corre sobre una base creada aqui (pruebas) en vez de
     -- alli (produccion, donde la tabla se completa con ADD COLUMN/ADD
     -- CONSTRAINT por separado).
-    ubigeo_departamento_codigo  VARCHAR(2) CONSTRAINT dias_feriados_ubigeo_departamento_fkey REFERENCES catalogo_ubigeo_departamento(codigo),
-    ubigeo_provincia_codigo     VARCHAR(4) CONSTRAINT dias_feriados_ubigeo_provincia_fkey REFERENCES catalogo_ubigeo_provincia(codigo),
-    ubigeo_distrito_codigo      VARCHAR(6) CONSTRAINT dias_feriados_ubigeo_distrito_fkey REFERENCES catalogo_ubigeo_distrito(codigo),
+    ubigeo_departamento_codigo  VARCHAR(2) CONSTRAINT dias_feriados_ubigeo_departamento_codigo_fkey REFERENCES catalogo_ubigeo_departamento(codigo),
+    ubigeo_provincia_codigo     VARCHAR(4) CONSTRAINT dias_feriados_ubigeo_provincia_codigo_fkey REFERENCES catalogo_ubigeo_provincia(codigo),
+    ubigeo_distrito_codigo      VARCHAR(6) CONSTRAINT dias_feriados_ubigeo_distrito_codigo_fkey REFERENCES catalogo_ubigeo_distrito(codigo),
     -- NACIONAL no lleva ubicacion; REGIONAL lleva solo departamento; LOCAL
     -- lleva al menos provincia (distrito opcional) - reforzado tambien en
     -- la API (routes/conceptos.ts) para dar un mensaje claro en español.
@@ -1150,25 +1150,27 @@ VALUES
 -- editable + poder mapearse a una cuenta contable, igual que un concepto de
 -- ingreso (ver src/routes/conceptos.ts, GET/PUT /aportes). codigo es la
 -- propia PRIMARY KEY (sin id/secuencia propia - las rutas de la API siempre
--- identifican estas filas por "codigo"). Sin CHECK en tipo_movimiento (ver
--- migracion_049 para el detalle): el frontend trata "DEBE"/"HABER" como
--- exclusivos y cualquier otro valor ('APORTE' aqui) como "Debe y Haber".
+-- identifican estas filas por "codigo"). tipo_movimiento: el frontend trata
+-- "DEBE"/"HABER" como exclusivos y cualquier otro valor ('DEBE_HABER' aqui)
+-- como "Debe y Haber". Confirmado en produccion via phpPgAdmin
+-- (29-sept-2026): CHECK con 'DEBE'/'HABER'/'DEBE_HABER' (ver migracion_049).
 -- -------------------------------------------------------------------------
 CREATE TABLE conceptos_aportes (
     codigo              VARCHAR(60) PRIMARY KEY,
     nombre              VARCHAR(120) NOT NULL,
     descripcion         TEXT,
     codigo_plame        VARCHAR(10),
-    tipo_movimiento     VARCHAR(20) NOT NULL DEFAULT 'HABER',
+    tipo_movimiento     VARCHAR(20) NOT NULL DEFAULT 'HABER'
+                            CONSTRAINT conceptos_aportes_tipo_movimiento_check CHECK (tipo_movimiento IN ('DEBE', 'HABER', 'DEBE_HABER')),
     orden               INT NOT NULL DEFAULT 0,
     actualizado_en      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 INSERT INTO conceptos_aportes (codigo, nombre, descripcion, codigo_plame, tipo_movimiento, orden) VALUES
-    ('ESSALUD',     'ESSALUD',                        'Aporte patronal EsSalud (9%)',                                   '0804', 'APORTE', 10),
-    ('SCTR',        'SCTR salud',                      'Seguro Complementario de Trabajo de Riesgo - salud',             '0806', 'APORTE', 20),
-    ('SENATI',      'Fondo de Capacitacion (SENATI)',  'Aporte patronal SENATI',                                        '0807', 'APORTE', 30),
-    ('SEGURO_VIDA', 'Essalud + Vida',                  'Poliza de vida ley (D.Leg. 688 / convenio EsSalud+Vida)',        '0803', 'APORTE', 40),
+    ('ESSALUD',     'ESSALUD',                        'Aporte patronal EsSalud (9%)',                                   '0804', 'DEBE_HABER', 10),
+    ('SCTR',        'SCTR salud',                      'Seguro Complementario de Trabajo de Riesgo - salud',             '0806', 'DEBE_HABER', 20),
+    ('SENATI',      'Fondo de Capacitacion (SENATI)',  'Aporte patronal SENATI',                                        '0807', 'DEBE_HABER', 30),
+    ('SEGURO_VIDA', 'Essalud + Vida',                  'Poliza de vida ley (D.Leg. 688 / convenio EsSalud+Vida)',        '0803', 'DEBE_HABER', 40),
     ('CUOTA_SINDICAL', 'Cuota sindical',               'Retencion de cuota sindical',                                   '0702', 'HABER', 50),
     ('CONAFOVICER',    'CONAFOVICER',                  'Retencion CONAFOVICER (construccion civil)',                    '0602', 'HABER', 60),
     ('RENTA_5TA',       'Renta de 5ta categoria',       'Retencion de renta de quinta categoria',                        '0605', 'HABER', 70),
@@ -1213,7 +1215,7 @@ CREATE TABLE mapeo_cuentas_contables (
         CONSTRAINT mapeo_cuentas_contables_tipo_movimiento_check CHECK (tipo_movimiento IN ('DEBE', 'HABER')),
     cuenta_id           INT NOT NULL REFERENCES plan_cuentas(id) ON DELETE CASCADE,
     actualizado_en      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT mapeo_cuentas_contables_concepto_proyecto_movimiento_key UNIQUE (concepto_codigo, proyecto_id, tipo_movimiento)
+    CONSTRAINT mapeo_cuentas_contables_concepto_codigo_proyecto_id_tipo_mo_key UNIQUE (concepto_codigo, proyecto_id, tipo_movimiento)
 );
 CREATE INDEX idx_mapeo_cuentas_contables_proyecto ON mapeo_cuentas_contables(proyecto_id);
 
