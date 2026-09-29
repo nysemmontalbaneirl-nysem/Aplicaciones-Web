@@ -216,8 +216,8 @@ conceptosRouter.post(
       }
       const ambitoValidado = validarAmbitoFeriado(b);
       const r = await pool.query(
-        `INSERT INTO dias_feriados (fecha, descripcion, ambito, ubigeo_departamento_codigo, ubigeo_provincia_codigo, ubigeo_distrito_codigo)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        `INSERT INTO dias_feriados (fecha, descripcion, ambito, ubigeo_departamento_codigo, ubigeo_provincia_codigo, ubigeo_distrito_codigo, creado_en)
+         VALUES ($1, $2, $3, $4, $5, $6, now()) RETURNING *`,
         [
           b.fecha,
           b.descripcion.trim(),
@@ -803,7 +803,7 @@ conceptosRouter.post(
         throw new ErrorValidacion("denominacion es obligatoria");
       }
       const r = await pool.query(
-        `INSERT INTO plan_cuentas (codigo, denominacion, activa) VALUES ($1, $2, $3) RETURNING *`,
+        `INSERT INTO plan_cuentas (codigo, denominacion, activa, creado_en) VALUES ($1, $2, $3, now()) RETURNING *`,
         [b.codigo.trim(), b.denominacion.trim(), b.activa !== undefined ? !!b.activa : true]
       );
       await registrarBitacora(req.usuario!.id, "CREACION_CUENTA_CONTABLE", "plan_cuentas", r.rows[0].id, {

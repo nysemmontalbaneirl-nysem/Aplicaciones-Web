@@ -326,7 +326,9 @@ CREATE TABLE dias_feriados (
         (ambito = 'NACIONAL' AND ubigeo_departamento_codigo IS NULL AND ubigeo_provincia_codigo IS NULL AND ubigeo_distrito_codigo IS NULL)
         OR (ambito = 'REGIONAL' AND ubigeo_departamento_codigo IS NOT NULL AND ubigeo_provincia_codigo IS NULL AND ubigeo_distrito_codigo IS NULL)
         OR (ambito = 'LOCAL' AND ubigeo_provincia_codigo IS NOT NULL)
-    )
+    ),
+    -- Confirmado en produccion via phpPgAdmin (29-sept-2026): existe alli.
+    creado_en                   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX idx_dias_feriados_unico
     ON dias_feriados (fecha, ambito, COALESCE(ubigeo_departamento_codigo, ''), COALESCE(ubigeo_provincia_codigo, ''), COALESCE(ubigeo_distrito_codigo, ''));
@@ -1190,7 +1192,9 @@ CREATE TABLE plan_cuentas (
     id              SERIAL PRIMARY KEY,
     codigo          VARCHAR(20) NOT NULL,
     denominacion    VARCHAR(200) NOT NULL,
-    activa          BOOLEAN NOT NULL DEFAULT true
+    activa          BOOLEAN NOT NULL DEFAULT true,
+    -- Confirmado en produccion via phpPgAdmin (29-sept-2026): existe alli.
+    creado_en       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- -------------------------------------------------------------------------

@@ -1867,3 +1867,55 @@ responda 400), luego CON el mapeo configurado vía la propia API (verifica
 línea acumulada de 2 contratos de un mismo proyecto, y finalmente que el
 Excel descargado tenga esas mismas líneas leyéndolo de vuelta con
 `exceljs`).
+
+## 33. Corrección: columna `creado_en` en `dias_feriados` y `plan_cuentas`, confirmada en producción real vía phpPgAdmin
+
+El usuario corrió en su phpPgAdmin de producción las 2 consultas de
+verificación de columnas pendientes de las secciones 30 (migración 048) y
+32 (migración 049):
+
+```sql
+SELECT column_name FROM information_schema.columns WHERE table_name = 'dias_feriados' ORDER BY ordinal_position;
+SELECT table_name, column_name FROM information_schema.columns
+ WHERE table_name IN ('conceptos_aportes', 'plan_cuentas', 'mapeo_cuentas_contables')
+ ORDER BY table_name, ordinal_position;
+```
+
+Resultado: `conceptos_aportes` (7 columnas) y `mapeo_cuentas_contables` (6
+columnas) coinciden exactamente con lo reconstruido en la migración 049.
+Pero `dias_feriados` (8 columnas) y `plan_cuentas` (5 columnas) traen una
+columna `creado_en` de más que ninguna de las 2 migraciones contemplaba.
+
+**Riesgo real encontrado**: las rutas `POST /conceptos/dias-feriados` y
+`POST /conceptos/plan-cuentas` (`src/routes/conceptos.ts`) hacen un
+`INSERT` con una lista explícita de columnas que no incluía `creado_en`.
+Si esa columna en producción es `NOT NULL` sin `DEFAULT`, la primera vez
+que alguien registre un feriado nuevo o una cuenta contable nueva desde
+estas pantallas habría dado un 500 real, en vez de fallar de forma
+inofensiva.
+
+**Corrección aplicada** (mismo criterio defensivo de siempre - no se sabe
+con certeza si el `creado_en` de producción es `NOT NULL` sin default, así
+que se cubre cualquier caso):
+- `sql/migracion_048_...sql` y `sql/migracion_049_...sql`: se agrega
+  `ADD COLUMN IF NOT EXISTS creado_en TIMESTAMPTZ NOT NULL DEFAULT now()`
+  a `dias_feriados` y `plan_cuentas` respectivamente (no-op en producción,
+  donde ya existe; en una base nueva -pruebas- la crea con ese mismo
+  criterio de las demás tablas de esta reconstrucción).
+- `src/routes/conceptos.ts`: ambos `INSERT` ahora listan `creado_en`
+  explícitamente con `now()`, para no depender de que el `DEFAULT` de
+  producción exista.
+- `sql/schema.sql`: se agrega `creado_en` a ambas definiciones, para que
+  una base creada desde cero (pruebas) quede igual a producción.
+
+No se tocaron los tipos TypeScript (`DiaFeriado`/`CuentaContable`) ni
+`filaAFeriado`/`filaACuenta`: ninguna pantalla ni respuesta de API expone
+o necesita este campo hoy, así que se agregó solo donde hacía falta para
+que el `INSERT` no fallara.
+
+**Verificado**: `tsc --noEmit` limpio, suite completa 41/41 archivos y
+467/467 pruebas, y ambas migraciones corridas a mano contra una base que
+simula el esquema real de producción (con `creado_en` ya existente en las
+2 tablas) — confirmado que ambas corren sin ningún error y que
+`plan_cuentas` queda con exactamente las mismas 5 columnas que mostró la
+consulta del usuario (`id, codigo, denominacion, activa, creado_en`).

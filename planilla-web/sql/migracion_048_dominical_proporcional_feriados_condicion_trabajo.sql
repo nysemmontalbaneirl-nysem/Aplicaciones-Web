@@ -54,7 +54,15 @@ ALTER TABLE dias_feriados
     ADD COLUMN IF NOT EXISTS ambito VARCHAR(10) NOT NULL DEFAULT 'NACIONAL',
     ADD COLUMN IF NOT EXISTS ubigeo_departamento_codigo VARCHAR(2),
     ADD COLUMN IF NOT EXISTS ubigeo_provincia_codigo VARCHAR(4),
-    ADD COLUMN IF NOT EXISTS ubigeo_distrito_codigo VARCHAR(6);
+    ADD COLUMN IF NOT EXISTS ubigeo_distrito_codigo VARCHAR(6),
+    -- CORRECCION (verificado en produccion via phpPgAdmin, 29-sept-2026):
+    -- dias_feriados YA TIENE alli una columna "creado_en" que esta version
+    -- original de la migracion no contemplaba. No sabemos si en produccion
+    -- es NOT NULL sin DEFAULT (rompería el POST si no se envia un valor),
+    -- asi que ademas de agregarla aqui (no-op en produccion, donde ya
+    -- existe) el INSERT de routes/conceptos.ts ahora la llena explicitamente
+    -- con now() para cubrir cualquier caso.
+    ADD COLUMN IF NOT EXISTS creado_en TIMESTAMPTZ NOT NULL DEFAULT now();
 
 -- Los CHECK/FK se agregan aparte (Postgres no soporta "ADD CONSTRAINT IF
 -- NOT EXISTS"): un bloque DO que primero verifica en pg_constraint, para

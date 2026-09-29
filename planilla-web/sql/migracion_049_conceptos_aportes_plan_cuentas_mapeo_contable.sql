@@ -130,7 +130,14 @@ CREATE TABLE IF NOT EXISTS plan_cuentas (
 ALTER TABLE plan_cuentas
     ADD COLUMN IF NOT EXISTS codigo VARCHAR(20) NOT NULL DEFAULT '',
     ADD COLUMN IF NOT EXISTS denominacion VARCHAR(200) NOT NULL DEFAULT '',
-    ADD COLUMN IF NOT EXISTS activa BOOLEAN NOT NULL DEFAULT true;
+    ADD COLUMN IF NOT EXISTS activa BOOLEAN NOT NULL DEFAULT true,
+    -- CORRECCION (verificado en produccion via phpPgAdmin, 29-sept-2026):
+    -- plan_cuentas YA TIENE alli una columna "creado_en" que esta version
+    -- original no contemplaba (mismo hallazgo que en dias_feriados/048). Se
+    -- agrega aqui (no-op en produccion) y el INSERT de routes/conceptos.ts
+    -- ahora la llena explicitamente con now(), para no depender de que el
+    -- DEFAULT de produccion exista.
+    ADD COLUMN IF NOT EXISTS creado_en TIMESTAMPTZ NOT NULL DEFAULT now();
 
 -- El DEFAULT '' de arriba es solo para poder agregar la columna NOT NULL en
 -- una tabla que ya tuviera filas (no aplica en la practica: plan_cuentas se
