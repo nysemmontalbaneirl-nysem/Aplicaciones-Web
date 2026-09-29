@@ -121,7 +121,7 @@ la mensual consolidada (que sí, ver abajo). La tabla nueva
 "tubería" (columnas, tipos) para esta brecha ya está más completa que
 antes, pero el cálculo real sigue pendiente de las migraciones 022/023/026.
 
-### 4.1. Catálogo de códigos PLAME para descuentos/aportes (`obtenerAportes`)
+### 4.1. Catálogo de códigos PLAME para descuentos/aportes (`obtenerAportes` / tabla `conceptos_aportes`)
 
 Descubierto en el patch 19/46: `resolverCodigosPlame()` (plame.ts)
 originalmente resolvía códigos PLAME editables tanto para conceptos de
@@ -131,7 +131,27 @@ renta 5ta, ONP) vía una función que no existe en este árbol — no hay
 catálogo ni pantalla de Configuración para hacer editable el código PLAME
 de esos 4 conceptos. Se mantienen con su código fijo de `CONCEPTO.*`,
 igual que antes de este parche (sin regresión, pero sin la mejora que
-traía). Reconstruir si aparece el parche que agrega ese catálogo.
+traía).
+
+**Confirmado y ampliado en el patch 22/46** (`4d9ec871`, "Desagrega el
+código PLAME del aporte AFP en Configuración", migración 036) —
+**SALTADO por completo, sin commit**. Este parche modifica una tabla
+`conceptos_aportes` YA EXISTENTE en producción (con filas previas: SENATI,
+SEGURO_VIDA, ONP, RENTA_5TA, CONAFOVICER, CUOTA_SINDICAL, y 4 filas
+`AFP_INTEGRA`/`AFP_PRIMA`/`AFP_PROFUTURO`/`AFP_HABITAT` usadas para la
+cuenta contable del Asiento por administradora), agregándole 3 filas
+nuevas (`AFP_APORTE_OBLIGATORIO`/`AFP_COMISION`/`AFP_PRIMA_SEGURO`) y
+conectando `plame.ts` para leer esos 3 códigos desde ahí en vez de tenerlos
+fijos. Confirmado por grep (`conceptos_aportes`, `conceptos/aportes`) que
+ni la tabla, ni sus rutas `GET/PUT /api/conceptos/aportes`, ni la pantalla
+"Aportes y retenciones" de Configuración existen en absoluto en este árbol
+— es una funcionalidad completa (tabla + rutas + pantalla), no una columna
+aislada como `codigo_plame` de la migración 019, así que no se intentó un
+backfill mínimo. Además esta tabla alimenta directamente al Asiento
+Contable (punto 5 de abajo), así que reconstruirla a medias sin esa base
+tampoco sería fiel a producción. Reconstruir `conceptos_aportes` completo
+(tabla + rutas + pantalla) es el prerequisito tanto para este parche como,
+probablemente, para gran parte del Asiento Contable.
 
 ## 5. `src/asientoContable.ts` (Asiento Contable / exportación contable)
 
