@@ -317,6 +317,21 @@ export default function TareoDiario({ periodo }: Props) {
         </div>
       </div>
 
+      {/* NOTA (recon 34/46 SALTADO): el parche original convertia esta
+          tarjeta en un formulario flotante (modal-overlay/modal-flotante-completo,
+          con navegacion "Trabajador anterior/siguiente" y el buscador de
+          "cambiar de trabajador" movido aca). Se omite por completo: ese
+          parche construye ENCIMA de la infraestructura base del formulario
+          flotante de UN dia especifico (fechaModalAbierto, cerrarModal,
+          busquedaModal, coincidenciasModal, cambiarTrabajadorDesdeModal, las
+          clases .modal-overlay/.modal-flotante/etc.), que nunca existio en
+          este arbol - fue introducida por los parches #16/#17/#18, SALTADOS
+          por completo (brecha #1, ver RECONSTRUCCION_BRECHAS.md punto 1). El
+          diff de este parche solo trae fragmentos que asumen esa base ya
+          escrita (mueve un buscador de un modal a otro, agrega botones de
+          navegacion) - no alcanza para reconstruir el formulario de un dia
+          desde cero sin inventar su logica completa. Se conserva la tarjeta
+          simple ya existente (sin modal), igual que antes de este parche. */}
       {contratoSeleccionado && (
         <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>

@@ -723,3 +723,45 @@ Verificado: `tsc --noEmit` limpio (backend y frontend). 360/360 tests (345
 previos + 15 nuevos: 2 en `afpnet_excel.test.ts`, 3 en
 `planilla_mensual_rutas.test.ts`, 10 en `planilla_mensual_unificacion.test.ts`
 — descontando el test de asiento contable omitido de este último).
+
+---
+
+## 18. Parche #34/46 (`c333650a`, "Tareo Diario: al elegir un trabajador se abre en formulario flotante") SALTADO — construye ENCIMA de la brecha #1, no la cierra
+
+**Estado: saltado sin aplicar (no hay commit funcional para él, solo un
+comentario `NOTA` en el punto donde hubiera ido).**
+
+Esperanza inicial (al llegar a este parche): quizás finalmente traía la
+infraestructura base del "formulario flotante" de `TareoDiario.tsx` que
+falta desde la brecha #1 (parches #16/#17/#18, SALTADOS). No es el caso:
+este parche ASUME esa base como ya existente y solo la extiende — envuelve
+la tarjeta simple del trabajador seleccionado en un `modal-overlay`/
+`modal-flotante-completo` NUEVO (con navegación "Trabajador anterior/
+siguiente") que queda ANIDADO alrededor del formulario de UN día específico
+(`fechaModalAbierto`) que la brecha #1 nunca reconstruyó, y mueve el
+buscador de "cambiar de trabajador" (`busquedaModal`/`coincidenciasModal`/
+`cambiarTrabajadorDesdeModal`) de ese modal de día (inexistente) al nuevo
+modal de trabajador. Confirmado por grep: `fechaModalAbierto`,
+`modal-overlay`, `modal-flotante`, `cambiarTrabajadorDesdeModal`,
+`busquedaModal`, `coincidenciasModal` y `cerrarModal` no existen en ningún
+lado de `TareoDiario.tsx` en este árbol. El dry-run de `patch -p2` lo
+confirma: 4 de 5 hunks fallan en `TareoDiario.tsx` (el único que aplica
+"limpio" es un cambio de contexto trivial que no depende del modal) y el
+único hunk de `styles.css` (agrega `.modal-flotante-completo` como variante
+de una clase base `.modal-flotante` que tampoco existe) también falla.
+
+Mismo criterio que la brecha #1: reconstruir esto implicaría inventar
+desde cero toda la lógica del formulario de un día (estado, navegación,
+guardado, subida de certificado) que ningún parche recuperado documenta
+completo — no se trata de un término de fórmula omitible, sino de una
+pantalla entera. Se agregó un comentario `NOTA (recon 34/46 SALTADO): ...`
+en `frontend/src/components/TareoDiario.tsx`, justo antes de la tarjeta
+simple (sin modal) del trabajador seleccionado, que se conserva intacta.
+
+**Cómo cerrar esta brecha en el futuro:** igual que la brecha #1 - si
+aparece el parche faltante que originalmente creó el modal día-por-día de
+`TareoDiario.tsx` (anterior a estos 4, #16/#17/#18/#34), aplicarlo primero
+y luego reintentar estos 4 en orden cronológico.
+
+No requirió verificación (`tsc`/`jest`) porque no se tocó ningún código
+funcional, solo se agregó un comentario.
