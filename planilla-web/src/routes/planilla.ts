@@ -577,6 +577,26 @@ interface FilaTareoDiario {
   tipo_dia_especial?: TipoDiaEspecial | null;
 }
 
+// Nombres de los campos de horas/minutos de FilaTareoDiario - se usan para
+// validar que sean enteros antes de guardarlos (tareo_diario los tiene como
+// columnas INT; ver PUT /:id/tareo-diario/:contratoId).
+const CAMPOS_HORAS = [
+  "horas_normales",
+  "horas_dominical",
+  "horas_feriado",
+  "horas_extra_tramo1",
+  "horas_extra_tramo2",
+  "horas_extra_tramo3",
+] as const satisfies readonly (keyof FilaTareoDiario)[];
+const CAMPOS_MINUTOS = [
+  "minutos_normales",
+  "minutos_dominical",
+  "minutos_feriado",
+  "minutos_extra_tramo1",
+  "minutos_extra_tramo2",
+  "minutos_extra_tramo3",
+] as const satisfies readonly (keyof FilaTareoDiario)[];
+
 function redondear2(valor: number): number {
   return Math.round(valor * 100) / 100;
 }
@@ -712,12 +732,36 @@ planillaRouter.put(
     if (!Array.isArray(dias)) {
       return res.status(400).json({ error: "El campo 'dias' debe ser un arreglo" });
     }
+    // Error real visto en produccion: un valor decimal (ej. "1.13", probablemente
+    // alguien escribiendo "1 hora 13 minutos" en el campo de horas) llegaba
+    // hasta el INSERT y Postgres lo rechazaba con un mensaje crudo ("la sintaxis
+    // de entrada no es valida para integer") porque las columnas horas_*/minutos_*
+    // de tareo_diario son INT. Se valida aqui antes de tocar la base de datos,
+    // para devolver un error claro en vez de ese 500 crudo.
     for (const d of dias) {
       if (!d.fecha || Number.isNaN(Date.parse(d.fecha))) {
         return res.status(400).json({ error: `Fecha invalida: ${d.fecha}` });
       }
       if (d.tipo_dia_especial && !TIPOS_DIA_ESPECIAL.includes(d.tipo_dia_especial)) {
         return res.status(400).json({ error: `tipo_dia_especial invalido: ${d.tipo_dia_especial}` });
+      }
+      for (const campo of CAMPOS_HORAS) {
+        const v = d[campo];
+        if (v === undefined || v === null) continue;
+        if (!Number.isInteger(v) || v < 0) {
+          return res.status(400).json({
+            error: `El campo "${campo}" debe ser un numero entero de horas (valor recibido: ${v}) en la fecha ${d.fecha.slice(0, 10)}`,
+          });
+        }
+      }
+      for (const campo of CAMPOS_MINUTOS) {
+        const v = d[campo];
+        if (v === undefined || v === null) continue;
+        if (!Number.isInteger(v) || v < 0 || v > 59) {
+          return res.status(400).json({
+            error: `El campo "${campo}" debe ser un numero entero de minutos entre 0 y 59 (valor recibido: ${v}) en la fecha ${d.fecha.slice(0, 10)}`,
+          });
+        }
       }
     }
 

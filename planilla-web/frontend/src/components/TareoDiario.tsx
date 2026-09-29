@@ -130,9 +130,14 @@ export default function TareoDiario({ periodo }: Props) {
   }
 
   function actualizarHoras(fecha: string, campo: CampoHoras, valor: number) {
-    setDias((prev) =>
-      prev.map((f) => (f.fecha === fecha ? { ...f, [campo]: Math.max(0, valor || 0) } : f))
-    );
+    // Las horas y minutos se guardan como enteros (columnas INT en la base
+    // de datos) - si el usuario escribe un decimal por error (ej. "1.13"
+    // pensando en "1 hora 13 minutos"), se redondea aqui mismo en vez de
+    // dejar que llegue asi al servidor y falle con un error de Postgres.
+    const esMinutos = campo.startsWith("minutos_");
+    const entero = Math.round(valor || 0);
+    const acotado = esMinutos ? Math.min(59, Math.max(0, entero)) : Math.max(0, entero);
+    setDias((prev) => prev.map((f) => (f.fecha === fecha ? { ...f, [campo]: acotado } : f)));
   }
 
   function actualizarTipoDia(fecha: string, valor: TipoDiaEspecial | "") {
@@ -254,6 +259,7 @@ export default function TareoDiario({ periodo }: Props) {
                             <input
                               type="number"
                               min={0}
+                              step={1}
                               disabled={esEspecial}
                               style={{ width: 48 }}
                               value={fila[campoHoras]}
@@ -264,6 +270,7 @@ export default function TareoDiario({ periodo }: Props) {
                               type="number"
                               min={0}
                               max={59}
+                              step={1}
                               disabled={esEspecial}
                               style={{ width: 48 }}
                               value={fila[campoMinutos]}

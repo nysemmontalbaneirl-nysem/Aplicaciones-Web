@@ -169,6 +169,52 @@ describe("PUT /api/periodos/:id/tareo-diario/:contratoId", () => {
     expect(r.status).toBe(400);
   });
 
+  // Regresion: error real en produccion (12/09/2026) - un valor decimal como
+  // "1.13" en un campo de horas llegaba hasta el INSERT y Postgres lo
+  // rechazaba con "la sintaxis de entrada no es valida para integer", un 500
+  // crudo en vez de un mensaje claro. Ahora se valida antes de tocar la BD.
+  it("400 con mensaje claro si horas_normales trae un decimal (ej. 1.13), sin tocar la base de datos", async () => {
+    const contratoId = await crearContrato("77770020", "PRUEBA TAREO DIARIO DECIMAL", "PEON");
+    const r = await request(app)
+      .put(`/api/periodos/${periodoId}/tareo-diario/${contratoId}`)
+      .set(auth())
+      .send({ dias: [{ fecha: "2026-02-02", horas_normales: 1.13, minutos_normales: 0 }] });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/horas_normales/);
+
+    // No debe haber guardado nada (todo o nada, mismo criterio que las demas
+    // validaciones de esta ruta).
+    const guardado = await request(app)
+      .get(`/api/periodos/${periodoId}/tareo-diario/${contratoId}`)
+      .set(auth());
+    expect(guardado.body.dias).toHaveLength(0);
+  });
+
+  it("400 si minutos_normales es decimal o fuera de rango (0-59)", async () => {
+    const contratoId = await crearContrato("77770021", "PRUEBA TAREO DIARIO MINUTOS", "PEON");
+    const decimal = await request(app)
+      .put(`/api/periodos/${periodoId}/tareo-diario/${contratoId}`)
+      .set(auth())
+      .send({ dias: [{ fecha: "2026-02-02", horas_normales: 1, minutos_normales: 13.5 }] });
+    expect(decimal.status).toBe(400);
+    expect(decimal.body.error).toMatch(/minutos_normales/);
+
+    const fueraDeRango = await request(app)
+      .put(`/api/periodos/${periodoId}/tareo-diario/${contratoId}`)
+      .set(auth())
+      .send({ dias: [{ fecha: "2026-02-02", horas_normales: 1, minutos_normales: 75 }] });
+    expect(fueraDeRango.status).toBe(400);
+  });
+
+  it("400 si horas_extra_tramo1 es negativo", async () => {
+    const contratoId = await crearContrato("77770022", "PRUEBA TAREO DIARIO NEGATIVO", "PEON");
+    const r = await request(app)
+      .put(`/api/periodos/${periodoId}/tareo-diario/${contratoId}`)
+      .set(auth())
+      .send({ dias: [{ fecha: "2026-02-02", horas_extra_tramo1: -1 }] });
+    expect(r.status).toBe(400);
+  });
+
   it("404 si el contrato no existe", async () => {
     const r = await request(app)
       .put(`/api/periodos/${periodoId}/tareo-diario/999999`)
