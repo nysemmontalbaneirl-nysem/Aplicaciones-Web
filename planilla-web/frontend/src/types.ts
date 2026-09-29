@@ -371,10 +371,23 @@ export interface Proyecto {
   nombre: string;
   ubicacion: string | null;
   estado: "ACTIVO" | "CERRADO";
+  // Valor de respaldo/por defecto (migracion_029): se usa solo si una
+  // categoria de este proyecto todavia no tiene su propio monto en
+  // CuotaSindicalCategoria - el monto real se administra en Configuracion
+  // -> Cuota sindical.
   cuota_sindical_semanal: number;
   // Cada proyecto/obra es su propio establecimiento SUNAT (migracion_016).
   codigo_establecimiento?: string | null;
   tipo_establecimiento?: "DOMICILIO FISCAL" | "ESTABLECIMIENTO ANEXO";
+}
+
+// Cuota sindical por proyecto y categoria (migracion_029): valor FIJO (no
+// varia por mes/anio), se edita a mano cuando cambie el convenio.
+export interface CuotaSindicalCategoria {
+  id: number;
+  proyecto_id: number;
+  categoria: CategoriaOcupacional;
+  monto_semanal: number;
 }
 
 export interface EntradaBitacora {

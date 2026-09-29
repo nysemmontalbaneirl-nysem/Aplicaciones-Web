@@ -87,6 +87,10 @@ CREATE TABLE proyectos (
     -- semanal que varia por proyecto (verificado contra boletas reales:
     -- P012=S/15/semana, P009=S/10/semana, P013=S/20/semana). Se divide entre
     -- 6 dias para la tarifa diaria, y se multiplica por los dias trabajados.
+    -- Migracion_029: el monto real por categoria se administra en
+    -- cuota_sindical_categoria (mas abajo); este campo queda como valor de
+    -- respaldo/por defecto para una combinacion proyecto+categoria que
+    -- todavia no se haya configurado ahi.
     cuota_sindical_semanal  NUMERIC(10,2) NOT NULL DEFAULT 0,
     -- Cada proyecto/obra es su propio establecimiento SUNAT (ver migracion_016).
     codigo_establecimiento  VARCHAR(4) DEFAULT '0000',
@@ -103,6 +107,24 @@ CREATE TABLE usuario_proyecto (
     usuario_id  INT NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
     proyecto_id INT NOT NULL REFERENCES proyectos(id) ON DELETE CASCADE,
     PRIMARY KEY (usuario_id, proyecto_id)
+);
+
+-- -------------------------------------------------------------------------
+-- cuota_sindical_categoria (migracion_029): el monto SEMANAL de la cuota
+-- sindical varia por proyecto Y por categoria del trabajador (peon/oficial/
+-- operario), no solo por proyecto. Valor FIJO (no varia por mes/anio, a
+-- diferencia de tasas_afp_mensuales/tabla_salarial_mensual): se edita a
+-- mano cuando cambie el convenio. Si una combinacion proyecto+categoria no
+-- tiene fila aqui, routes/planilla.ts usa proyectos.cuota_sindical_semanal
+-- como respaldo.
+-- -------------------------------------------------------------------------
+CREATE TABLE cuota_sindical_categoria (
+    id             SERIAL PRIMARY KEY,
+    proyecto_id    INT NOT NULL REFERENCES proyectos(id) ON DELETE CASCADE,
+    categoria      VARCHAR(30) NOT NULL, -- OPERARIO | OFICIAL | PEON | EMPLEADO | EVENTUAL | OPERARIO_EP | OPERARIO_EM | OPERARIO_TP | PEON_A | R_GENERAL
+    monto_semanal  NUMERIC(10,2) NOT NULL DEFAULT 0,
+    actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (proyecto_id, categoria)
 );
 
 -- -------------------------------------------------------------------------
@@ -566,9 +588,12 @@ VALUES
      12, 'Divisor (jornal ÷ este número = monto diario por hijo)', NULL, NULL, NULL, NULL,
      false, false, false, false, false, true, false),
 
+    -- afecto_senati = false (migracion_029): el BUC no debe formar parte de
+    -- la base del Fondo de Capacitacion (0.45%), correccion confirmada por
+    -- el usuario tras detectar el error en produccion.
     ('BUC', 'Bonificación Unificada de Construcción (BUC)', 'Solo construcción civil. La tasa se configura en Parámetros → Tabla salarial mensual, por categoría.', 80,
      NULL, NULL, NULL, NULL, NULL, NULL,
-     true, true, true, true, true, true, false),
+     true, true, false, true, true, true, false),
 
     ('BAE', 'Bonificación por Alta Especialización (BAE)', 'Solo operarios especializados (EP/EM/TP). La tasa se configura en Parámetros → Tabla salarial mensual.', 90,
      NULL, NULL, NULL, NULL, NULL, NULL,

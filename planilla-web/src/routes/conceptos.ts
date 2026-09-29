@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import { asyncHandler } from "../asyncHandler";
 import { requierePermiso } from "../authMiddleware";
 import { pool } from "../db";
-import { ConceptoPlanilla, ConceptosPlanilla } from "../tipos";
+import { ConceptoPlanilla, ConceptosPlanilla, CuotaSindicalCategoria, CategoriaOcupacional } from "../tipos";
 import { ErrorValidacion } from "../validaciones";
 import { registrarBitacora } from "../bitacora";
 
@@ -31,6 +31,32 @@ function filaAConcepto(fila: Record<string, unknown>): ConceptoPlanilla {
     afecto_conafovicer: fila.afecto_conafovicer as boolean,
   };
 }
+
+function filaACuotaSindical(fila: Record<string, unknown>): CuotaSindicalCategoria {
+  return {
+    id: fila.id as number,
+    proyecto_id: fila.proyecto_id as number,
+    categoria: fila.categoria as CategoriaOcupacional,
+    monto_semanal: Number(fila.monto_semanal),
+  };
+}
+
+// Las 10 categorias validas de contratos.categoria_ocupacional (ver
+// CategoriaOcupacional en tipos.ts) - la cuota sindical no esta limitada a
+// construccion civil (contratos.sindicalizado es un flag libre en
+// cualquier categoria), asi que se valida contra el catalogo completo.
+const CATEGORIAS_VALIDAS = new Set<string>([
+  "OPERARIO",
+  "OFICIAL",
+  "PEON",
+  "EMPLEADO",
+  "EVENTUAL",
+  "OPERARIO_EP",
+  "OPERARIO_EM",
+  "OPERARIO_TP",
+  "PEON_A",
+  "R_GENERAL",
+]);
 
 /**
  * Trae el catalogo completo de conceptos de planilla, indexado por codigo,
@@ -74,6 +100,84 @@ conceptosRouter.get(
       construccion: factores("HORAS_EXTRA_CONSTRUCCION"),
       general: factores("HORAS_EXTRA_GENERAL"),
     });
+  })
+);
+
+// ===========================================================================
+// Cuota sindical por proyecto y categoria (cuota_sindical_categoria,
+// migracion_029): el monto SEMANAL que acuerda el sindicato varia por
+// categoria del trabajador (peon/oficial/operario), no solo por proyecto -
+// antes el sistema solo tenia el valor unico de proyectos.cuota_sindical_semanal.
+// routes/planilla.ts (ruta /calcular) usa esta tabla con prioridad y cae al
+// valor unico del proyecto si la combinacion no esta configurada aqui.
+//
+// OJO: estas 2 rutas ("/cuota-sindical") deben quedar registradas ANTES de
+// PUT "/:codigo" (mas abajo) - Express matchea rutas en el orden en que se
+// registran, y "/:codigo" con codigo="cuota-sindical" la interceptaria
+// (404 "Concepto no encontrado") si quedara antes.
+// ===========================================================================
+
+// GET /api/conceptos/cuota-sindical -> toda la tabla, para la pantalla
+// "Cuota sindical" de Configuracion (matriz proyecto x categoria).
+conceptosRouter.get(
+  "/cuota-sindical",
+  requierePermiso("conceptos.editar"),
+  asyncHandler(async (_req: Request, res: Response) => {
+    const r = await pool.query("SELECT * FROM cuota_sindical_categoria ORDER BY proyecto_id, categoria");
+    res.json(r.rows.map(filaACuotaSindical));
+  })
+);
+
+// PUT /api/conceptos/cuota-sindical -> guarda de una vez todas las celdas
+// editadas en la matriz (upsert de cada entrada). Body:
+// { entradas: [{ proyecto_id, categoria, monto_semanal }, ...] }
+conceptosRouter.put(
+  "/cuota-sindical",
+  requierePermiso("conceptos.editar"),
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const entradas = req.body?.entradas;
+      if (!Array.isArray(entradas) || entradas.length === 0) {
+        throw new ErrorValidacion("entradas debe ser un arreglo no vacio");
+      }
+
+      const proyectos = await pool.query("SELECT id FROM proyectos");
+      const proyectosValidos = new Set(proyectos.rows.map((r) => r.id as number));
+
+      for (const e of entradas) {
+        if (typeof e.proyecto_id !== "number" || !proyectosValidos.has(e.proyecto_id)) {
+          throw new ErrorValidacion(`proyecto_id invalido: ${e.proyecto_id}`);
+        }
+        if (typeof e.categoria !== "string" || !CATEGORIAS_VALIDAS.has(e.categoria)) {
+          throw new ErrorValidacion(`categoria invalida: ${e.categoria}`);
+        }
+        if (typeof e.monto_semanal !== "number" || !Number.isFinite(e.monto_semanal) || e.monto_semanal < 0) {
+          throw new ErrorValidacion(`monto_semanal invalido para ${e.categoria}: ${e.monto_semanal}`);
+        }
+      }
+
+      const guardadas: CuotaSindicalCategoria[] = [];
+      for (const e of entradas) {
+        const r = await pool.query(
+          `INSERT INTO cuota_sindical_categoria (proyecto_id, categoria, monto_semanal)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (proyecto_id, categoria)
+           DO UPDATE SET monto_semanal = EXCLUDED.monto_semanal, actualizado_en = now()
+           RETURNING *`,
+          [e.proyecto_id, e.categoria, e.monto_semanal]
+        );
+        guardadas.push(filaACuotaSindical(r.rows[0]));
+      }
+      await registrarBitacora(req.usuario!.id, "EDICION_CUOTA_SINDICAL", "cuota_sindical_categoria", null, {
+        cantidad: guardadas.length,
+      });
+      res.json(guardadas);
+    } catch (err) {
+      if (err instanceof ErrorValidacion) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
+    }
   })
 );
 
@@ -199,7 +303,11 @@ conceptosRouter.post(
 
 // Mismos valores que sql/migracion_014_conceptos_planilla.sql - la
 // planilla se comportaba exactamente asi antes de que estos campos fueran
-// editables, por eso son el punto de "restaurar valores originales".
+// editables, por eso son el punto de "restaurar valores originales". OJO:
+// BUC.afecto_senati se corrigio a "false" en migracion_029 (el Fondo de
+// Capacitacion no debe incluir el BUC en su base, error real reportado por
+// el usuario) - si este arreglo siguiera con el valor original de
+// migracion_014 (true), "Restaurar" reintroduciria ese mismo bug.
 const VALORES_ORIGINALES: Array<{
   codigo: string;
   factor1: number | null;
@@ -220,7 +328,7 @@ const VALORES_ORIGINALES: Array<{
   { codigo: "HORAS_EXTRA_GENERAL", factor1: 1.25, factor2: 1.35, factor3: 2.0, afecto_essalud: true, afecto_sctr: true, afecto_senati: false, afecto_onp: true, afecto_afp: true, afecto_renta5ta: true, afecto_conafovicer: false },
   { codigo: "ASIGNACION_FAMILIAR", factor1: 0.1, factor2: null, factor3: null, afecto_essalud: true, afecto_sctr: true, afecto_senati: true, afecto_onp: true, afecto_afp: true, afecto_renta5ta: true, afecto_conafovicer: false },
   { codigo: "ASIGNACION_ESCOLARIDAD", factor1: 12, factor2: null, factor3: null, afecto_essalud: false, afecto_sctr: false, afecto_senati: false, afecto_onp: false, afecto_afp: false, afecto_renta5ta: true, afecto_conafovicer: false },
-  { codigo: "BUC", factor1: null, factor2: null, factor3: null, afecto_essalud: true, afecto_sctr: true, afecto_senati: true, afecto_onp: true, afecto_afp: true, afecto_renta5ta: true, afecto_conafovicer: false },
+  { codigo: "BUC", factor1: null, factor2: null, factor3: null, afecto_essalud: true, afecto_sctr: true, afecto_senati: false, afecto_onp: true, afecto_afp: true, afecto_renta5ta: true, afecto_conafovicer: false },
   { codigo: "BAE", factor1: null, factor2: null, factor3: null, afecto_essalud: true, afecto_sctr: true, afecto_senati: false, afecto_onp: true, afecto_afp: true, afecto_renta5ta: true, afecto_conafovicer: false },
   { codigo: "MOVILIDAD", factor1: null, factor2: null, factor3: null, afecto_essalud: false, afecto_sctr: false, afecto_senati: false, afecto_onp: false, afecto_afp: false, afecto_renta5ta: true, afecto_conafovicer: false },
   { codigo: "GRATIFICACION", factor1: 40, factor2: 210, factor3: null, afecto_essalud: false, afecto_sctr: false, afecto_senati: false, afecto_onp: false, afecto_afp: false, afecto_renta5ta: null, afecto_conafovicer: false },

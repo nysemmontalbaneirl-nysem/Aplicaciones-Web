@@ -902,11 +902,17 @@ planillaRouter.post(
               a.horas_extra_25, a.horas_extra_35, a.horas_extra_100,
               a.dias_subsidio_enfermedad, a.dias_subsidio_maternidad, a.dias_licencia_paternidad,
               c.*, e.numero_hijos, e.numero_documento, e.apellidos_nombres,
-              COALESCE(p.cuota_sindical_semanal, 0) AS cuota_sindical_semanal
+              -- migracion_029: cuota_sindical_categoria (proyecto+categoria) tiene
+              -- prioridad; si esa combinacion todavia no esta configurada, se cae
+              -- al valor unico legado de proyectos.cuota_sindical_semanal (nunca
+              -- se deja de descontar por accidente por una combinacion sin
+              -- configurar, ej. un proyecto recien creado).
+              COALESCE(csc.monto_semanal, p.cuota_sindical_semanal, 0) AS cuota_sindical_semanal
        FROM asistencia_periodo a
        JOIN contratos c ON c.id = a.contrato_id
        JOIN empleados e ON e.id = c.empleado_id
        LEFT JOIN proyectos p ON p.nombre = c.proyecto
+       LEFT JOIN cuota_sindical_categoria csc ON csc.proyecto_id = p.id AND csc.categoria = c.categoria_ocupacional
        WHERE a.periodo_id = $1 ${esAdminCalculo ? "" : "AND c.proyecto = ANY($2::text[])"}`,
       esAdminCalculo ? [req.params.id] : [req.params.id, req.usuario!.proyectos]
     );
@@ -1022,7 +1028,8 @@ planillaRouter.post(
           periodo.mes,
           periodo.anio,
           Number(fila.cuota_sindical_semanal),
-          conceptos
+          conceptos,
+          periodo.tipo
         );
 
         const r = await cliente.query(

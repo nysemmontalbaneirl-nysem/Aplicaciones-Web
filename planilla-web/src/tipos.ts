@@ -84,12 +84,14 @@ export interface Contrato {
   eps_codigo?: string | null;
 }
 
+export type TipoPeriodo = "MENSUAL" | "QUINCENAL" | "SEMANAL";
+
 export interface PeriodoPlanilla {
   id: number;
   anio: number;
   mes: number;
   quincena: number | null;
-  tipo: "MENSUAL" | "QUINCENAL" | "SEMANAL";
+  tipo: TipoPeriodo;
   fecha_inicio: string;
   fecha_fin: string;
   dias_periodo: number;
@@ -253,10 +255,28 @@ export interface Proyecto {
   nombre: string;
   ubicacion: string | null;
   estado: "ACTIVO" | "CERRADO";
+  // Valor de respaldo/por defecto (migracion_029): se usa solo si una
+  // categoria de este proyecto todavia no tiene su propio monto en
+  // cuota_sindical_categoria (ver esa tabla, mas abajo) - ej. un proyecto
+  // recien creado. El monto real por categoria se administra en
+  // Configuracion -> Cuota sindical.
   cuota_sindical_semanal: number;
   // Cada proyecto/obra es su propio establecimiento SUNAT (migracion_016).
   codigo_establecimiento?: string | null;
   tipo_establecimiento?: "DOMICILIO FISCAL" | "ESTABLECIMIENTO ANEXO";
+}
+
+// Cuota sindical por proyecto y categoria (migracion_029): el monto SEMANAL
+// que acuerda el sindicato varia por categoria del trabajador (peon/
+// oficial/operario), no solo por proyecto - antes el sistema solo tenia el
+// valor unico de Proyecto.cuota_sindical_semanal. Es un valor FIJO (no
+// varia por mes/anio, a diferencia de tasas_afp_mensuales/
+// tabla_salarial_mensual): se edita a mano cuando cambie el convenio.
+export interface CuotaSindicalCategoria {
+  id: number;
+  proyecto_id: number;
+  categoria: CategoriaOcupacional;
+  monto_semanal: number;
 }
 
 export interface DatosEmpresa {

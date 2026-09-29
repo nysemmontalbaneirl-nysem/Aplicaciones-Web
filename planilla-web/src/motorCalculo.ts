@@ -21,6 +21,7 @@ import {
   ParametrosNormativos,
   TablaSalarialMensual,
   TasasAFPMensuales,
+  TipoPeriodo,
 } from "./tipos";
 
 const CATEGORIAS_CONSTRUCCION_CIVIL: CategoriaOcupacional[] = [
@@ -572,12 +573,18 @@ export function calcularRenta5ta(
 
 /**
  * Cuota sindical: NO es un porcentaje del sueldo - es una tarifa FIJA
- * semanal que se define por proyecto/obra (ver proyectos.cuota_sindical_semanal
- * en el catalogo de Proyectos). Se divide entre 6 dias para la tarifa
- * diaria y se multiplica por los dias trabajados del periodo. Solo se
- * descuenta a los trabajadores marcados como sindicalizados. Verificado
- * exacto contra boletas reales de 3 proyectos distintos (P012=S/15/semana,
- * P009=S/10/semana, P013=S/20/semana).
+ * semanal que se define por proyecto/obra Y POR CATEGORIA del trabajador
+ * (migracion_029: el importe que acuerda el sindicato varia entre peon,
+ * oficial, operario, etc. dentro de una misma obra - antes el sistema solo
+ * tenia un valor unico por proyecto). El llamador (routes/planilla.ts,
+ * ruta /calcular) ya resuelve cual monto corresponde -
+ * cuota_sindical_categoria si esa combinacion proyecto+categoria esta
+ * configurada, si no el respaldo proyectos.cuota_sindical_semanal - asi
+ * esta funcion no necesita saber de donde salio el numero. Se divide entre
+ * 6 dias para la tarifa diaria y se multiplica por los dias trabajados del
+ * periodo. Solo se descuenta a los trabajadores marcados como
+ * sindicalizados. Verificado exacto contra boletas reales de 3 proyectos
+ * distintos (P012=S/15/semana, P009=S/10/semana, P013=S/20/semana).
  */
 export function calcularCuotaSindical(
   contrato: Contrato,
@@ -587,6 +594,24 @@ export function calcularCuotaSindical(
   if (!contrato.sindicalizado || !cuotaSindicalSemanal) return 0;
   const cuotaDiaria = cuotaSindicalSemanal / 6;
   return redondear(cuotaDiaria * asistencia.dias_trabajados);
+}
+
+/**
+ * EsSalud + Vida (convenio EsSalud+Vida, D.Leg. N°688): parametros.seguro_vida_ley
+ * es un importe FIJO MENSUAL (S/5.00). Bug real reportado por el usuario
+ * (migracion_029): antes se aplicaba integro en CADA periodo sin importar
+ * su duracion, lo que en la practica duplicaba (quincenal) o cuadriplicaba
+ * (semanal) el aporte real mensual. Se prorratea con un divisor FIJO por
+ * tipo de periodo (decision confirmada con el usuario: no depende de los
+ * dias exactos de cada periodo, que pueden variar) - MENSUAL se paga
+ * entero una sola vez al mes, QUINCENAL se reparte exacto entre las 2
+ * quincenas, SEMANAL se reparte entre 4 semanas (aproximacion estandar,
+ * no las ~4.33 semanas/mes reales).
+ */
+export function obtenerDivisorEssaludVida(tipoPeriodo: TipoPeriodo): number {
+  if (tipoPeriodo === "QUINCENAL") return 2;
+  if (tipoPeriodo === "SEMANAL") return 4;
+  return 1;
 }
 
 export interface DetalleBoletaVacaciones {
@@ -743,7 +768,8 @@ export function calcularLineaPlanilla(
   mes: number,
   anio: number,
   cuotaSindicalSemanal: number,
-  conceptos: ConceptosPlanilla
+  conceptos: ConceptosPlanilla,
+  tipoPeriodo: TipoPeriodo
 ): ResultadoCalculoLinea {
   if (contrato.categoria_ocupacional === "EVENTUAL") {
     return calcularLineaEventual(contrato, asistencia);
@@ -901,7 +927,19 @@ export function calcularLineaPlanilla(
   // driver "pg" la entrega como string); sin el Number() aca, la suma de
   // total_aportes_empleador mas abajo hace concatenacion de texto en vez de
   // suma (mismo patron de bug ya corregido antes en asignacion_familiar).
-  const seguroVida = contrato.poliza_seguro ? Number(parametros.seguro_vida_ley) : 0;
+  //
+  // migracion_029: el calculo debia depender de essalud_vida, no de
+  // poliza_seguro - usar el flag equivocado (bug real, reportado por el
+  // usuario) hacia que marcar "ESSALUD vida" al crear un trabajador no
+  // calculara nunca este aporte fijo de S/5.
+  //
+  // Se prorratea segun el tipo de periodo (ver obtenerDivisorEssaludVida) -
+  // otro bug real reportado por el usuario: antes se pagaba el mes entero
+  // en CADA periodo, duplicando/cuadruplicando el aporte real en planillas
+  // quincenales/semanales.
+  const seguroVida = contrato.essalud_vida
+    ? redondear(Number(parametros.seguro_vida_ley) / obtenerDivisorEssaludVida(tipoPeriodo))
+    : 0;
 
   const netoPagar = redondear(totalIngresos - totalDescuentos);
 
