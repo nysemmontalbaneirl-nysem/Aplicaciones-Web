@@ -1337,3 +1337,20 @@ puramente visual del frontend).
 
 Verificado: `tsc --noEmit` limpio (backend y frontend). 392/392 tests
 (sin cambios - este parche no toca backend ni agrega pruebas).
+
+## 27. Parche #43/46 (`d30afc83`, "Configuracion: corrige el placeholder recortado del campo Tasa tramo 3") — 1 línea, aplicado a mano sobre la tarjeta apilada de la sección 25 (brecha #12)
+
+**Estado: aplicado completo y verificado.**
+
+Cambio puramente visual de 1 campo: el input "Tasa tramo 3
+(multiplicador)" en Configuración → "Horario por proyecto" (agregado en
+el parche #41, sección 25) mostraba el placeholder "General" cortado
+como "Genera" por ser muy angosto. El parche original apunta a la línea
+2211 de la versión upstream (con el sub-menu de 7 secciones, brecha
+#12) — en este árbol el mismo campo vive en la tarjeta apilada
+reconstruida en la sección 25, así que se aplicó el mismo cambio a mano
+ahí: `style={{ width: 90 }}` → `{{ width: 120 }}` y se agregó
+`title="Vacío = usa el recargo general de la empresa"`. Sin migración,
+sin pruebas nuevas.
+
+Verificado: `tsc --noEmit` limpio (frontend). Sin cambios de backend.

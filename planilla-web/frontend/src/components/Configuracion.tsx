@@ -614,7 +614,8 @@ export default function Configuracion() {
                         step="0.01"
                         min="1"
                         placeholder="General"
-                        style={{ width: 90 }}
+                        title="Vacío = usa el recargo general de la empresa"
+                        style={{ width: 120 }}
                         value={valorHorario(p.id, "tasa_tramo3")}
                         onChange={(e) => editarHorario(p.id, "tasa_tramo3", e.target.value)}
                       />
