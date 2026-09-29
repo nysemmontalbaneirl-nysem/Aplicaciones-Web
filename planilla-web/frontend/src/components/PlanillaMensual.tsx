@@ -229,7 +229,7 @@ export default function PlanillaMensual() {
             </button>
           </div>
 
-          <div style={{ overflow: "auto" }}>
+          <div className="tabla-scroll-horizontal">
             <table>
               <thead>
                 <tr>
