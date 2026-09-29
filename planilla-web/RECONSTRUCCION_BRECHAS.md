@@ -853,3 +853,90 @@ cambio puntual.
 
 Verificado: `tsc --noEmit` limpio (backend y frontend). 365/365 tests
 (360 previos + 5 nuevos de `tests/limites_tareo.test.ts`).
+
+---
+
+## 20. Parche #36/46 (`9e4d588d`, "Tareo Diario: corrige el ensanchamiento de columnas al mostrar alertas de límite") — descubre una BRECHA NUEVA: `fueraDeVigencia`/`formatearFechaVisible` nunca llegaron en ninguno de los 46 parches
+
+**Estado: aplicado parcialmente y verificado (la parte que no depende de
+brechas quedó completa; se omitió solo la porción que caía dentro del
+modal ya documentado en la brecha #1, más una porción nueva y menor).**
+
+Parche 100% frontend (`TareoDiario.tsx`, `styles.css`), sin migración ni
+cambios de backend. Corrige un defecto de UI real: la tabla de Tareo
+Diario usa `white-space: nowrap` para que los inputs de horas/minutos no
+salten de línea, pero eso también impedía que el aviso de "límite
+excedido" quebrara en varias líneas — un mensaje largo ensanchaba la
+columna Fecha completa y desplazaba las demás columnas fuera del campo
+visual. La solución: una clase reutilizable `.aviso-columna` en
+`styles.css` (con dos variantes, `-limite` y `-vigencia`) que quiebra el
+texto dentro de un ancho fijo en vez de estirar la columna, y mover cada
+aviso de límite a mostrarse debajo de SU PROPIA columna de concepto (en
+vez de amontonar todos bajo la columna Fecha) — para lo cual
+`erroresLimite` pasa a guardarse con clave `"fecha|claveConcepto"` (no
+solo `"fecha"`) mediante una nueva función `claveErrorLimite(fecha,
+claveConcepto)`.
+
+**Patrón "hunk parcialmente aplicado" una vez más**: los hunks que
+renombran `limpiarErrorLimite` a `limpiarErrorLimiteConcepto` y que ya
+llaman a `claveErrorLimite(...)` habían aplicado solos (heredados del
+propio parche 35, que ya traía por adelantado parte de este cambio),
+pero el hunk que agrega la DEFINICIÓN de `claveErrorLimite` nunca se
+había aplicado — dejando el árbol sin compilar hasta reinsertarla a mano,
+tomada íntegra del propio diff. Igual patrón en la fila principal de la
+grilla (`dias.map(...)`): se reescribió a mano para que cada columna de
+concepto calcule su propio `mensajeError` con `claveErrorLimite` y lo
+muestre con la clase `aviso-columna-limite`.
+
+**Brecha NUEVA descubierta en este parche**: el propio diff de este
+parche asume que ya existen, como contexto sin cambios (no los define en
+ningún lado): la variable `fueraDeVigencia` (un aviso "Fuera de vigencia"
+que se muestra junto a la fecha cuando un día cae fuera del rango de
+vigencia del contrato del trabajador) y la función
+`formatearFechaVisible(fecha)` (para mostrar la fecha con un formato más
+amigable que el `YYYY-MM-DD` crudo). Se confirmó con `grep` en TODOS los
+46 parches recuperados que ninguno los DEFINE como código nuevo — solo
+los referencian como contexto ya existente: el parche #28/46
+(`2e06805a`, "Bloqueo preventivo en tiempo real del límite de tareo",
+sección 13 de este documento) ya los daba por sentados y su
+reconciliación en su momento simplemente los omitió sin dejar una entrada
+propia en este documento (quedó implícito dentro de la omisión general de
+`filaModal`). Los parches #16/#17 (brecha #1, SALTADOS) también los
+referencian dentro del modal inexistente. Conclusión: el parche que
+originalmente introdujo la verificación de vigencia del contrato en
+`TareoDiario.tsx` (probablemente junto con `formatearFechaVisible`) nunca
+llegó como parte de los 46 `.patch` recuperados — es una funcionalidad de
+producción real que este árbol reconstruido simplemente no tiene, ni
+tiene forma de tener sin inventar la lógica de negocio completa (qué
+campo del contrato define "vigencia", cómo se calcula el rango, qué pasa
+en los bordes). No se intentó adivinar esa lógica.
+
+**Qué se omitió por esta brecha, concretamente**: en la columna Fecha, el
+bloque `{fueraDeVigencia && (<div className="aviso-columna
+aviso-columna-vigencia">Fuera de vigencia</div>)}` no se agregó (la
+columna sigue mostrando `{fila.fecha}` en crudo, igual que antes de este
+parche, en vez de `{formatearFechaVisible(fila.fecha)}`). Se dejó un
+comentario `NOTA (recon 36/46): ...` en el punto exacto, explicando que
+ninguno de los 46 parches define estas dos piezas. El resto de la columna
+Fecha (el aviso de límite que antes vivía ahí) se retiró correctamente,
+tal como pedía este parche, porque ahora vive debajo de cada columna de
+concepto.
+
+**Qué se omitió por la brecha #1 (ya conocida)**: el hunk que tocaba el
+formulario flotante de un día (`filaModal`, `camposHorasModal`,
+`especialModal`, `cambiandoTrabajador`, clases `modal-flotante-campo`/
+`modal-flotante-grid-horas`/`modal-flotante-horas`) no se pudo aplicar en
+absoluto porque esa infraestructura entera sigue sin existir en este
+árbol (confirmado por grep, cero resultados) — mismo criterio que las
+secciones 1, 16 y 18 de este documento.
+
+**Cómo cerrar la brecha nueva en el futuro:** si aparece el parche
+faltante que originalmente introdujo `fueraDeVigencia`/
+`formatearFechaVisible` en `TareoDiario.tsx` (posiblemente relacionado
+con validar la fecha de ingreso/cese del contrato), aplicarlo primero y
+luego revisar si el parche #28/46 y este #36/46 necesitan alguna
+reconciliación adicional para conectar sus fragmentos con esa base.
+
+Verificado: `tsc --noEmit` limpio (backend y frontend). 365/365 tests
+(sin cambios en el número de tests - este parche no trae pruebas propias,
+"Cambio 100% de frontend" según su propio mensaje de commit).

@@ -123,12 +123,21 @@ export default function TareoDiario({ periodo }: Props) {
   // la pantalla, para poder bloquear en el momento (ver actualizarHoras) sin
   // depender de que el usuario presione "Guardar". Si no se pudieron traer
   // (ej. sin permiso), simplemente no se valida nada en el frontend - el
-  // backend igual lo valida al guardar. erroresLimite guarda, por fecha, el
-  // mensaje del ultimo intento bloqueado de ESE dia (se limpia dia por dia
-  // apenas un cambio ya no excede el limite, y por completo al cambiar de
-  // trabajador).
+  // backend igual lo valida al guardar. erroresLimite guarda el mensaje del
+  // ultimo intento bloqueado, con clave "fecha|claveConcepto" (no solo
+  // "fecha") - asi cada concepto (Jornal normal, tramo1, tramo2, tramo3)
+  // tiene su propio error independiente y se puede mostrar debajo de SU
+  // PROPIA columna en vez de amontonar todo bajo la columna Fecha (defecto
+  // de UI reportado por el usuario, sept. 2026: un mensaje largo ahi
+  // ensanchaba esa columna y desplazaba las demas fuera de la pantalla).
+  // Se limpia por concepto apenas ese concepto ya no excede su limite, y
+  // por completo al cambiar de trabajador.
   const [limites, setLimites] = useState<LimitesTareo | null>(null);
   const [erroresLimite, setErroresLimite] = useState<Record<string, string>>({});
+
+  function claveErrorLimite(fecha: string, claveConcepto: string) {
+    return `${fecha}|${claveConcepto}`;
+  }
 
   const buscadorRef = useRef<HTMLInputElement>(null);
   function irABuscador() {
@@ -189,18 +198,34 @@ export default function TareoDiario({ periodo }: Props) {
   // por completo (input vacio) - se guarda tal cual (queda vacio en
   // pantalla) en vez de forzarlo a 0, para no pelear con el usuario cada
   // vez que borra para volver a escribir.
-  function limpiarErrorLimite(fecha: string) {
+  //
+  // Migracion 043 (ampliacion, sept. 2026): limpia el error de UN SOLO
+  // concepto (fecha + claveConcepto), no todos los del dia - antes, con una
+  // sola clave por fecha, corregir un campo borraba tambien el aviso de
+  // otro concepto distinto que siguiera excedido ese mismo dia.
+  function limpiarErrorLimiteConcepto(fecha: string, claveConcepto: string) {
+    const clave = claveErrorLimite(fecha, claveConcepto);
     setErroresLimite((prev) => {
-      if (!(fecha in prev)) return prev;
-      const { [fecha]: _omitido, ...resto } = prev;
+      if (!(clave in prev)) return prev;
+      const { [clave]: _omitido, ...resto } = prev;
       return resto;
     });
   }
 
   function actualizarHoras(fecha: string, campo: CampoHoras, valor: number | null) {
+    // Migracion 043 (sept. 2026): "campo" solo se compara contra el limite
+    // de SU PROPIO concepto (Jornal normal o el tramo de horas extra que
+    // corresponda) - ya no se suma con las demas columnas del dia. Domingo
+    // trabajado y Feriado trabajado no tienen concepto en
+    // CONCEPTOS_LIMITE_TAREO, asi que nunca se bloquean por este control
+    // (mismo criterio confirmado con el usuario que ya aplicaba a Domingo
+    // por dia de la semana).
+    const concepto = CONCEPTOS_LIMITE_TAREO.find((c) => c.campoHoras === campo || c.campoMinutos === campo);
+
     if (valor === null) {
       setDias((prev) => prev.map((f) => (f.fecha === fecha ? { ...f, [campo]: null } : f)));
-      limpiarErrorLimite(fecha); // borrar el campo nunca puede hacer que un dia supere el limite
+      // Borrar el campo nunca puede hacer que un dia supere el limite de SU concepto.
+      if (concepto) limpiarErrorLimiteConcepto(fecha, concepto.clave);
       return;
     }
     // Las horas y minutos se guardan como enteros (columnas INT en la base
@@ -215,15 +240,6 @@ export default function TareoDiario({ periodo }: Props) {
     // real, a pedido explicito del usuario - antes se avisaba recien al
     // presionar "Guardar" (el campo aceptaba cualquier numero mientras
     // tanto), lo cual el usuario reporto como poco efectivo.
-    //
-    // Migracion 043 (sept. 2026): "campo" solo se compara contra el limite
-    // de SU PROPIO concepto (Jornal normal o el tramo de horas extra que
-    // corresponda) - ya no se suma con las demas columnas del dia. Domingo
-    // trabajado y Feriado trabajado no tienen concepto en
-    // CONCEPTOS_LIMITE_TAREO, asi que nunca se bloquean por este control
-    // (mismo criterio confirmado con el usuario que ya aplicaba a Domingo
-    // por dia de la semana).
-    const concepto = CONCEPTOS_LIMITE_TAREO.find((c) => c.campoHoras === campo || c.campoMinutos === campo);
     const diaSemana = fechaLocal(fecha).getDay(); // 0=domingo .. 6=sabado
     if (concepto && limites && diaSemana !== 0) {
       const esSabado = diaSemana === 6;
@@ -236,12 +252,12 @@ export default function TareoDiario({ periodo }: Props) {
         const unidad = esMinutos ? "minutos" : "horas";
         setErroresLimite((prev) => ({
           ...prev,
-          [fecha]: `"${concepto.etiqueta}" no puede superar ${maximo} ${unidad} este ${etiquetaDia} (Configuración → Límites de tareo).`,
+          [claveErrorLimite(fecha, concepto.clave)]: `No puede superar ${maximo} ${unidad} este ${etiquetaDia} (Configuración → Límites de tareo).`,
         }));
         return; // se rechaza el cambio - no se actualiza "dias"
       }
     }
-    limpiarErrorLimite(fecha);
+    if (concepto) limpiarErrorLimiteConcepto(fecha, concepto.clave);
     setDias((prev) => prev.map((f) => (f.fecha === fecha ? { ...f, [campo]: acotado } : f)));
   }
 
@@ -365,11 +381,24 @@ export default function TareoDiario({ periodo }: Props) {
                       <tr key={fila.fecha}>
                         <td>
                           {fila.fecha}
-                          {erroresLimite[fila.fecha] && (
-                            <div style={{ fontSize: "0.72rem", color: "#c0392b", fontWeight: 600 }}>
-                              {erroresLimite[fila.fecha]}
-                            </div>
-                          )}
+                          {/* NOTA (recon 36/46): antes el aviso de limite
+                              excedido tambien se mostraba aca, debajo de la
+                              fecha - un mensaje largo ensanchaba esta columna
+                              y desplazaba las demas fuera de la pantalla
+                              (defecto de UI reportado por el usuario, sept.
+                              2026). Ahora cada concepto muestra el suyo
+                              debajo de su propia columna (ver mas abajo),
+                              con la clase "aviso-columna" (styles.css) para
+                              quebrar en varias lineas en vez de estirarse.
+                              NO se reconstruyo el aviso "Fuera de vigencia"
+                              (variable "fueraDeVigencia") ni el formateo
+                              "formatearFechaVisible(fecha)" que el parche
+                              original asumia ya existentes en este punto:
+                              ninguno de los 46 parches recuperados los
+                              define, todos los que los usan (este y el
+                              parche #28/46) los referencian como codigo ya
+                              existente - ver RECONSTRUCCION_BRECHAS.md,
+                              brecha nueva en la seccion de este parche. */}
                         </td>
                         <td>{DIAS_SEMANA[fechaLocal(fila.fecha).getDay()]}</td>
                         {(
@@ -381,35 +410,44 @@ export default function TareoDiario({ periodo }: Props) {
                             ["horas_extra_tramo2", "minutos_extra_tramo2"],
                             ["horas_extra_tramo3", "minutos_extra_tramo3"],
                           ] as [CampoHoras, CampoHoras][]
-                        ).map(([campoHoras, campoMinutos]) => (
-                          <td key={campoHoras}>
-                            <input
-                              type="number"
-                              min={0}
-                              step={1}
-                              disabled={esEspecial}
-                              style={{ width: 48 }}
-                              value={fila[campoHoras] ?? ""}
-                              onChange={(e) =>
-                                actualizarHoras(fila.fecha, campoHoras, e.target.value === "" ? null : Number(e.target.value))
-                              }
-                            />
-                            {" h "}
-                            <input
-                              type="number"
-                              min={0}
-                              max={59}
-                              step={1}
-                              disabled={esEspecial}
-                              style={{ width: 48 }}
-                              value={fila[campoMinutos] ?? ""}
-                              onChange={(e) =>
-                                actualizarHoras(fila.fecha, campoMinutos, e.target.value === "" ? null : Number(e.target.value))
-                              }
-                            />
-                            {" m"}
-                          </td>
-                        ))}
+                        ).map(([campoHoras, campoMinutos]) => {
+                          const concepto = CONCEPTOS_LIMITE_TAREO.find((c) => c.campoHoras === campoHoras);
+                          const mensajeError = concepto
+                            ? erroresLimite[claveErrorLimite(fila.fecha, concepto.clave)]
+                            : undefined;
+                          return (
+                            <td key={campoHoras}>
+                              <input
+                                type="number"
+                                min={0}
+                                step={1}
+                                disabled={esEspecial}
+                                style={{ width: 48 }}
+                                value={fila[campoHoras] ?? ""}
+                                onChange={(e) =>
+                                  actualizarHoras(fila.fecha, campoHoras, e.target.value === "" ? null : Number(e.target.value))
+                                }
+                              />
+                              {" h "}
+                              <input
+                                type="number"
+                                min={0}
+                                max={59}
+                                step={1}
+                                disabled={esEspecial}
+                                style={{ width: 48 }}
+                                value={fila[campoMinutos] ?? ""}
+                                onChange={(e) =>
+                                  actualizarHoras(fila.fecha, campoMinutos, e.target.value === "" ? null : Number(e.target.value))
+                                }
+                              />
+                              {" m"}
+                              {mensajeError && (
+                                <div className="aviso-columna aviso-columna-limite">{mensajeError}</div>
+                              )}
+                            </td>
+                          );
+                        })}
                         <td>
                           <select
                             value={fila.tipo_dia_especial ?? ""}

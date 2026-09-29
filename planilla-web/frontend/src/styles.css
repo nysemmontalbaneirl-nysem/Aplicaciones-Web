@@ -504,6 +504,38 @@ input[type="number"] {
   width: 48px;
 }
 
+/* Defecto de UI reportado por el usuario (sept. 2026): un mensaje de alerta
+   (ej. limite de horas excedido) mostrado DENTRO de una celda de una tabla
+   con "white-space: nowrap" (como .tabla-tareo-diario arriba) hereda esa
+   regla y no quiebra en varias lineas - si el texto es largo, ensancha esa
+   columna entera, lo que desplaza a las demas columnas fuera del campo
+   visual (sobre todo con .tabla-scroll-horizontal, que no tiene limite de
+   ancho). Esta clase se usa en cualquier alerta que se muestre dentro de
+   una columna angosta: la saca de "nowrap" y la quiebra dentro de un ancho
+   fijo en vez de estirar la columna. Ademas, en el Tareo Diario cada
+   concepto (Jornal normal, Domingo, Feriado, cada tramo de horas extra)
+   ahora muestra su propio aviso debajo de su propia columna (en vez de
+   amontonar todos bajo la columna Fecha), para que quede claro a que
+   concepto corresponde cada uno. */
+.aviso-columna {
+  display: block;
+  white-space: normal;
+  word-break: break-word;
+  max-width: 150px;
+  font-size: 0.72rem;
+  line-height: 1.3;
+  margin-top: 3px;
+}
+
+.aviso-columna-limite {
+  color: #c0392b;
+  font-weight: 600;
+}
+
+.aviso-columna-vigencia {
+  color: #a15c00;
+}
+
 .lista-sugerencias {
   position: absolute;
   z-index: 10;
