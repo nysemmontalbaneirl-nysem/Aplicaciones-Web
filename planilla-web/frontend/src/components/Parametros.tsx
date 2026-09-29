@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiDelete, apiGet, apiPost, apiPut } from "../api";
-import { ParametrosMensuales, ParametrosNormativos, PeriodoMensual, RmvMensual } from "../types";
+import { ConceptoPlanilla, ParametrosMensuales, ParametrosNormativos, PeriodoMensual, RmvMensual } from "../types";
 
 const AFPS = ["INTEGRA", "PRIMA", "PROFUTURO", "HABITAT"];
 const CATEGORIAS_CONSTRUCCION = ["OPERARIO", "OFICIAL", "PEON", "OPERARIO_EP", "OPERARIO_EM", "OPERARIO_TP"];
@@ -27,12 +27,33 @@ function calcCTS(jornal: number): number {
 function calcGratificacion(jornal: number): number {
   return jornal * (40 / 210);
 }
-function calcHoraExtra(jornal: number, categoria: string): { tramo1: number; tramo2: number; etiqueta: string } {
+// Recargos de tramo1/tramo2 de horas extra (multiplicador del valor hora,
+// ej. 1.60 = 60%), leidos EN VIVO de conceptos_planilla (HORAS_EXTRA_
+// CONSTRUCCION/GENERAL.factor1/factor2 - ver Configuracion -> Conceptos de
+// ingreso). Antes esta funcion tenia el 60%/100%/25%/35% escrito a mano, asi
+// que si alguien editaba el recargo real desde Configuracion, esta columna
+// de vista previa quedaba desactualizada aunque el calculo real de la
+// planilla ya usara el valor nuevo. recargosPorDefecto solo se usa si el
+// GET de /conceptos todavia no respondio (primer render).
+interface RecargosHorasExtra {
+  construccion: [number, number];
+  general: [number, number];
+}
+const RECARGOS_POR_DEFECTO: RecargosHorasExtra = { construccion: [1.6, 2.0], general: [1.25, 1.35] };
+
+function calcHoraExtra(
+  jornal: number,
+  categoria: string,
+  recargos: RecargosHorasExtra = RECARGOS_POR_DEFECTO
+): { tramo1: number; tramo2: number; etiqueta: string } {
   const cc = esConstruccionCivil(categoria);
   const jornalHora = jornal / 8;
-  return cc
-    ? { tramo1: jornalHora * 1.6, tramo2: jornalHora * 2.0, etiqueta: "60% / 100%" }
-    : { tramo1: jornalHora * 1.25, tramo2: jornalHora * 1.35, etiqueta: "25% / 35%" };
+  const [r1, r2] = cc ? recargos.construccion : recargos.general;
+  return {
+    tramo1: jornalHora * r1,
+    tramo2: jornalHora * r2,
+    etiqueta: `${((r1 - 1) * 100).toFixed(0)}% / ${((r2 - 1) * 100).toFixed(0)}%`,
+  };
 }
 
 const MESES = [
@@ -234,10 +255,24 @@ function SeccionMensual() {
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
+  const [recargosHorasExtra, setRecargosHorasExtra] = useState<RecargosHorasExtra>(RECARGOS_POR_DEFECTO);
 
   async function cargarPeriodos() {
     const lista = await apiGet<PeriodoMensual[]>("/parametros/mensual");
     setPeriodos(lista);
+  }
+
+  async function cargarRecargosHorasExtra() {
+    const conceptos = await apiGet<ConceptoPlanilla[]>("/conceptos");
+    const construccion = conceptos.find((c) => c.codigo === "HORAS_EXTRA_CONSTRUCCION");
+    const general = conceptos.find((c) => c.codigo === "HORAS_EXTRA_GENERAL");
+    setRecargosHorasExtra({
+      construccion: [
+        construccion?.factor1 ?? RECARGOS_POR_DEFECTO.construccion[0],
+        construccion?.factor2 ?? RECARGOS_POR_DEFECTO.construccion[1],
+      ],
+      general: [general?.factor1 ?? RECARGOS_POR_DEFECTO.general[0], general?.factor2 ?? RECARGOS_POR_DEFECTO.general[1]],
+    });
   }
 
   async function cargarMes(a: number, m: number) {
@@ -253,6 +288,7 @@ function SeccionMensual() {
 
   useEffect(() => {
     cargarPeriodos().catch((e) => setError((e as Error).message));
+    cargarRecargosHorasExtra().catch((e) => setError((e as Error).message));
   }, []);
 
   useEffect(() => {
@@ -428,7 +464,7 @@ function SeccionMensual() {
                     movilidad_acumulada: 0,
                     gratificacion_diaria: 0,
                   };
-                  const horaExtra = calcHoraExtra(c.jornal_basico, cat);
+                  const horaExtra = calcHoraExtra(c.jornal_basico, cat, recargosHorasExtra);
                   return (
                     <tr key={cat}>
                       <td>{cat}</td>

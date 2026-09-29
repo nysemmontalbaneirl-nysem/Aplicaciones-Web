@@ -1315,3 +1315,25 @@ resto del motor de cálculo.
 
 Verificado: `tsc --noEmit` limpio (backend y frontend). 392/392 tests
 (379 previos + 13 nuevos de `tests/horario_proyecto_tramo3.test.ts`).
+
+## 26. Parche #42/46 (`bf0fdc4d`, "Parametros: la vista previa de H.E. tramo1/tramo2 lee el recargo real configurado") — parche pequeño, aplicado 100% limpio, sin brechas
+
+**Estado: aplicado completo y verificado.**
+
+Solo `frontend/src/components/Parametros.tsx` (5 hunks). La columna de
+vista previa (S/. por hora extra) en Parámetros → tabla salarial mensual
+tenía el 60%/100%/25%/35% escrito directamente en el código del
+frontend, en vez de leer el valor real de `conceptos_planilla`
+(`HORAS_EXTRA_CONSTRUCCION/GENERAL.factor1/factor2`, editable en
+Configuración). El cálculo real de la planilla ya usaba el valor
+correcto — esto solo corrige la vista previa para que no quede
+desactualizada si el recargo se edita desde Configuración.
+
+Los 5 hunks aplicaron limpio (3 con un offset de -16 líneas, por las
+notas `NOTA (recon 40/46)`/`NOTA (recon 41/46)` agregadas en parches
+anteriores de este mismo archivo) — sin `.rej`, sin necesidad de
+intervención manual. Sin migración, sin pruebas nuevas (es un cambio
+puramente visual del frontend).
+
+Verificado: `tsc --noEmit` limpio (backend y frontend). 392/392 tests
+(sin cambios - este parche no toca backend ni agrega pruebas).
