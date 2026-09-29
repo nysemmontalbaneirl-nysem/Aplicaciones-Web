@@ -173,6 +173,14 @@ export interface AsistenciaEntrada {
   horas_extra_25: number;
   horas_extra_35: number;
   horas_extra_100: number;
+  // Migracion 030 (backfill de migracion 027, que no llego a reconstruirse
+  // como parche independiente - ver nota en el commit): dias_subsidio_maternidad
+  // se mantiene puramente informativo (no genera pago), dias_subsidio_enfermedad
+  // y dias_licencia_paternidad ahora SI generan pago (ver
+  // calcularSubsidioEnfermedad/calcularLicenciaPaternidad en motorCalculo.ts).
+  dias_subsidio_enfermedad: number;
+  dias_subsidio_maternidad: number;
+  dias_licencia_paternidad: number;
 }
 
 export interface DetallePlanilla {
@@ -187,6 +195,13 @@ export interface DetallePlanilla {
   horas_extra_25: number;
   horas_extra_35: number;
   horas_extra_100: number;
+  // Backfill de migracion 027 (ver nota en el commit de migracion 030):
+  // foto historica, puramente informativa - dias_subsidio_maternidad NUNCA
+  // genera pago; dias_subsidio_enfermedad/dias_licencia_paternidad SI
+  // (migracion 030, ver subsidio_enfermedad/licencia_paternidad mas abajo).
+  dias_subsidio_enfermedad: number;
+  dias_subsidio_maternidad: number;
+  dias_licencia_paternidad: number;
 
   jornal_diario: number;
   sueldo_basico: number;
@@ -198,6 +213,16 @@ export interface DetallePlanilla {
   bonificacion_buc: number;
   bonificacion_bae: number;
   bonificacion_movilidad: number;
+  // Migracion 030: pago REAL de los dias de arriba (dias_subsidio_enfermedad/
+  // dias_licencia_paternidad) - antes (migracion 027) esos campos eran
+  // puramente informativos. subsidio_enfermedad = jornal_diario x
+  // dias_subsidio_enfermedad, topado en el origen a 20 dias/año por contrato
+  // (ver la validacion en PUT /:id/tareo-diario/:contratoId); sin tope para
+  // licencia_paternidad. dias_subsidio_maternidad NO tiene equivalente
+  // pagado: se mantiene puramente informativo (lo paga EsSalud desde el
+  // dia 1, nunca por planilla).
+  subsidio_enfermedad: number;
+  licencia_paternidad: number;
   otras_bonificaciones: number;
   gratificacion: number;
   bonificacion_extraordinaria: number;

@@ -56,6 +56,15 @@ export const CONCEPTO = {
   RENTA_5TA: "0605",
   CUOTA_SINDICAL: "0702",
 
+  // Migracion 030: descanso medico por enfermedad y licencia por
+  // paternidad AHORA SI se pagan (antes eran puramente informativos, sin
+  // linea en el PLAME). Codigos confirmados en docs/tabla22_plame.json
+  // (catalogo oficial SUNAT, TABLA22.xls) - no hay un codigo especifico de
+  // "paternidad" en el catalogo, se usa 0907 "LICENCIA CON GOCE DE HABER"
+  // (el que mas se ajusta, confirmado con el usuario).
+  SUBSIDIO_INCAPACIDAD_ENFERMEDAD: "916",
+  LICENCIA_CON_GOCE_DE_HABER: "907",
+
   // Codigos oficiales del catalogo, pendientes de confirmar en la practica (ver nota arriba)
   ONP: "0607",
   POLIZA_SEGURO_688: "0803",
@@ -72,6 +81,8 @@ interface FilaExportacion {
   importe_horas_extra: string;
   asignacion_familiar: string;
   bonificacion_buc: string;
+  subsidio_enfermedad: string;
+  licencia_paternidad: string;
   gratificacion: string;
   cts: string;
   aporte_pension: string;
@@ -112,6 +123,7 @@ export async function generarLineasREM(periodoId: number): Promise<string[]> {
     `SELECT e.numero_documento, c.sistema_pension,
             d.sueldo_basico, d.remuneracion_dominical, d.remuneracion_feriado,
             d.importe_horas_extra, d.asignacion_familiar, d.bonificacion_buc,
+            d.subsidio_enfermedad, d.licencia_paternidad,
             d.gratificacion, d.cts, d.aporte_pension, d.descuento_sindicato,
             d.conafovicer, d.renta_5ta, d.seguro_vida, d.essalud, d.sctr, d.senati,
             d.detalle_json
@@ -134,6 +146,8 @@ export async function generarLineasREM(periodoId: number): Promise<string[]> {
       [CONCEPTO.DESCANSO_FERIADO, num(fila.remuneracion_dominical) + num(fila.remuneracion_feriado)],
       [CONCEPTO.ASIGNACION_FAMILIAR, num(fila.asignacion_familiar)],
       [CONCEPTO.BUC_CONSTRUCCION, num(fila.bonificacion_buc)],
+      [CONCEPTO.SUBSIDIO_INCAPACIDAD_ENFERMEDAD, num(fila.subsidio_enfermedad)],
+      [CONCEPTO.LICENCIA_CON_GOCE_DE_HABER, num(fila.licencia_paternidad)],
       [CONCEPTO.GRATIFICACION, num(fila.gratificacion)],
       [CONCEPTO.CTS, num(fila.cts)],
 

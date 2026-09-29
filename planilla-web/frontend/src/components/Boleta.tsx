@@ -99,6 +99,8 @@ export default function Boleta({ detalle, periodo, onCerrar, ocultarControles }:
     { etiqueta: "Bonificación Unificada Construcción (BUC)", valor: detalle.bonificacion_buc },
     { etiqueta: "Bonificación por Alta Especialización (BAE)", valor: detalle.bonificacion_bae },
     { etiqueta: "Bonificación por movilidad", valor: detalle.bonificacion_movilidad },
+    { etiqueta: "Subsidio incapacidad temporal (descanso médico)", valor: detalle.subsidio_enfermedad },
+    { etiqueta: "Licencia por paternidad", valor: detalle.licencia_paternidad },
     { etiqueta: "Otras bonificaciones", valor: detalle.otras_bonificaciones },
     { etiqueta: "Gratificación", valor: detalle.gratificacion },
     { etiqueta: "Bonificación Extraordinaria Ley 29351", valor: detalle.bonificacion_extraordinaria },

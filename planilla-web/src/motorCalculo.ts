@@ -117,6 +117,30 @@ export function calcularRemuneracionFeriado(
 }
 
 /**
+ * Migracion 030: pago real de los primeros 20 dias/año de descanso medico
+ * por enfermedad, a cargo del empleador (D.S. 009-97-SA). Valorizado igual
+ * que un dia normal trabajado (confirmado con el usuario) - el tope de 20
+ * dias/año por contrato NO se aplica aqui (seria demasiado tarde: este
+ * calculo solo ve UN periodo a la vez, no el acumulado del año) sino al
+ * momento de CARGAR el dia en el Tareo Diario (ver la validacion en
+ * PUT /:id/tareo-diario/:contratoId, routes/planilla.ts), que bloquea el
+ * registro completo si se superarian los 20 dias/año - por eso
+ * asistencia.dias_subsidio_enfermedad que llega aqui ya viene garantizado
+ * dentro del tope.
+ */
+export function calcularSubsidioEnfermedad(jornalDiario: number, asistencia: AsistenciaEntrada): number {
+  return redondear(jornalDiario * asistencia.dias_subsidio_enfermedad);
+}
+
+/**
+ * Migracion 030: pago real de la licencia por paternidad (Ley 29409), sin
+ * tope de dias, valorizado igual que un dia normal trabajado.
+ */
+export function calcularLicenciaPaternidad(jornalDiario: number, asistencia: AsistenciaEntrada): number {
+  return redondear(jornalDiario * asistencia.dias_licencia_paternidad);
+}
+
+/**
  * Importe de horas extra. El recargo depende del regimen laboral (verificado
  * contra la tabla salarial real de la empresa, hoja AFPS-SALARIOS):
  * - Construccion civil (OPERARIO/OFICIAL/PEON/EP/EM/TP): 60% las 2 primeras
@@ -694,6 +718,9 @@ function calcularLineaEventual(contrato: Contrato, asistencia: AsistenciaEntrada
       horas_extra_25: 0,
       horas_extra_35: 0,
       horas_extra_100: 0,
+      dias_subsidio_enfermedad: asistencia.dias_subsidio_enfermedad,
+      dias_subsidio_maternidad: asistencia.dias_subsidio_maternidad,
+      dias_licencia_paternidad: asistencia.dias_licencia_paternidad,
       jornal_diario: 0,
       sueldo_basico: montoPactado,
       remuneracion_dominical: 0,
@@ -704,6 +731,8 @@ function calcularLineaEventual(contrato: Contrato, asistencia: AsistenciaEntrada
       bonificacion_buc: 0,
       bonificacion_bae: 0,
       bonificacion_movilidad: 0,
+      subsidio_enfermedad: 0,
+      licencia_paternidad: 0,
       otras_bonificaciones: 0,
       gratificacion: 0,
       bonificacion_extraordinaria: 0,
@@ -813,6 +842,13 @@ export function calcularLineaPlanilla(
   );
   const bonificacionBAE = calcularBonificacionBAE(contrato, jornalDiario, asistencia, tablaCategorias);
   const bonificacionMovilidad = calcularBonificacionMovilidad(contrato, asistencia, tablaCategorias);
+  // Migracion 030: pago real de descanso medico por enfermedad/licencia por
+  // paternidad (ver las funciones puras de arriba y su comentario). No
+  // entran a remuneracionComputable/remuneracionComputableRegular (mismo
+  // criterio que horas extra/sobretasas: son variables/ocasionales, no
+  // remuneracion "regular" para gratificacion/CTS de EMPLEADO).
+  const subsidioEnfermedad = calcularSubsidioEnfermedad(jornalDiario, asistencia);
+  const licenciaPaternidad = calcularLicenciaPaternidad(jornalDiario, asistencia);
 
   // Remuneracion computable del periodo actual (solo para mostrar en el detalle)
   const remuneracionComputable = sueldoBasico + remDominical + asignacionFamiliar + bonificacionBUC;
@@ -871,6 +907,8 @@ export function calcularLineaPlanilla(
       bonificacionBUC +
       bonificacionBAE +
       bonificacionMovilidad +
+      subsidioEnfermedad +
+      licenciaPaternidad +
       gratificacion +
       bonificacionExtraordinaria +
       cts +
@@ -892,6 +930,8 @@ export function calcularLineaPlanilla(
     BUC: bonificacionBUC,
     BAE: bonificacionBAE,
     MOVILIDAD: bonificacionMovilidad,
+    SUBSIDIO_ENFERMEDAD: subsidioEnfermedad,
+    LICENCIA_PATERNIDAD: licenciaPaternidad,
     GRATIFICACION: gratificacion,
     BONIFICACION_EXTRAORDINARIA: bonificacionExtraordinaria,
     CTS: cts,
@@ -953,6 +993,9 @@ export function calcularLineaPlanilla(
       horas_extra_25: asistencia.horas_extra_25,
       horas_extra_35: asistencia.horas_extra_35,
       horas_extra_100: asistencia.horas_extra_100,
+      dias_subsidio_enfermedad: asistencia.dias_subsidio_enfermedad,
+      dias_subsidio_maternidad: asistencia.dias_subsidio_maternidad,
+      dias_licencia_paternidad: asistencia.dias_licencia_paternidad,
       jornal_diario: redondear(jornalDiario),
       sueldo_basico: sueldoBasico,
       remuneracion_dominical: remDominical,
@@ -963,6 +1006,8 @@ export function calcularLineaPlanilla(
       bonificacion_buc: bonificacionBUC,
       bonificacion_bae: bonificacionBAE,
       bonificacion_movilidad: bonificacionMovilidad,
+      subsidio_enfermedad: subsidioEnfermedad,
+      licencia_paternidad: licenciaPaternidad,
       otras_bonificaciones: 0,
       gratificacion,
       bonificacion_extraordinaria: bonificacionExtraordinaria,

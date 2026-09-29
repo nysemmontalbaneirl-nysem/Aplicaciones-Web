@@ -696,6 +696,51 @@ planillaRouter.put(
       }
     }
 
+    // Migracion 030: el descanso medico por enfermedad ahora SI se paga
+    // (ver SUBSIDIO_ENFERMEDAD en motorCalculo.ts), pero la ley solo pone
+    // ese pago a cargo del EMPLEADOR durante los primeros 20 dias por año
+    // calendario y por CONTRATO (D.S. 009-97-SA) - del dia 21 en adelante
+    // el subsidio lo paga EsSalud directamente al trabajador, fuera de
+    // planilla. Este sistema no tiene forma de pagar "fuera de planilla",
+    // asi que en vez de calcular mal se BLOQUEA el registro completo
+    // (decision confirmada con el usuario: bloquear, no solo avisar) si,
+    // sumando lo ya cargado en tareo_diario para este MISMO contrato mas
+    // los dias SUBSIDIO_ENFERMEDAD de este request, se superarian los 20
+    // dias en algun año calendario. Se excluyen del conteo "ya cargado" las
+    // fechas que este mismo request va a sobreescribir (ON CONFLICT DO
+    // UPDATE mas abajo), para no contar dos veces un dia que ya estaba
+    // marcado SUBSIDIO_ENFERMEDAD y se esta volviendo a guardar tal cual.
+    const diasEnfermedadNuevos = dias.filter((d) => d.tipo_dia_especial === "SUBSIDIO_ENFERMEDAD");
+    if (diasEnfermedadNuevos.length > 0) {
+      const fechasDelRequest = dias.map((d) => d.fecha);
+      const existentes = await pool.query(
+        `SELECT EXTRACT(YEAR FROM fecha)::int AS anio, COUNT(*)::int AS dias
+         FROM tareo_diario
+         WHERE contrato_id = $1 AND tipo_dia_especial = 'SUBSIDIO_ENFERMEDAD' AND fecha <> ALL($2::date[])
+         GROUP BY anio`,
+        [req.params.contratoId, fechasDelRequest]
+      );
+      const acumuladoPorAnio = new Map<number, number>();
+      for (const fila of existentes.rows) {
+        acumuladoPorAnio.set(fila.anio, fila.dias);
+      }
+      for (const d of diasEnfermedadNuevos) {
+        const anio = Number(d.fecha.slice(0, 4));
+        acumuladoPorAnio.set(anio, (acumuladoPorAnio.get(anio) ?? 0) + 1);
+      }
+      const anioExcedido = [...acumuladoPorAnio.entries()].find(([, total]) => total > 20);
+      if (anioExcedido) {
+        const [anio, total] = anioExcedido;
+        return res.status(400).json({
+          error:
+            `El descanso medico por enfermedad superaria los 20 dias pagados por el empleador ` +
+            `en el año ${anio} para este contrato (quedarian ${total} dias marcados). ` +
+            `A partir del dia 21, el subsidio lo paga EsSalud directamente (fuera de planilla). ` +
+            `Revise las fechas marcadas como SUBSIDIO_ENFERMEDAD en ese año.`,
+        });
+      }
+    }
+
     const cliente = await pool.connect();
     try {
       await cliente.query("BEGIN");
@@ -1083,6 +1128,13 @@ planillaRouter.post(
         horas_extra_25: Number(fila.horas_extra_25),
         horas_extra_35: Number(fila.horas_extra_35),
         horas_extra_100: Number(fila.horas_extra_100),
+        // Migracion 030: dias_subsidio_maternidad se pasa solo para dejar
+        // completa la interfaz AsistenciaEntrada (se mantiene puramente
+        // informativo, ver avisosSubsidio mas arriba) - dias_subsidio_enfermedad
+        // y dias_licencia_paternidad si generan pago (calcularLineaPlanilla).
+        dias_subsidio_enfermedad: diasSubsidioEnfermedad,
+        dias_subsidio_maternidad: diasSubsidioMaternidad,
+        dias_licencia_paternidad: diasLicenciaPaternidad,
       };
 
       await cliente.query(`SAVEPOINT trabajador_${i}`);
@@ -1110,10 +1162,12 @@ planillaRouter.post(
              asignacion_escolaridad, bonificacion_buc, bonificacion_bae, bonificacion_movilidad,
              otras_bonificaciones, gratificacion, bonificacion_extraordinaria, cts, vacaciones,
              total_ingresos, aporte_pension, descuento_sindicato, seguro_vida, conafovicer, renta_5ta,
-             otros_descuentos, total_descuentos, essalud, sctr, senati, neto_pagar, detalle_json
+             otros_descuentos, total_descuentos, essalud, sctr, senati, neto_pagar, detalle_json,
+             subsidio_enfermedad, licencia_paternidad,
+             dias_subsidio_enfermedad, dias_subsidio_maternidad, dias_licencia_paternidad
            ) VALUES (
              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
-             $24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37
+             $24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42
            )
            ON CONFLICT (periodo_id, contrato_id) DO UPDATE SET
              dias_trabajados = EXCLUDED.dias_trabajados,
@@ -1151,6 +1205,11 @@ planillaRouter.post(
              senati = EXCLUDED.senati,
              neto_pagar = EXCLUDED.neto_pagar,
              detalle_json = EXCLUDED.detalle_json,
+             subsidio_enfermedad = EXCLUDED.subsidio_enfermedad,
+             licencia_paternidad = EXCLUDED.licencia_paternidad,
+             dias_subsidio_enfermedad = EXCLUDED.dias_subsidio_enfermedad,
+             dias_subsidio_maternidad = EXCLUDED.dias_subsidio_maternidad,
+             dias_licencia_paternidad = EXCLUDED.dias_licencia_paternidad,
              calculado_en = now()
            RETURNING *`,
           [
@@ -1191,6 +1250,11 @@ planillaRouter.post(
             detalle.senati,
             detalle.neto_pagar,
             JSON.stringify(detalle.detalle_json),
+            detalle.subsidio_enfermedad,
+            detalle.licencia_paternidad,
+            detalle.dias_subsidio_enfermedad,
+            detalle.dias_subsidio_maternidad,
+            detalle.dias_licencia_paternidad,
           ]
         );
         lineasCalculadas.push(r.rows[0]);

@@ -428,6 +428,16 @@ CREATE TABLE detalle_planilla (
     horas_extra_25         NUMERIC(6,2) NOT NULL DEFAULT 0,
     horas_extra_35         NUMERIC(6,2) NOT NULL DEFAULT 0,
     horas_extra_100        NUMERIC(6,2) NOT NULL DEFAULT 0,
+    -- Backfill de migracion 027 (no se reconstruyo como parche independiente
+    -- - ver nota en el commit de migracion 030): foto historica de los dias
+    -- de tareo_diario/asistencia_periodo para este periodo especifico,
+    -- puramente informativa en la boleta (ver "Dias considerados en este
+    -- periodo"). dias_subsidio_maternidad NUNCA genera pago (migracion 030);
+    -- dias_subsidio_enfermedad/dias_licencia_paternidad SI, ver
+    -- subsidio_enfermedad/licencia_paternidad mas abajo.
+    dias_subsidio_enfermedad NUMERIC(6,2) NOT NULL DEFAULT 0,
+    dias_subsidio_maternidad NUMERIC(6,2) NOT NULL DEFAULT 0,
+    dias_licencia_paternidad NUMERIC(6,2) NOT NULL DEFAULT 0,
 
     -- ingresos
     jornal_diario          NUMERIC(10,2) NOT NULL DEFAULT 0,
@@ -440,6 +450,8 @@ CREATE TABLE detalle_planilla (
     bonificacion_buc       NUMERIC(10,2) NOT NULL DEFAULT 0,
     bonificacion_bae       NUMERIC(10,2) NOT NULL DEFAULT 0,
     bonificacion_movilidad NUMERIC(10,2) NOT NULL DEFAULT 0,
+    subsidio_enfermedad    NUMERIC(10,2) NOT NULL DEFAULT 0, -- migracion 030: pago real de los primeros 20 dias/año (a cargo del empleador), afecto solo a SCTR/AFP
+    licencia_paternidad    NUMERIC(10,2) NOT NULL DEFAULT 0, -- migracion 030: pago real de la licencia por paternidad, sin tope, afecto a todo
     otras_bonificaciones   NUMERIC(10,2) NOT NULL DEFAULT 0,
     gratificacion          NUMERIC(10,2) NOT NULL DEFAULT 0,
     bonificacion_extraordinaria NUMERIC(10,2) NOT NULL DEFAULT 0, -- Ley 29351/30334: 9% de la gratificacion, pagado al trabajador
@@ -617,7 +629,25 @@ VALUES
 
     ('VACACIONES', 'Vacaciones (construcción civil)', 'Solo construcción civil, se devenga cada período. Para Empleado, ver el módulo de récord vacacional en la pestaña Vacaciones.', 140,
      0.10, 'Porcentaje del jornal diario', NULL, NULL, NULL, NULL,
-     true, true, false, true, true, true, false);
+     true, true, false, true, true, true, false),
+
+    -- migracion 030: descanso medico por enfermedad y licencia por
+    -- paternidad AHORA SI se pagan (antes eran puramente informativos). El
+    -- codigo PLAME oficial (916/907, Anexo 22 SUNAT) todavia no aplica aqui
+    -- porque la columna codigo_plame de esta tabla la agrega una migracion
+    -- posterior (019) que no se ha reconstruido todavia en este punto -
+    -- revisar/completar cuando llegue ese parche. "orden" tampoco replica el
+    -- valor original del parche (106/107, que colisionaba con conceptos ya
+    -- reordenados en este arbol) - se usan 145/146, despues de VACACIONES.
+    ('SUBSIDIO_ENFERMEDAD', 'Subsidio por incapacidad temporal (descanso médico)',
+     'Pago de los primeros 20 dias por año calendario de descanso medico por enfermedad, a cargo del empleador (D.S. 009-97-SA) - del dia 21 en adelante lo paga EsSalud directamente, fuera de planilla (el sistema bloquea el registro de mas de 20 dias/año por contrato, ver Tareo Diario). Valorizado igual que un dia normal trabajado.', 145,
+     NULL, NULL, NULL, NULL, NULL, NULL,
+     false, true, false, false, true, false, false),
+
+    ('LICENCIA_PATERNIDAD', 'Licencia por paternidad',
+     'Pago de los dias de licencia por paternidad (Ley 29409), sin tope de dias, valorizado igual que un dia normal trabajado.', 146,
+     NULL, NULL, NULL, NULL, NULL, NULL,
+     true, true, true, true, true, true, true);
 
 -- -------------------------------------------------------------------------
 -- bitacora_planilla: auditoría de acciones sensibles

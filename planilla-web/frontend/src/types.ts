@@ -205,6 +205,13 @@ export interface DetallePlanilla {
   horas_extra_25: number;
   horas_extra_35: number;
   horas_extra_100: number;
+  // Backfill de migracion 027 (ver nota en el commit de migracion 030):
+  // foto historica, puramente informativa - dias_subsidio_maternidad NUNCA
+  // genera pago; dias_subsidio_enfermedad/dias_licencia_paternidad SI
+  // (migracion 030, ver subsidio_enfermedad/licencia_paternidad mas abajo).
+  dias_subsidio_enfermedad: number;
+  dias_subsidio_maternidad: number;
+  dias_licencia_paternidad: number;
 
   jornal_diario: number;
   sueldo_basico: number;
@@ -216,6 +223,11 @@ export interface DetallePlanilla {
   bonificacion_buc: number;
   bonificacion_bae: number;
   bonificacion_movilidad: number;
+  // Migracion 030: pago REAL de dias_subsidio_enfermedad/dias_licencia_paternidad
+  // (antes, migracion 027, esos campos eran puramente informativos).
+  // dias_subsidio_maternidad se mantiene sin pago (solo informativo).
+  subsidio_enfermedad: number;
+  licencia_paternidad: number;
   otras_bonificaciones: number;
   gratificacion: number;
   bonificacion_extraordinaria: number;

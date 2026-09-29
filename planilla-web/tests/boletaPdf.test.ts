@@ -32,6 +32,8 @@ const DETALLE_BASE: DetalleBoletaPdf = {
   bonificacion_buc: 450,
   bonificacion_bae: 0,
   bonificacion_movilidad: 258,
+  subsidio_enfermedad: 0,
+  licencia_paternidad: 0,
   otras_bonificaciones: 0,
   gratificacion: 0,
   bonificacion_extraordinaria: 0,

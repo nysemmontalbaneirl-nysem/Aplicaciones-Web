@@ -138,6 +138,9 @@ export function validarAsistenciaEntrada(valor: unknown): AsistenciaEntrada {
     horas_extra_25: validarMontoPositivo(v.horas_extra_25 ?? 0, "horas_extra_25"),
     horas_extra_35: validarMontoPositivo(v.horas_extra_35 ?? 0, "horas_extra_35"),
     horas_extra_100: validarMontoPositivo(v.horas_extra_100 ?? 0, "horas_extra_100"),
+    dias_subsidio_enfermedad: validarMontoPositivo(v.dias_subsidio_enfermedad ?? 0, "dias_subsidio_enfermedad"),
+    dias_subsidio_maternidad: validarMontoPositivo(v.dias_subsidio_maternidad ?? 0, "dias_subsidio_maternidad"),
+    dias_licencia_paternidad: validarMontoPositivo(v.dias_licencia_paternidad ?? 0, "dias_licencia_paternidad"),
   };
 }
 
