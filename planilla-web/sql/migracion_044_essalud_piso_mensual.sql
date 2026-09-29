@@ -34,26 +34,68 @@
 -- Ver calcularAjustePisoEssaludMensual (motorCalculo.ts) y
 -- ajustarPisoEssaludDelMes (routes/planilla.ts).
 
-CREATE TABLE rmv_mensual (
-    id                        SERIAL PRIMARY KEY,
-    anio                      INT NOT NULL,
-    mes                       INT NOT NULL CHECK (mes BETWEEN 1 AND 12),
-    remuneracion_minima_vital NUMERIC(10,2) NOT NULL,
-    actualizado_en            TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (anio, mes)
-);
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON rmv_mensual TO grupojhc_boletas;
-GRANT USAGE, SELECT ON SEQUENCE rmv_mensual_id_seq TO grupojhc_boletas;
+-- CORRECCION (revision posterior a la 048): este archivo no era
+-- re-ejecutable de forma segura, un requisito de este proyecto porque el
+-- usuario a veces vuelve a correr el script completo por error en
+-- phpMyAdmin (es inofensivo en el resto de migraciones gracias a sus
+-- guards idempotentes - ver la skill de despliegue). Dos problemas reales:
+--   1) "CREATE TABLE rmv_mensual" sin IF NOT EXISTS: la segunda ejecucion
+--      fallaba de plano con "relation already exists" (a diferencia de
+--      TODAS las demas tablas nuevas de este proyecto, que ya usaban IF NOT
+--      EXISTS desde su primera version).
+--   2) El backfill "UPDATE ... SET essalud_base = essalud" corria SIEMPRE,
+--      sin condicion. La primera vez es un backfill seguro (essalud_base
+--      todavia no existia, asi que aun no hay ningun ajuste de piso
+--      aplicado). Pero si el script se re-ejecuta DESPUES de que
+--      ajustarPisoEssaludMensual (routes/planilla.ts) ya escribio algun
+--      ajuste real (essalud != essalud_base en al menos una fila), este
+--      UPDATE sobreescribe essalud_base con el valor YA AJUSTADO de
+--      essalud, perdiendo el 9% base sin ajustar que el propio motor de
+--      calculo necesita para recalcular el acumulado del mes en cascada -
+--      corrompe silenciosamente el dato historico sin tocar ningun monto
+--      pagado (el bug no se nota hasta el proximo recalculo en cascada).
+-- Ambos problemas se resuelven envolviendo cada pieza en un bloque DO que
+-- solo actua la PRIMERA vez (mismo criterio que "la tabla/columna no existia
+-- todavia" en vez de "IF NOT EXISTS" a secas, que en el caso del backfill no
+-- alcanza por si solo).
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'rmv_mensual') THEN
+        CREATE TABLE rmv_mensual (
+            id                        SERIAL PRIMARY KEY,
+            anio                      INT NOT NULL,
+            mes                       INT NOT NULL CHECK (mes BETWEEN 1 AND 12),
+            remuneracion_minima_vital NUMERIC(10,2) NOT NULL,
+            actualizado_en            TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (anio, mes)
+        );
+        GRANT SELECT, INSERT, UPDATE, DELETE ON rmv_mensual TO grupojhc_boletas;
+        GRANT USAGE, SELECT ON SEQUENCE rmv_mensual_id_seq TO grupojhc_boletas;
+    END IF;
+END $$;
 
 -- essalud_base en detalle_planilla (boletas por periodo de pago real) y en
 -- detalle_planilla_mensual (Planilla Mensual Consolidada, Ronda E) - en
 -- ambas, "essalud" pasa a ser el monto FINAL (ya ajustado si corresponde) y
 -- "essalud_base" el 9% sin ajustar. Como el piso nunca se aplico hasta hoy,
 -- todo lo ya calculado tiene essalud_base = essalud (backfill seguro: no
--- cambia ningun monto ya pagado, solo completa el dato historico).
-ALTER TABLE detalle_planilla ADD COLUMN IF NOT EXISTS essalud_base NUMERIC(10,2) NOT NULL DEFAULT 0;
-UPDATE detalle_planilla SET essalud_base = essalud;
+-- cambia ningun monto ya pagado, solo completa el dato historico) - pero
+-- SOLO la primera vez que se agrega la columna (ver nota de arriba).
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'detalle_planilla' AND column_name = 'essalud_base'
+    ) THEN
+        ALTER TABLE detalle_planilla ADD COLUMN essalud_base NUMERIC(10,2) NOT NULL DEFAULT 0;
+        UPDATE detalle_planilla SET essalud_base = essalud;
+    END IF;
 
-ALTER TABLE detalle_planilla_mensual ADD COLUMN IF NOT EXISTS essalud_base NUMERIC(10,2) NOT NULL DEFAULT 0;
-UPDATE detalle_planilla_mensual SET essalud_base = essalud;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'detalle_planilla_mensual' AND column_name = 'essalud_base'
+    ) THEN
+        ALTER TABLE detalle_planilla_mensual ADD COLUMN essalud_base NUMERIC(10,2) NOT NULL DEFAULT 0;
+        UPDATE detalle_planilla_mensual SET essalud_base = essalud;
+    END IF;
+END $$;

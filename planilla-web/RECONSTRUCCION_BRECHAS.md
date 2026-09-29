@@ -1656,3 +1656,90 @@ ya anticipaban estos campos con una `NOTA (recon N/46)` explícita.
 - Pantalla "Feriados" implementada como tarjeta apilada simple (sin el
   sub-menú de pestañas de Configuración, brecha #12 ya documentada) —
   funcional, pero no exactamente igual a como luce en producción real.
+
+## 31. Correcciones post-048: acceso por proyecto en marcaciones + idempotencia de la migración 044 + migración 048 endurecida para producción
+
+Revisión posterior a la sección 30, antes de desplegar. 3 hallazgos reales
+sobre código ya commiteado (no nuevas funcionalidades) y un endurecimiento
+preventivo de la migración 048, a pedido explícito del usuario.
+
+**1) `PUT /:id/marcaciones/:importacionId/detalle/:detalleId` sin control de
+acceso por proyecto (`src/routes/planilla.ts`).** Esta ruta (confirma o
+retira el pago de la "llegada anticipada" como hora extra de un día ya
+importado — migración 047) nunca validaba `tieneAccesoProyecto` sobre el
+proyecto del contrato de esa fila, a diferencia de todas las demás rutas de
+marcaciones de este mismo archivo (`/aplicar`, el listado de detalle, etc.).
+Un usuario limitado a un proyecto (RESPONSABLE_PLANILLA/TAREADOR) podía
+cambiar el monto de horas extra de un contrato de OTRO proyecto con solo
+conocer o adivinar el `:detalleId` (correlativo, fácil de enumerar). Se
+agregó el mismo chequeo (`403` si no tiene acceso) ya usado en el resto del
+archivo, justo después de resolver la fila y su `proyecto`.
+
+**2) `GET /:id/marcaciones` y `GET /:id/marcaciones/:importacionId` devolvían
+`errores_json` completo, sin filtrar por proyecto — a diferencia de
+`detalle`, que sí se filtra (`c.proyecto = ANY($2::text[])` para no-ADMIN).
+Si quien importó el archivo fue un ADMIN (alcance de TODA la empresa,
+periodo sin proyecto específico), la lista de errores puede mencionar DNIs
+y nombres de proyectos de contratos que un usuario limitado a un solo
+proyecto no debería poder ver (por ejemplo: "Este periodo es específico del
+proyecto 'X' y el contrato pertenece a 'Y'", nombrando un proyecto ajeno).
+Se agregó `filtrarErroresPorAcceso()` (nueva función compartida por ambas
+rutas): un ADMIN sigue viendo la lista completa; un usuario limitado solo ve
+los errores sin DNI (estructurales, no identifican a nadie — ej. "DNI
+vacío") o cuyo DNI tiene al menos un contrato en un proyecto al que sí tiene
+acceso. Pruebas nuevas en
+`tests/marcaciones_acceso_por_proyecto.test.ts` (7 casos: import con un DNI
+de cada proyecto, verificación cruzada de qué ve cada rol tanto en el
+detalle de una importación como en el listado, y los 2 casos de acceso del
+PUT del punto 1).
+
+**3) `sql/migracion_044_essalud_piso_mensual.sql` no era re-ejecutable sin
+efectos** (requisito de este proyecto: el usuario a veces vuelve a correr un
+script completo por error en phpMyAdmin — inofensivo en el resto de
+migraciones gracias a sus guards idempotentes). Dos problemas: (a)
+`CREATE TABLE rmv_mensual` sin `IF NOT EXISTS` — la segunda ejecución fallaba
+directamente con "relation already exists"; (b) el backfill
+`UPDATE ... SET essalud_base = essalud` corría SIEMPRE, sin condición — si se
+re-ejecutaba DESPUÉS de que `ajustarPisoEssaludMensual` ya hubiera aplicado
+un ajuste real en cascada (`essalud ≠ essalud_base` en al menos una fila),
+este `UPDATE` sobrescribía `essalud_base` con el valor YA AJUSTADO,
+corrompiendo silenciosamente el dato histórico que el propio motor de
+cálculo necesita para el próximo recálculo en cascada (el bug no se nota
+hasta ese momento). Se envolvió cada pieza en un bloque `DO` que solo actúa
+la PRIMERA vez (mismo criterio ya usado en la migración 048 — ver abajo).
+Verificado manualmente corriendo el archivo completo 2 veces seguidas contra
+una fila con `essalud=135/essalud_base=100` (simulando un ajuste ya
+aplicado): la segunda ejecución no toca la fila.
+
+**Endurecimiento preventivo de la migración 048 (`dias_feriados`):** el
+usuario advirtió, antes de desplegar, que `dias_feriados` es una tabla que
+YA EXISTE en producción (la funcionalidad completa corre ahí desde el mismo
+`backend_dist` que sirvió de fuente para la sección 30) — un
+`CREATE TABLE IF NOT EXISTS` con TODAS las columnas en una sola sentencia no
+alcanza: si la tabla ya existe, Postgres ignora la sentencia COMPLETA (no
+agrega las columnas que falten). Se reescribió esa sección con el mismo
+patrón defensivo de la migración 044: `CREATE TABLE` con el mínimo
+indispensable (`id`/`fecha`/`descripcion`) + `ALTER TABLE ... ADD COLUMN IF
+NOT EXISTS` para cada columna nueva (`ambito`, `ubigeo_*`) + un bloque `DO`
+que agrega cada `CHECK`/`FK` solo si `pg_constraint` todavía no lo tiene
+(Postgres no soporta `ADD CONSTRAINT IF NOT EXISTS`). `sql/schema.sql`
+(usado para la base de pruebas) se actualizó para nombrar sus constraints
+igual que la migración, evitando así un constraint duplicado (inofensivo
+pero innecesario) si alguna vez se corriera la migración sobre una base
+creada con `schema.sql`. Verificado manualmente con 3 escenarios sobre bases
+Postgres escrachas (`grupojhc_boletas` creado temporalmente para que los
+`GRANT` no fallen): (a) tabla ya existente con las 7 columnas completas
+(clonando el estado real esperado de producción) corriendo el archivo 2
+veces seguidas — sin errores, sin constraints duplicados; (b) tabla ausente
+por completo — el archivo la crea completa correctamente; (c) el mismo
+archivo corrido 2 veces sobre el resultado de (b) — sin errores.
+
+**Pendiente antes de desplegar esto en producción:** confirmar las columnas
+reales de `dias_feriados` ahí con
+`SELECT column_name FROM information_schema.columns WHERE table_name = 'dias_feriados' ORDER BY ordinal_position;`
+en phpMyAdmin. Si coinciden con `id, fecha, descripcion, ambito,
+ubigeo_departamento_codigo, ubigeo_provincia_codigo, ubigeo_distrito_codigo`
+(lo esperable, dado que se origina en el mismo `backend_dist`), la migración
+048 ya endurecida no debería tener ningún problema. Si trajera columnas con
+otro nombre o tipo distinto, avisar antes de continuar — ese caso puntual
+no se puede resolver a ciegas sin ver el resultado real.

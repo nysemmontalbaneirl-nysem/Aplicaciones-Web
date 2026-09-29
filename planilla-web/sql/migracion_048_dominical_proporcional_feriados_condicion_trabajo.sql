@@ -18,6 +18,28 @@
 -- usuario la llena con las fechas oficiales de cada año desde
 -- Configuracion) y agrega columnas nuevas con DEFAULT 0/NULL, no toca
 -- ninguna columna existente ni ningun monto ya calculado.
+--
+-- CORRECCION (revision posterior a la 048): "dias_feriados" es una tabla
+-- que YA EXISTE en produccion (la funcionalidad completa viene corriendo
+-- ahi desde el backend_dist que sirvio de fuente para esta reconstruccion -
+-- ver la cabecera de este archivo). Un simple "CREATE TABLE IF NOT EXISTS"
+-- con TODAS las columnas en la misma sentencia NO ES SUFICIENTE: si la
+-- tabla ya existe, Postgres ignora la sentencia COMPLETA (no agrega las
+-- columnas que le falten), y el sistema quedaria escribiendo/leyendo
+-- columnas que en realidad no estan ahi. Por eso, igual criterio que la
+-- migracion 044 (ver su propia correccion): la tabla se crea con el minimo
+-- indispensable y cada columna/constraint nueva se agrega por separado con
+-- su propio guard (ADD COLUMN IF NOT EXISTS / DO-block para el CHECK),
+-- de forma que el resultado final es el mismo sin importar si la tabla ya
+-- existia (con estas mismas columnas, con menos, o no existia en absoluto).
+--
+-- ANTES DE APLICAR EN PRODUCCION: confirmar las columnas actuales de
+-- "dias_feriados" alli con
+--   SELECT column_name FROM information_schema.columns WHERE table_name = 'dias_feriados' ORDER BY ordinal_position;
+-- Si ya trae "ambito"/"ubigeo_*" con esos mismos nombres (lo esperable, ya
+-- que se origina en el mismo backend_dist), este archivo no hace nada mas
+-- que completar los GRANT/indice si faltaran. Si trajera columnas con
+-- otro nombre o tipo distinto, avisar antes de continuar.
 
 -- ---------------------------------------------------------------------
 -- 1) Catalogo de feriados (migracion 022 + ambito geografico de 042)
@@ -25,22 +47,50 @@
 CREATE TABLE IF NOT EXISTS dias_feriados (
     id                          SERIAL PRIMARY KEY,
     fecha                       DATE NOT NULL,
-    descripcion                 VARCHAR(200) NOT NULL,
-    ambito                      VARCHAR(10) NOT NULL DEFAULT 'NACIONAL'
-                                    CHECK (ambito IN ('NACIONAL', 'REGIONAL', 'LOCAL')),
-    ubigeo_departamento_codigo  VARCHAR(2) REFERENCES catalogo_ubigeo_departamento(codigo),
-    ubigeo_provincia_codigo     VARCHAR(4) REFERENCES catalogo_ubigeo_provincia(codigo),
-    ubigeo_distrito_codigo      VARCHAR(6) REFERENCES catalogo_ubigeo_distrito(codigo),
+    descripcion                 VARCHAR(200) NOT NULL
+);
+
+ALTER TABLE dias_feriados
+    ADD COLUMN IF NOT EXISTS ambito VARCHAR(10) NOT NULL DEFAULT 'NACIONAL',
+    ADD COLUMN IF NOT EXISTS ubigeo_departamento_codigo VARCHAR(2),
+    ADD COLUMN IF NOT EXISTS ubigeo_provincia_codigo VARCHAR(4),
+    ADD COLUMN IF NOT EXISTS ubigeo_distrito_codigo VARCHAR(6);
+
+-- Los CHECK/FK se agregan aparte (Postgres no soporta "ADD CONSTRAINT IF
+-- NOT EXISTS"): un bloque DO que primero verifica en pg_constraint, para
+-- que una segunda ejecucion (o una tabla que ya traia estas columnas de
+-- produccion) no falle con "constraint ya existe".
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dias_feriados_ambito_check') THEN
+        ALTER TABLE dias_feriados ADD CONSTRAINT dias_feriados_ambito_check
+            CHECK (ambito IN ('NACIONAL', 'REGIONAL', 'LOCAL'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dias_feriados_ubigeo_departamento_fkey') THEN
+        ALTER TABLE dias_feriados ADD CONSTRAINT dias_feriados_ubigeo_departamento_fkey
+            FOREIGN KEY (ubigeo_departamento_codigo) REFERENCES catalogo_ubigeo_departamento(codigo);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dias_feriados_ubigeo_provincia_fkey') THEN
+        ALTER TABLE dias_feriados ADD CONSTRAINT dias_feriados_ubigeo_provincia_fkey
+            FOREIGN KEY (ubigeo_provincia_codigo) REFERENCES catalogo_ubigeo_provincia(codigo);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dias_feriados_ubigeo_distrito_fkey') THEN
+        ALTER TABLE dias_feriados ADD CONSTRAINT dias_feriados_ubigeo_distrito_fkey
+            FOREIGN KEY (ubigeo_distrito_codigo) REFERENCES catalogo_ubigeo_distrito(codigo);
+    END IF;
     -- Un NACIONAL no lleva ubicacion; un REGIONAL lleva solo departamento;
     -- un LOCAL lleva al menos provincia (distrito opcional) - validado
     -- tambien en la API (routes/conceptos.ts) para dar un mensaje claro,
     -- pero se refuerza aqui por si se edita la tabla directo.
-    CONSTRAINT dias_feriados_ambito_ubicacion_check CHECK (
-        (ambito = 'NACIONAL' AND ubigeo_departamento_codigo IS NULL AND ubigeo_provincia_codigo IS NULL AND ubigeo_distrito_codigo IS NULL)
-        OR (ambito = 'REGIONAL' AND ubigeo_departamento_codigo IS NOT NULL AND ubigeo_provincia_codigo IS NULL AND ubigeo_distrito_codigo IS NULL)
-        OR (ambito = 'LOCAL' AND ubigeo_provincia_codigo IS NOT NULL)
-    )
-);
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dias_feriados_ambito_ubicacion_check') THEN
+        ALTER TABLE dias_feriados ADD CONSTRAINT dias_feriados_ambito_ubicacion_check CHECK (
+            (ambito = 'NACIONAL' AND ubigeo_departamento_codigo IS NULL AND ubigeo_provincia_codigo IS NULL AND ubigeo_distrito_codigo IS NULL)
+            OR (ambito = 'REGIONAL' AND ubigeo_departamento_codigo IS NOT NULL AND ubigeo_provincia_codigo IS NULL AND ubigeo_distrito_codigo IS NULL)
+            OR (ambito = 'LOCAL' AND ubigeo_provincia_codigo IS NOT NULL)
+        );
+    END IF;
+END $$;
+
 -- Evita registrar 2 veces el mismo feriado con el mismo alcance/ubicacion
 -- (COALESCE para que el indice unico funcione con NULLs, que Postgres no
 -- trata como iguales entre si por defecto).

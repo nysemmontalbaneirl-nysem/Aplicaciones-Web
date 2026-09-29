@@ -2285,6 +2285,42 @@ planillaRouter.post(
 // importaciones ya hechas en este periodo, mas recientes primero - para que
 // el usuario pueda volver a revisar/aplicar una importacion anterior sin
 // tener que volver a subir el archivo.
+
+// Correccion (post-recon 048): "errores_json" (guardado en
+// importaciones_marcaciones al importar, ver POST /importar de arriba) se
+// devolvia completo, sin filtrar por proyecto - a diferencia de "detalle",
+// que si se filtra. Si quien importo el archivo fue un ADMIN (alcance de
+// TODA la empresa - periodo.proyecto nulo), esa lista puede traer errores
+// de filas con DNIs de OTROS proyectos (ambiguedad entre proyectos, "no se
+// encontro un contrato habil en el proyecto X", etc.). Un Tareador limitado
+// a un solo proyecto que revisa esa misma importacion no deberia ver datos
+// de empleados de proyectos que no le pertenecen. Se conservan los errores
+// SIN DNI (estructurales - "DNI vacio", no identifican a nadie) y los que
+// tengan un DNI con al menos un contrato en un proyecto accesible para este
+// usuario; el resto se oculta. Un ADMIN ve la lista completa, sin cambios.
+async function filtrarErroresPorAcceso(
+  erroresJson: unknown,
+  usuario: NonNullable<Request["usuario"]>
+): Promise<unknown> {
+  if (usuario.rol === "ADMIN" || !Array.isArray(erroresJson)) return erroresJson;
+  const errores = erroresJson as { dni?: string }[];
+  const dnisDelArchivo = [...new Set(errores.map((e) => (e.dni ?? "").trim()).filter((dni) => dni.length > 0))];
+  let dnisVisibles = new Set<string>();
+  if (dnisDelArchivo.length > 0) {
+    const visiblesResult = await pool.query(
+      `SELECT DISTINCT e.numero_documento
+       FROM contratos c JOIN empleados e ON e.id = c.empleado_id
+       WHERE e.numero_documento = ANY($1::text[]) AND c.proyecto = ANY($2::text[])`,
+      [dnisDelArchivo, usuario.proyectos]
+    );
+    dnisVisibles = new Set(visiblesResult.rows.map((r) => r.numero_documento));
+  }
+  return errores.filter((e) => {
+    const dni = (e.dni ?? "").trim();
+    return dni.length === 0 || dnisVisibles.has(dni);
+  });
+}
+
 planillaRouter.get(
   "/:id/marcaciones",
   asyncHandler(async (req: Request, res: Response) => {
@@ -2293,17 +2329,19 @@ planillaRouter.get(
       [req.params.id]
     );
     res.json(
-      r.rows.map((f) => ({
-        id: f.id,
-        periodo_id: f.periodo_id,
-        nombre_archivo: f.nombre_archivo,
-        importado_en: f.importado_en,
-        total_marcaciones: f.total_marcaciones,
-        total_dias: f.total_dias,
-        total_errores: f.total_errores,
-        errores: f.errores_json,
-        aplicado_en: f.aplicado_en,
-      }))
+      await Promise.all(
+        r.rows.map(async (f) => ({
+          id: f.id,
+          periodo_id: f.periodo_id,
+          nombre_archivo: f.nombre_archivo,
+          importado_en: f.importado_en,
+          total_marcaciones: f.total_marcaciones,
+          total_dias: f.total_dias,
+          total_errores: f.total_errores,
+          errores: await filtrarErroresPorAcceso(f.errores_json, req.usuario!),
+          aplicado_en: f.aplicado_en,
+        }))
+      )
     );
   })
 );
@@ -2333,6 +2371,8 @@ planillaRouter.get(
       esAdmin ? [req.params.importacionId] : [req.params.importacionId, req.usuario!.proyectos]
     );
 
+    const erroresVisibles = await filtrarErroresPorAcceso(cabecera.errores_json, req.usuario!);
+
     res.json({
       importacion: {
         id: cabecera.id,
@@ -2342,7 +2382,7 @@ planillaRouter.get(
         total_marcaciones: cabecera.total_marcaciones,
         total_dias: cabecera.total_dias,
         total_errores: cabecera.total_errores,
-        errores: cabecera.errores_json,
+        errores: erroresVisibles,
         aplicado_en: cabecera.aplicado_en,
       },
       detalle: detalleResult.rows.map((f) => ({
@@ -2400,6 +2440,16 @@ planillaRouter.put(
       return res.status(404).json({ error: "No se encontro esa fila de la importacion" });
     }
     const fila = filaResult.rows[0];
+    // Correccion (post-recon 048): esta ruta nunca validaba que el usuario
+    // tuviera acceso al proyecto del contrato de esta fila - un Tareador
+    // limitado a un proyecto podia confirmar/retirar el pago de la "llegada
+    // anticipada" (y por lo tanto cambiar el monto de horas extra) de un
+    // contrato de OTRO proyecto, con solo conocer/adivinar el :detalleId.
+    // Mismo criterio de acceso que el resto de rutas de marcaciones de este
+    // archivo (ver /aplicar, mas abajo).
+    if (!tieneAccesoProyecto(req.usuario!, fila.proyecto)) {
+      return res.status(403).json({ error: "No tienes acceso a ese proyecto" });
+    }
     if (fila.aplicado) {
       return res.status(400).json({
         error: "Esta fila ya se aplico al Tareo Diario - no se puede modificar. Reabra el periodo si necesita corregirla.",

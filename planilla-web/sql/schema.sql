@@ -308,10 +308,17 @@ CREATE TABLE dias_feriados (
     fecha                       DATE NOT NULL,
     descripcion                 VARCHAR(200) NOT NULL,
     ambito                      VARCHAR(10) NOT NULL DEFAULT 'NACIONAL'
-                                    CHECK (ambito IN ('NACIONAL', 'REGIONAL', 'LOCAL')),
-    ubigeo_departamento_codigo  VARCHAR(2) REFERENCES catalogo_ubigeo_departamento(codigo),
-    ubigeo_provincia_codigo     VARCHAR(4) REFERENCES catalogo_ubigeo_provincia(codigo),
-    ubigeo_distrito_codigo      VARCHAR(6) REFERENCES catalogo_ubigeo_distrito(codigo),
+                                    CONSTRAINT dias_feriados_ambito_check CHECK (ambito IN ('NACIONAL', 'REGIONAL', 'LOCAL')),
+    -- Nombres de constraint explicitos (en vez de dejar que Postgres los
+    -- autogenere con el patron "<tabla>_<columna>_fkey"): la migracion 048
+    -- (sql/migracion_048_...sql) usa estos mismos nombres para poder
+    -- verificar "ya existe" via pg_constraint sin crear un duplicado si
+    -- alguna vez se corre sobre una base creada aqui (pruebas) en vez de
+    -- alli (produccion, donde la tabla se completa con ADD COLUMN/ADD
+    -- CONSTRAINT por separado).
+    ubigeo_departamento_codigo  VARCHAR(2) CONSTRAINT dias_feriados_ubigeo_departamento_fkey REFERENCES catalogo_ubigeo_departamento(codigo),
+    ubigeo_provincia_codigo     VARCHAR(4) CONSTRAINT dias_feriados_ubigeo_provincia_fkey REFERENCES catalogo_ubigeo_provincia(codigo),
+    ubigeo_distrito_codigo      VARCHAR(6) CONSTRAINT dias_feriados_ubigeo_distrito_fkey REFERENCES catalogo_ubigeo_distrito(codigo),
     -- NACIONAL no lleva ubicacion; REGIONAL lleva solo departamento; LOCAL
     -- lleva al menos provincia (distrito opcional) - reforzado tambien en
     -- la API (routes/conceptos.ts) para dar un mensaje claro en español.
